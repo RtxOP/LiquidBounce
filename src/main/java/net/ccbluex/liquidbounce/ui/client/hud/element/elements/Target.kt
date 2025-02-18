@@ -118,8 +118,8 @@ class Target : Element("Target") {
 
                 easingHealth += (targetHealth - easingHealth) / 2f.pow(10f - fadeSpeed) * deltaTime
                 easingHealth = easingHealth.coerceIn(0f, maxHealth)
-
-                easingHurtTime = (easingHurtTime..target.hurtTime.toFloat()).lerpWith(RenderUtils.deltaTimeNormalized())
+                val targetHurtTime = if (target.isEntityAlive()) target.hurtTime.toFloat() else 0F
+                easingHurtTime = (easingHurtTime..targetHurtTime).lerpWith(RenderUtils.deltaTimeNormalized())
 
                 if (target != lastTarget || abs(easingHealth - targetHealth) < 0.01) {
                     easingHealth = targetHealth
@@ -202,8 +202,8 @@ class Target : Element("Target") {
 
                     val healthBarTop = 26F
                     val healthBarHeight = 8F
-                    val healthBarStart = 36F
-                    val healthBarTotal = (width - 39F).coerceAtLeast(0F)
+                    val healthBarStart = 40F
+                    val healthBarTotal = (width - 42F).coerceAtLeast(0F)
                     val currentWidth = (easingHealth / maxHealth).coerceIn(0F, 1F) * healthBarTotal
 
                     // background bar
@@ -213,7 +213,7 @@ class Target : Element("Target") {
                         healthBarStart + healthBarTotal,
                         healthBarTop + healthBarHeight,
                         Color.BLACK.rgb,
-                        3F,
+                        6F,
                     )
 
                     // main bar
@@ -224,7 +224,7 @@ class Target : Element("Target") {
                             healthBarStart + currentWidth,
                             healthBarTop + healthBarHeight,
                             0,
-                            3F
+                            6F
                         )
                     }, toClip = {
                         drawGradientRect(
@@ -243,7 +243,7 @@ class Target : Element("Target") {
                     val textWidth = healthFont.getStringWidth(percentageText)
                     val calcX = healthBarStart + currentWidth - textWidth
                     val textX = max(healthBarStart, calcX)
-                    val textY = healthBarTop - Fonts.fontRegular30.fontHeight / 2 - 4F
+                    val textY = healthBarTop - Fonts.fontRegular30.fontHeight / 2 - 3F
                     healthFont.drawString(percentageText, textX, textY, textCustomColor, textShadow)
 
                     val shouldRenderBody =
@@ -268,16 +268,16 @@ class Target : Element("Target") {
 
                             if (entityTexture != null) {
                                 withClipping(main = {
-                                    drawRoundedRect(4f, 6f, 32f, 34f, 0, roundedRectRadius)
+                                    drawRoundedRect(6f, 6f, 34f, 34f, 0, roundedRectRadius)
                                 }, toClip = {
-                                    drawHead(entityTexture, 4, 6, 8f, 8f, 8, 8, 28, 28, 64F, 64F, color)
+                                    drawHead(entityTexture, 6, 6, 8f, 8f, 8, 8, 28, 28, 64F, 64F, color)
                                 })
                             }
                             glPopMatrix()
                         }
 
                         target.name?.let {
-                            titleFont.drawString(it, 36F, 8F, textCustomColor, textShadow)
+                            titleFont.drawString(it, healthBarStart, 8F, textCustomColor, textShadow)
                         }
                     }
                 }
