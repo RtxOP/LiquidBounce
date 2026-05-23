@@ -45,8 +45,12 @@ object CircleShader : Shader("circle.frag") {
     ): Boolean {
         if (!loaded || radius <= 0f) return false
 
+        var attribPushed = false
+        var shaderStarted = false
+        var previousProgram = 0
+
         return try {
-            val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+            previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
             this.color = color
             this.innerRadius = innerRadius.coerceIn(0f, 1f)
@@ -55,16 +59,27 @@ object CircleShader : Shader("circle.frag") {
             this.endAngle = endAngle
 
             glPushAttrib(GL_ALL_ATTRIB_BITS)
+            attribPushed = true
+            shaderStarted = true
             startShader()
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glDisable(GL_TEXTURE_2D)
             drawQuad(x - radius, y - radius, x + radius, y + radius)
             stopShader()
+            shaderStarted = false
             glUseProgram(previousProgram)
             glPopAttrib()
+            attribPushed = false
             true
         } catch (e: Exception) {
+            if (shaderStarted) {
+                stopShader()
+            }
+            glUseProgram(previousProgram)
+            if (attribPushed) {
+                glPopAttrib()
+            }
             logFailure(e)
             false
         }

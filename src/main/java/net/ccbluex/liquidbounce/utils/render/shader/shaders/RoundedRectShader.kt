@@ -51,8 +51,12 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
     ): Boolean {
         if (!loaded) return false
 
+        var attribPushed = false
+        var shaderStarted = false
+        var previousProgram = 0
+
         return try {
-            val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+            previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
             this.rectWidth = x2 - x1
             this.rectHeight = y2 - y1
@@ -63,16 +67,27 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
             this.sideMask = sideMask
 
             glPushAttrib(GL_ALL_ATTRIB_BITS)
+            attribPushed = true
+            shaderStarted = true
             startShader()
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glDisable(GL_TEXTURE_2D)
             drawQuad(x1, y1, x2, y2)
             stopShader()
+            shaderStarted = false
             glUseProgram(previousProgram)
             glPopAttrib()
+            attribPushed = false
             true
         } catch (e: Exception) {
+            if (shaderStarted) {
+                stopShader()
+            }
+            glUseProgram(previousProgram)
+            if (attribPushed) {
+                glPopAttrib()
+            }
             logFailure(e)
             false
         }

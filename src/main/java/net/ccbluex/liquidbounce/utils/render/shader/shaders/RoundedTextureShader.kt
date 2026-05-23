@@ -34,20 +34,29 @@ object RoundedTextureShader : Shader("rounded_texture.frag") {
     fun render(x1: Float, y1: Float, x2: Float, y2: Float, radii: FloatArray, tintColor: FloatArray): Boolean {
         if (!loaded) return false
 
+        var shaderStarted = false
+        var previousProgram = 0
+
         return try {
-            val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+            previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
             this.rectWidth = x2 - x1
             this.rectHeight = y2 - y1
             this.radii = radii
             this.tintColor = tintColor
 
+            shaderStarted = true
             startShader()
             drawQuad(x1, y1, x2, y2)
             stopShader()
+            shaderStarted = false
             glUseProgram(previousProgram)
             true
         } catch (e: Exception) {
+            if (shaderStarted) {
+                stopShader()
+            }
+            glUseProgram(previousProgram)
             logFailure(e)
             false
         }

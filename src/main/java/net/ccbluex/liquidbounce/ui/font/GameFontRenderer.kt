@@ -6,6 +6,7 @@
 package net.ccbluex.liquidbounce.ui.font
 
 import net.ccbluex.liquidbounce.features.module.modules.misc.NameProtect
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance.Companion.mc
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.hexColors
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.randomMagicText
@@ -331,15 +332,34 @@ class GameFontRenderer(
             return
         }
 
-        when (shader) {
-            SdfGradientFontShader -> SdfGradientFontShader.textColor = textColor
-            SdfRainbowFontShader -> SdfRainbowFontShader.textColor = textColor
-            SdfFontShader -> SdfFontShader.textColor = textColor
-        }
+        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+        var shaderStarted = false
 
-        shader.startShader()
-        font.drawString(text, x, 0.0, color)
-        shader.stopShader()
+        try {
+            when (shader) {
+                SdfGradientFontShader -> SdfGradientFontShader.textColor = textColor
+                SdfRainbowFontShader -> SdfRainbowFontShader.textColor = textColor
+                SdfFontShader -> SdfFontShader.textColor = textColor
+            }
+
+            shaderStarted = true
+            shader.startShader()
+            font.drawString(text, x, 0.0, color)
+            shader.stopShader()
+            shaderStarted = false
+        } catch (e: Exception) {
+            if (shaderStarted) {
+                shader.stopShader()
+            }
+            glUseProgram(previousProgram)
+
+            if (!sdfFailureLogged) {
+                LOGGER.error("${javaClass.name} SDF font shader failed; falling back to bitmap font rendering.", e)
+                sdfFailureLogged = true
+            }
+
+            font.drawString(text, x, 0.0, color)
+        }
     }
 
     override fun getColorCode(charCode: Char): Int {
@@ -407,6 +427,8 @@ class GameFontRenderer(
     }
 
     companion object {
+        private var sdfFailureLogged = false
+
         /**
          * Map '0'..'9' => 0..9, 'a'..'f' => 10..15, 'k'..'o' => 16..20, 'r' => 21
          */
