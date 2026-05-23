@@ -127,6 +127,15 @@ class AWTFontRenderer(
     private var textureHeight: Int = 0
     private var fontHeight: Int = -1
 
+    val atlasWidth: Int
+        get() = textureWidth
+
+    val atlasHeight: Int
+        get() = textureHeight
+
+    val sdfSpread: Float
+        get() = sdfPadding().toFloat()
+
     /**
      * Typical "font height" to use in layout, derived from [fontHeight].
      * Adjust as needed.

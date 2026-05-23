@@ -336,10 +336,26 @@ class GameFontRenderer(
         var shaderStarted = false
 
         try {
+            val atlasSize = floatArrayOf(font.atlasWidth.toFloat(), font.atlasHeight.toFloat())
+
             when (shader) {
-                SdfGradientFontShader -> SdfGradientFontShader.textColor = textColor
-                SdfRainbowFontShader -> SdfRainbowFontShader.textColor = textColor
-                SdfFontShader -> SdfFontShader.textColor = textColor
+                SdfGradientFontShader -> {
+                    SdfGradientFontShader.textColor = textColor
+                    SdfGradientFontShader.atlasSize = atlasSize
+                    SdfGradientFontShader.pxRange = font.sdfSpread
+                }
+
+                SdfRainbowFontShader -> {
+                    SdfRainbowFontShader.textColor = textColor
+                    SdfRainbowFontShader.atlasSize = atlasSize
+                    SdfRainbowFontShader.pxRange = font.sdfSpread
+                }
+
+                SdfFontShader -> {
+                    SdfFontShader.textColor = textColor
+                    SdfFontShader.atlasSize = atlasSize
+                    SdfFontShader.pxRange = font.sdfSpread
+                }
             }
 
             shaderStarted = true

@@ -12,24 +12,34 @@ import org.lwjgl.opengl.GL20.*
 
 object SdfFontShader : Shader("sdf_font.frag") {
     var textColor = floatArrayOf(1f, 1f, 1f, 1f)
+    var atlasSize = floatArrayOf(1f, 1f)
+    var pxRange = 4f
 
     override fun setupUniforms() {
         setupUniform("font_texture")
         setupUniform("textColor")
+        setupUniform("atlasSize")
+        setupUniform("pxRange")
     }
 
     override fun updateUniforms() {
         glUniform1i(getUniform("font_texture"), 0)
         glUniform4f(getUniform("textColor"), textColor[0], textColor[1], textColor[2], textColor[3])
+        glUniform2f(getUniform("atlasSize"), atlasSize[0], atlasSize[1])
+        glUniform1f(getUniform("pxRange"), pxRange)
     }
 }
 
 object SdfGradientFontShader : Shader("sdf_gradient_font.frag") {
     var textColor = floatArrayOf(1f, 1f, 1f, 1f)
+    var atlasSize = floatArrayOf(1f, 1f)
+    var pxRange = 4f
 
     override fun setupUniforms() {
         setupUniform("font_texture")
         setupUniform("textColor")
+        setupUniform("atlasSize")
+        setupUniform("pxRange")
         setupUniform("offset")
         setupUniform("strength")
         setupUniform("speed")
@@ -47,6 +57,8 @@ object SdfGradientFontShader : Shader("sdf_gradient_font.frag") {
     override fun updateUniforms() {
         glUniform1i(getUniform("font_texture"), 0)
         glUniform4f(getUniform("textColor"), textColor[0], textColor[1], textColor[2], textColor[3])
+        glUniform2f(getUniform("atlasSize"), atlasSize[0], atlasSize[1])
+        glUniform1f(getUniform("pxRange"), pxRange)
         glUniform2f(getUniform("strength"), GradientFontShader.strengthX, GradientFontShader.strengthY)
         glUniform1f(getUniform("offset"), GradientFontShader.offset)
         glUniform1f(getUniform("speed"), GradientFontShader.speed)
@@ -65,10 +77,14 @@ object SdfGradientFontShader : Shader("sdf_gradient_font.frag") {
 
 object SdfRainbowFontShader : Shader("sdf_rainbow_font.frag") {
     var textColor = floatArrayOf(1f, 1f, 1f, 1f)
+    var atlasSize = floatArrayOf(1f, 1f)
+    var pxRange = 4f
 
     override fun setupUniforms() {
         setupUniform("font_texture")
         setupUniform("textColor")
+        setupUniform("atlasSize")
+        setupUniform("pxRange")
         setupUniform("offset")
         setupUniform("strength")
     }
@@ -76,6 +92,8 @@ object SdfRainbowFontShader : Shader("sdf_rainbow_font.frag") {
     override fun updateUniforms() {
         glUniform1i(getUniform("font_texture"), 0)
         glUniform4f(getUniform("textColor"), textColor[0], textColor[1], textColor[2], textColor[3])
+        glUniform2f(getUniform("atlasSize"), atlasSize[0], atlasSize[1])
+        glUniform1f(getUniform("pxRange"), pxRange)
         glUniform2f(getUniform("strength"), RainbowFontShader.strengthX, RainbowFontShader.strengthY)
         glUniform1f(getUniform("offset"), RainbowFontShader.offset)
     }

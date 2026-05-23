@@ -18,9 +18,9 @@ import net.ccbluex.liquidbounce.utils.render.ColorUtils
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.deltaTime
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawHead
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBorderRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.withClipping
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
@@ -223,31 +223,15 @@ class Target : Element("Target") {
                         backgroundBar()
                     }
 
-                    // main bar
-                    withClipping(main = {
-                        if (roundHealthBarShape) {
-                            drawRoundedRect(
-                                healthBarStart,
-                                healthBarTop,
-                                healthBarStart + currentWidth,
-                                healthBarTop + healthBarHeight,
-                                0,
-                                6F
-                            )
-                        } else {
-                            backgroundBar()
-                        }
-                    }, toClip = {
-                        drawGradientRect(
-                            healthBarStart.toInt(),
-                            healthBarTop.toInt(),
-                            healthBarStart.toInt() + currentWidth.toInt(),
-                            healthBarTop.toInt() + healthBarHeight.toInt(),
-                            healthBarColor1.rgb,
-                            healthBarColor2.rgb,
-                            0f
-                        )
-                    })
+                    drawRoundedGradientRect(
+                        healthBarStart,
+                        healthBarTop,
+                        healthBarStart + currentWidth,
+                        healthBarTop + healthBarHeight,
+                        healthBarColor1.rgb,
+                        healthBarColor2.rgb,
+                        if (roundHealthBarShape) 6F else 0F
+                    )
 
                     val healthPercentage = (easingHealth / maxHealth * 100).toInt()
                     val percentageText = "$healthPercentage%"
