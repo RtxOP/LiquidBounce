@@ -46,18 +46,7 @@ abstract class Shader : MinecraftInstance {
         if (vertexShaderID == 0 || fragmentShaderID == 0)
             return
         
-        programId = glCreateProgramObjectARB()
-        
-        if (programId == 0)
-            return
-        
-        glAttachObjectARB(programId, vertexShaderID)
-        glAttachObjectARB(programId, fragmentShaderID)
-        
-        glLinkProgramARB(programId)
-        glValidateProgramARB(programId)
-        
-        LOGGER.info("[Shader] Successfully loaded: $fragmentShader")
+        programId = linkProgram(fragmentShader, vertexShaderID, fragmentShaderID)
     }
 
     @Throws(IOException::class)
@@ -76,18 +65,7 @@ abstract class Shader : MinecraftInstance {
         if (vertexShaderID == 0 || fragmentShaderID == 0)
             return
         
-        programId = glCreateProgramObjectARB()
-        
-        if (programId == 0)
-            return
-        
-        glAttachObjectARB(programId, vertexShaderID)
-        glAttachObjectARB(programId, fragmentShaderID)
-        
-        glLinkProgramARB(programId)
-        glValidateProgramARB(programId)
-        
-        LOGGER.info("[Shader] Successfully loaded: " + fragmentShader.name)
+        programId = linkProgram(fragmentShader.name, vertexShaderID, fragmentShaderID)
     }
 
     open fun startShader() {
@@ -107,6 +85,34 @@ abstract class Shader : MinecraftInstance {
 
     abstract fun setupUniforms()
     abstract fun updateUniforms()
+
+    private fun linkProgram(shaderName: String, vertexShaderID: Int, fragmentShaderID: Int): Int {
+        val shaderProgram = glCreateProgramObjectARB()
+
+        if (shaderProgram == 0)
+            return 0
+
+        glAttachObjectARB(shaderProgram, vertexShaderID)
+        glAttachObjectARB(shaderProgram, fragmentShaderID)
+
+        glLinkProgramARB(shaderProgram)
+
+        if (glGetObjectParameteriARB(shaderProgram, GL_OBJECT_LINK_STATUS_ARB) == GL_FALSE) {
+            LOGGER.error("[Shader] Failed to link $shaderName: ${getLogInfo(shaderProgram)}")
+            glDeleteObjectARB(shaderProgram)
+            return 0
+        }
+
+        glValidateProgramARB(shaderProgram)
+
+        if (glGetObjectParameteriARB(shaderProgram, GL_OBJECT_VALIDATE_STATUS_ARB) == GL_FALSE) {
+            LOGGER.warn("[Shader] Validation warning for $shaderName: ${getLogInfo(shaderProgram)}")
+        }
+
+        LOGGER.info("[Shader] Successfully loaded: $shaderName")
+        return shaderProgram
+    }
+
     private fun createShader(shaderSource: String, shaderType: Int): Int {
         var shader = 0
 

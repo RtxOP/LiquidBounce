@@ -104,7 +104,7 @@ class AWTFontRenderer(
         var deleted: Boolean = false
     )
 
-    private data class GlyphImage(val image: BufferedImage, val advance: Int)
+    private data class GlyphImage(val image: BufferedImage, val advance: Int, val layoutHeight: Int)
 
     private val charLocations = arrayOfNulls<CharLocation>(stopChar)
 
@@ -316,8 +316,8 @@ class AWTFontRenderer(
             val cw = charImg.width
             val ch = charImg.height
 
-            if (ch > fontHeight) {
-                fontHeight = ch
+            if (glyph.layoutHeight > fontHeight) {
+                fontHeight = glyph.layoutHeight
             }
 
             val loc = CharLocation(charX, charY, cw, ch, glyph.advance, -padding, -padding)
@@ -395,7 +395,7 @@ class AWTFontRenderer(
         measureG.dispose()
 
         val sdfImage = buildSdfImage(charImg, padding)
-        return GlyphImage(sdfImage, advance)
+        return GlyphImage(sdfImage, advance, h)
     }
 
     private fun sdfPadding() = max(4, font.size / 8)
