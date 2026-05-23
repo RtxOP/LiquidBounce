@@ -333,6 +333,7 @@ class GameFontRenderer(
         }
 
         val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+        var shaderStarted = false
 
         try {
             when (shader) {
@@ -341,8 +342,12 @@ class GameFontRenderer(
                 SdfFontShader -> SdfFontShader.textColor = textColor
             }
 
+            shaderStarted = true
             shader.startShader()
         } catch (e: Exception) {
+            if (shaderStarted) {
+                shader.stopShader()
+            }
             glUseProgram(previousProgram)
 
             if (!sdfFailureLogged) {
