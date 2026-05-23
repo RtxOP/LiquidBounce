@@ -28,9 +28,10 @@ import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
+import kotlin.math.abs
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * A memory-optimized bitmap-based font renderer using AWT [Font].
@@ -67,6 +68,7 @@ class AWTFontRenderer(
         private const val GC_TICKS = 600                    // Do GC every 600 frames
         private const val CACHED_FONT_REMOVAL_TIME = 30000L // 30s time-based eviction
         private const val MAX_CACHED_STRINGS = 255          // LRU cache size limit
+        private const val SDF_INF = 1_000_000f
 
         private var gcTicks = 0
 
@@ -403,38 +405,40 @@ class AWTFontRenderer(
     private fun buildSdfImage(source: BufferedImage, spread: Int): BufferedImage {
         val width = source.width + spread * 2
         val height = source.height + spread * 2
-        val alpha = Array(width) { FloatArray(height) }
+        val insideGrid = FloatArray(width * height)
+        val outsideGrid = FloatArray(width * height) { SDF_INF }
 
         for (y in 0 until source.height) {
             for (x in 0 until source.width) {
-                alpha[x + spread][y + spread] = (source.getRGB(x, y) ushr 24) / 255f
+                val alpha = (source.getRGB(x, y) ushr 24) / 255f
+
+                if (alpha == 0f) continue
+
+                val index = (y + spread) * width + x + spread
+
+                if (alpha == 1f) {
+                    outsideGrid[index] = 0f
+                    insideGrid[index] = SDF_INF
+                } else {
+                    val signed = 0.5f - alpha
+                    val squaredDistance = signed * abs(signed)
+
+                    outsideGrid[index] = max(0f, squaredDistance)
+                    insideGrid[index] = max(0f, -squaredDistance)
+                }
             }
         }
+
+        euclideanDistanceTransform(outsideGrid, width, height)
+        euclideanDistanceTransform(insideGrid, width, height)
 
         val output = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
         val maxDistance = spread.toFloat()
 
         for (y in 0 until height) {
             for (x in 0 until width) {
-                val inside = alpha[x][y] > 0.5f
-                var nearest = maxDistance
-
-                val minX = max(0, x - spread)
-                val maxX = min(width - 1, x + spread)
-                val minY = max(0, y - spread)
-                val maxY = min(height - 1, y + spread)
-
-                for (yy in minY..maxY) {
-                    for (xx in minX..maxX) {
-                        if ((alpha[xx][yy] > 0.5f) != inside) {
-                            val dx = (xx - x).toFloat()
-                            val dy = (yy - y).toFloat()
-                            nearest = min(nearest, kotlin.math.sqrt(dx * dx + dy * dy))
-                        }
-                    }
-                }
-
-                val signed = if (inside) nearest else -nearest
+                val index = y * width + x
+                val signed = sqrt(insideGrid[index]) - sqrt(outsideGrid[index])
                 val normalized = (0.5f + signed / (2f * maxDistance)).coerceIn(0f, 1f)
                 val value = (normalized * 255f).roundToInt()
                 output.setRGB(x, y, value shl 24 or 0xFFFFFF)
@@ -442,6 +446,67 @@ class AWTFontRenderer(
         }
 
         return output
+    }
+
+    private fun euclideanDistanceTransform(grid: FloatArray, width: Int, height: Int) {
+        val maxLength = max(width, height)
+        val values = FloatArray(maxLength)
+        val intersections = FloatArray(maxLength + 1)
+        val locations = IntArray(maxLength)
+
+        for (x in 0 until width) {
+            transformAxis(grid, x, width, height, values, locations, intersections)
+        }
+
+        for (y in 0 until height) {
+            transformAxis(grid, y * width, 1, width, values, locations, intersections)
+        }
+    }
+
+    private fun transformAxis(
+        grid: FloatArray,
+        offset: Int,
+        stride: Int,
+        length: Int,
+        values: FloatArray,
+        locations: IntArray,
+        intersections: FloatArray
+    ) {
+        var hull = 0
+
+        locations[0] = 0
+        intersections[0] = -SDF_INF
+        intersections[1] = SDF_INF
+        values[0] = grid[offset]
+
+        for (position in 1 until length) {
+            values[position] = grid[offset + position * stride]
+
+            var intersection: Float
+            do {
+                val previous = locations[hull]
+                intersection = (values[position] - values[previous] + position * position - previous * previous) /
+                    (2f * (position - previous))
+            } while (intersection <= intersections[hull] && --hull >= 0)
+
+            hull++
+            locations[hull] = position
+            intersections[hull] = intersection
+            intersections[hull + 1] = SDF_INF
+        }
+
+        hull = 0
+
+        for (position in 0 until length) {
+            while (intersections[hull + 1] < position) {
+                hull++
+            }
+
+            val nearest = locations[hull]
+            val distance = position - nearest
+
+            grid[offset + position * stride] = values[nearest] + distance * distance
+        }
     }
 
     /**
