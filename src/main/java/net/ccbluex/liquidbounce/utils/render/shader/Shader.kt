@@ -20,6 +20,9 @@ import java.nio.file.Files
 abstract class Shader : MinecraftInstance {
     var programId = 0
         private set
+
+    val loaded: Boolean
+        get() = programId != 0
     
     private val uniformsMap = mutableMapOf<String, Int>()
 
