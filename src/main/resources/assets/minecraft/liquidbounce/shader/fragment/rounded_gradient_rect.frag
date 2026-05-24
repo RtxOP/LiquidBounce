@@ -29,7 +29,7 @@ void main() {
     float dist = roundedDistance(uv * rectSize, rectSize, radii);
     float aa = max(fwidth(dist), 0.75);
     float alpha = 1.0 - smoothstep(-aa, aa, dist);
-    vec4 color = mix(startColor, endColor, uv.x);
+    vec4 color = mix(startColor, endColor, clamp(uv.x, 0.0, 1.0));
     color.a *= alpha;
 
     if (color.a <= 0.0) {

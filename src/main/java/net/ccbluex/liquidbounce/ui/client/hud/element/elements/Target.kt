@@ -22,7 +22,6 @@ import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawHead
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBorderRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.withClipping
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RainbowShader
 import net.minecraft.client.gui.GuiChat
@@ -262,13 +261,21 @@ class Target : Element("Target") {
                             glTranslatef(-centerX1, -midY, 0f)
 
                             if (entityTexture != null) {
-                                withClipping(main = {
-                                    drawRoundedRect(4f, 4f, 32f, 32f, 0, roundedRectRadius)
-                                }, toClip = {
-                                    drawHead(
-                                        entityTexture, 4, 4, 8f, 8f, 8, 8, 28, 28, 64F, 64F, color
-                                    )
-                                })
+                                drawHead(
+                                    entityTexture,
+                                    4,
+                                    4,
+                                    8f,
+                                    8f,
+                                    8,
+                                    8,
+                                    28,
+                                    28,
+                                    64F,
+                                    64F,
+                                    color,
+                                    roundedRectRadius
+                                )
                             }
                             glPopMatrix()
                         }

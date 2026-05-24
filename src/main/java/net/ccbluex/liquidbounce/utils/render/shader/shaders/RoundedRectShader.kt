@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.utils.render.shader.shaders
 
 import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.render.shader.Shader
+import net.minecraft.client.gui.ScaledResolution
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL20.*
 
@@ -19,6 +20,8 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
     private var borderColor = FloatArray(4)
     private var borderWidth = 0f
     private var sideMask = floatArrayOf(1f, 1f, 1f, 1f)
+
+    private const val QUAD_PADDING = 1f
 
     override fun setupUniforms() {
         setupUniform("rectSize")
@@ -49,7 +52,7 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
         borderWidth: Float,
         sideMask: FloatArray
     ): Boolean {
-        if (!loaded) return false
+        if (!loaded || x2 <= x1 || y2 <= y1) return false
 
         var attribPushed = false
         var shaderStarted = false
@@ -58,12 +61,16 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
         return try {
             previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
-            this.rectWidth = x2 - x1
-            this.rectHeight = y2 - y1
-            this.radii = radii
+            val scale = ScaledResolution(mc).scaleFactor.toFloat()
+            val width = x2 - x1
+            val height = y2 - y1
+
+            this.rectWidth = width * scale
+            this.rectHeight = height * scale
+            this.radii = radii.map { it * scale }.toFloatArray()
             this.fillColor = fillColor
             this.borderColor = borderColor
-            this.borderWidth = borderWidth
+            this.borderWidth = borderWidth * scale
             this.sideMask = sideMask
 
             glPushAttrib(GL_ALL_ATTRIB_BITS)
@@ -73,7 +80,8 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glDisable(GL_TEXTURE_2D)
-            drawQuad(x1, y1, x2, y2)
+            val padding = QUAD_PADDING + borderWidth.coerceAtLeast(0f)
+            drawQuad(x1, y1, x2, y2, padding)
             stopShader()
             shaderStarted = false
             glUseProgram(previousProgram)
@@ -93,16 +101,23 @@ object RoundedRectShader : Shader("rounded_rect.frag") {
         }
     }
 
-    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float) {
+    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float, padding: Float) {
+        val width = x2 - x1
+        val height = y2 - y1
+        val u1 = -padding / width
+        val v1 = -padding / height
+        val u2 = 1f + padding / width
+        val v2 = 1f + padding / height
+
         glBegin(GL_QUADS)
-        glTexCoord2f(1f, 0f)
-        glVertex2f(x2, y1)
-        glTexCoord2f(0f, 0f)
-        glVertex2f(x1, y1)
-        glTexCoord2f(0f, 1f)
-        glVertex2f(x1, y2)
-        glTexCoord2f(1f, 1f)
-        glVertex2f(x2, y2)
+        glTexCoord2f(u2, v1)
+        glVertex2f(x2 + padding, y1 - padding)
+        glTexCoord2f(u1, v1)
+        glVertex2f(x1 - padding, y1 - padding)
+        glTexCoord2f(u1, v2)
+        glVertex2f(x1 - padding, y2 + padding)
+        glTexCoord2f(u2, v2)
+        glVertex2f(x2 + padding, y2 + padding)
         glEnd()
     }
 

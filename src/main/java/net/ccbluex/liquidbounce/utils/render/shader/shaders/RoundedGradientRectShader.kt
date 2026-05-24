@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.utils.render.shader.shaders
 
 import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.render.shader.Shader
+import net.minecraft.client.gui.ScaledResolution
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL20.*
 
@@ -17,6 +18,8 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
     private var radii = FloatArray(4)
     private var startColor = FloatArray(4)
     private var endColor = FloatArray(4)
+
+    private const val QUAD_PADDING = 1f
 
     override fun setupUniforms() {
         setupUniform("rectSize")
@@ -41,7 +44,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         startColor: FloatArray,
         endColor: FloatArray
     ): Boolean {
-        if (!loaded) return false
+        if (!loaded || x2 <= x1 || y2 <= y1) return false
 
         var attribPushed = false
         var shaderStarted = false
@@ -50,9 +53,13 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         return try {
             previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
-            this.rectWidth = x2 - x1
-            this.rectHeight = y2 - y1
-            this.radii = radii
+            val scale = ScaledResolution(mc).scaleFactor.toFloat()
+            val width = x2 - x1
+            val height = y2 - y1
+
+            this.rectWidth = width * scale
+            this.rectHeight = height * scale
+            this.radii = radii.map { it * scale }.toFloatArray()
             this.startColor = startColor
             this.endColor = endColor
 
@@ -63,7 +70,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glDisable(GL_TEXTURE_2D)
-            drawQuad(x1, y1, x2, y2)
+            drawQuad(x1, y1, x2, y2, QUAD_PADDING)
             stopShader()
             shaderStarted = false
             glUseProgram(previousProgram)
@@ -83,16 +90,23 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         }
     }
 
-    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float) {
+    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float, padding: Float) {
+        val width = x2 - x1
+        val height = y2 - y1
+        val u1 = -padding / width
+        val v1 = -padding / height
+        val u2 = 1f + padding / width
+        val v2 = 1f + padding / height
+
         glBegin(GL_QUADS)
-        glTexCoord2f(1f, 0f)
-        glVertex2f(x2, y1)
-        glTexCoord2f(0f, 0f)
-        glVertex2f(x1, y1)
-        glTexCoord2f(0f, 1f)
-        glVertex2f(x1, y2)
-        glTexCoord2f(1f, 1f)
-        glVertex2f(x2, y2)
+        glTexCoord2f(u2, v1)
+        glVertex2f(x2 + padding, y1 - padding)
+        glTexCoord2f(u1, v1)
+        glVertex2f(x1 - padding, y1 - padding)
+        glTexCoord2f(u1, v2)
+        glVertex2f(x1 - padding, y2 + padding)
+        glTexCoord2f(u2, v2)
+        glVertex2f(x2 + padding, y2 + padding)
         glEnd()
     }
 

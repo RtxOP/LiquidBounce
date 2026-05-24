@@ -6,16 +6,12 @@
 package net.ccbluex.liquidbounce.ui.font
 
 import net.ccbluex.liquidbounce.features.module.modules.misc.NameProtect
-import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance.Companion.mc
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.hexColors
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.randomMagicText
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawLine
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.GradientFontShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RainbowFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.SdfFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.SdfGradientFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.SdfRainbowFontShader
 import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.renderer.GlStateManager.*
 import net.minecraft.util.ResourceLocation
@@ -313,72 +309,20 @@ class GameFontRenderer(
     }
 
     private fun drawFontSegment(font: AWTFontRenderer, text: String, x: Double, color: Int, shaderMode: Int) {
-        val (alpha, red, green, blue) = net.ccbluex.liquidbounce.utils.render.ColorUtils.unpackARGBFloatValue(color)
-        val textColor = floatArrayOf(red, green, blue, alpha)
-        val shader = when (shaderMode) {
-            2 -> if (SdfGradientFontShader.loaded) SdfGradientFontShader else null
-            1 -> if (SdfRainbowFontShader.loaded) SdfRainbowFontShader else null
-            else -> if (SdfFontShader.loaded) SdfFontShader else null
-        }
+        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
-        if (shader == null) {
-            glUseProgram(when (shaderMode) {
+        glUseProgram(
+            when (shaderMode) {
                 2 -> GradientFontShader.programId
                 1 -> RainbowFontShader.programId
                 else -> 0
-            })
-            font.drawString(text, x, 0.0, color)
-            glUseProgram(0)
-            return
-        }
-
-        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
-        var shaderStarted = false
-
-        try {
-            val atlasSize = floatArrayOf(font.atlasWidth.toFloat(), font.atlasHeight.toFloat())
-
-            when (shader) {
-                SdfGradientFontShader -> {
-                    SdfGradientFontShader.textColor = textColor
-                    SdfGradientFontShader.atlasSize = atlasSize
-                    SdfGradientFontShader.pxRange = font.sdfSpread
-                }
-
-                SdfRainbowFontShader -> {
-                    SdfRainbowFontShader.textColor = textColor
-                    SdfRainbowFontShader.atlasSize = atlasSize
-                    SdfRainbowFontShader.pxRange = font.sdfSpread
-                }
-
-                SdfFontShader -> {
-                    SdfFontShader.textColor = textColor
-                    SdfFontShader.atlasSize = atlasSize
-                    SdfFontShader.pxRange = font.sdfSpread
-                }
             }
-
-            shaderStarted = true
-            shader.startShader()
-        } catch (e: Exception) {
-            if (shaderStarted) {
-                shader.stopShader()
-            }
-            glUseProgram(previousProgram)
-
-            if (!sdfFailureLogged) {
-                LOGGER.error("${javaClass.name} SDF font shader failed; falling back to bitmap font rendering.", e)
-                sdfFailureLogged = true
-            }
-
-            font.drawString(text, x, 0.0, color)
-            return
-        }
+        )
 
         try {
             font.drawString(text, x, 0.0, color)
         } finally {
-            shader.stopShader()
+            glUseProgram(previousProgram)
         }
     }
 
@@ -447,8 +391,6 @@ class GameFontRenderer(
     }
 
     companion object {
-        private var sdfFailureLogged = false
-
         /**
          * Map '0'..'9' => 0..9, 'a'..'f' => 10..15, 'k'..'o' => 16..20, 'r' => 21
          */

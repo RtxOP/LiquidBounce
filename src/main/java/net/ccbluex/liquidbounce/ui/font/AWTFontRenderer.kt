@@ -11,10 +11,6 @@ import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.ccbluex.liquidbounce.utils.kotlin.LruCache
 import net.ccbluex.liquidbounce.utils.render.ColorUtils
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.GradientFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.RainbowFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.SdfGradientFontShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.SdfRainbowFontShader
 import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.GlStateManager.bindTexture
 import net.minecraft.client.renderer.texture.TextureUtil
@@ -28,10 +24,8 @@ import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
 import java.awt.image.BufferedImage
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
 /**
  * A memory-optimized bitmap-based font renderer using AWT [Font].
@@ -68,7 +62,6 @@ class AWTFontRenderer(
         private const val GC_TICKS = 600                    // Do GC every 600 frames
         private const val CACHED_FONT_REMOVAL_TIME = 30000L // 30s time-based eviction
         private const val MAX_CACHED_STRINGS = 255          // LRU cache size limit
-        private const val SDF_INF = 1_000_000f
 
         private var gcTicks = 0
 
@@ -126,15 +119,6 @@ class AWTFontRenderer(
     private var textureWidth: Int = 0
     private var textureHeight: Int = 0
     private var fontHeight: Int = -1
-
-    val atlasWidth: Int
-        get() = textureWidth
-
-    val atlasHeight: Int
-        get() = textureHeight
-
-    val sdfSpread: Float
-        get() = sdfPadding().toFloat()
 
     /**
      * Typical "font height" to use in layout, derived from [fontHeight].
@@ -200,11 +184,7 @@ class AWTFontRenderer(
                 glEnd()
                 GlStateManager.resetColor()
                 val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
-                glUseProgram(when (previousProgram) {
-                    SdfGradientFontShader.programId -> GradientFontShader.programId
-                    SdfRainbowFontShader.programId -> RainbowFontShader.programId
-                    else -> 0
-                })
+                glUseProgram(previousProgram)
 
                 glPushMatrix()
 
@@ -315,7 +295,7 @@ class AWTFontRenderer(
      */
     private fun renderBitmap(startChar: Int, stopChar: Int) {
         val fontImages = arrayOfNulls<GlyphImage>(stopChar)
-        val padding = sdfPadding()
+        val padding = 0
 
         var rowHeight = 0
         var charX = 0
@@ -369,10 +349,10 @@ class AWTFontRenderer(
         g.dispose()
 
         // Upload to GPU
-        textureID = TextureUtil.uploadTextureImageAllocate(TextureUtil.glGenTextures(), bigImage, true, true)
+        textureID = TextureUtil.uploadTextureImageAllocate(TextureUtil.glGenTextures(), bigImage, false, true)
         glBindTexture(GL_TEXTURE_2D, textureID)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     }
@@ -393,129 +373,20 @@ class AWTFontRenderer(
         if (w <= 0) w = 7
         var h = fm.height + 3
         if (h <= 0) h = font.size
-        val padding = sdfPadding()
 
         // real
         val charImg = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
         val g2d = charImg.createGraphics()
+        g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.font = font
         g2d.color = Color.WHITE
         g2d.drawString(c.toString(), 3, 1 + fm.ascent)
         g2d.dispose()
         measureG.dispose()
 
-        val sdfImage = buildSdfImage(charImg, padding)
-        return GlyphImage(sdfImage, advance, h)
-    }
-
-    private fun sdfPadding() = max(4, font.size / 8)
-
-    private fun buildSdfImage(source: BufferedImage, spread: Int): BufferedImage {
-        val width = source.width + spread * 2
-        val height = source.height + spread * 2
-        val insideGrid = FloatArray(width * height)
-        val outsideGrid = FloatArray(width * height) { SDF_INF }
-
-        for (y in 0 until source.height) {
-            for (x in 0 until source.width) {
-                val alpha = (source.getRGB(x, y) ushr 24) / 255f
-
-                if (alpha == 0f) continue
-
-                val index = (y + spread) * width + x + spread
-
-                if (alpha == 1f) {
-                    outsideGrid[index] = 0f
-                    insideGrid[index] = SDF_INF
-                } else {
-                    val signed = 0.5f - alpha
-                    val squaredDistance = signed * abs(signed)
-
-                    outsideGrid[index] = max(0f, squaredDistance)
-                    insideGrid[index] = max(0f, -squaredDistance)
-                }
-            }
-        }
-
-        euclideanDistanceTransform(outsideGrid, width, height)
-        euclideanDistanceTransform(insideGrid, width, height)
-
-        val output = BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB)
-        val maxDistance = spread.toFloat()
-
-        for (y in 0 until height) {
-            for (x in 0 until width) {
-                val index = y * width + x
-                val signed = sqrt(insideGrid[index]) - sqrt(outsideGrid[index])
-                val normalized = (0.5f + signed / (2f * maxDistance)).coerceIn(0f, 1f)
-                val value = (normalized * 255f).roundToInt()
-                output.setRGB(x, y, value shl 24 or 0xFFFFFF)
-            }
-        }
-
-        return output
-    }
-
-    private fun euclideanDistanceTransform(grid: FloatArray, width: Int, height: Int) {
-        val maxLength = max(width, height)
-        val values = FloatArray(maxLength)
-        val intersections = FloatArray(maxLength + 1)
-        val locations = IntArray(maxLength)
-
-        for (x in 0 until width) {
-            transformAxis(grid, x, width, height, values, locations, intersections)
-        }
-
-        for (y in 0 until height) {
-            transformAxis(grid, y * width, 1, width, values, locations, intersections)
-        }
-    }
-
-    private fun transformAxis(
-        grid: FloatArray,
-        offset: Int,
-        stride: Int,
-        length: Int,
-        values: FloatArray,
-        locations: IntArray,
-        intersections: FloatArray
-    ) {
-        var hull = 0
-
-        locations[0] = 0
-        intersections[0] = -SDF_INF
-        intersections[1] = SDF_INF
-        values[0] = grid[offset]
-
-        for (position in 1 until length) {
-            values[position] = grid[offset + position * stride]
-
-            var intersection: Float
-            do {
-                val previous = locations[hull]
-                intersection = (values[position] - values[previous] + position * position - previous * previous) /
-                    (2f * (position - previous))
-            } while (intersection <= intersections[hull] && --hull >= 0)
-
-            hull++
-            locations[hull] = position
-            intersections[hull] = intersection
-            intersections[hull + 1] = SDF_INF
-        }
-
-        hull = 0
-
-        for (position in 0 until length) {
-            while (intersections[hull + 1] < position) {
-                hull++
-            }
-
-            val nearest = locations[hull]
-            val distance = position - nearest
-
-            grid[offset + position * stride] = values[nearest] + distance * distance
-        }
+        return GlyphImage(charImg, advance, h)
     }
 
     /**

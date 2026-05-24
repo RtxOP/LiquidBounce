@@ -4,6 +4,7 @@ uniform sampler2D textureSampler;
 uniform vec2 rectSize;
 uniform vec4 radii;
 uniform vec4 tintColor;
+uniform vec4 textureArea;
 
 float roundedDistance(vec2 p, vec2 size, vec4 r) {
     float radius = r.x;
@@ -29,7 +30,8 @@ void main() {
     float dist = roundedDistance(uv * rectSize, rectSize, radii);
     float aa = max(fwidth(dist), 0.75);
     float alpha = 1.0 - smoothstep(-aa, aa, dist);
-    vec4 texColor = texture2D(textureSampler, uv) * tintColor;
+    vec2 textureUv = mix(textureArea.xy, textureArea.zw, uv);
+    vec4 texColor = texture2D(textureSampler, textureUv) * tintColor;
     texColor.a *= alpha;
 
     if (texColor.a <= 0.0) {

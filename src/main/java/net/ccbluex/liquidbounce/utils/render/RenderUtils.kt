@@ -1454,16 +1454,83 @@ object RenderUtils : MinecraftInstance {
         height: Int,
         tileWidth: Float,
         tileHeight: Float,
-        color: Color
+        color: Color,
+        radius: Float = 0f
     ) {
         glPushMatrix()
         val texture: ResourceLocation = skin ?: mc.thePlayer.locationSkin
 
         glColor(color)
         mc.textureManager.bindTexture(texture)
-        drawScaledCustomSizeModalRect(x, y, u, v, uWidth, vHeight, width, height, tileWidth, tileHeight)
+
+        if (radius > 0f) {
+            val x1 = x.toFloat()
+            val y1 = y.toFloat()
+            val x2 = x1 + width
+            val y2 = y1 + height
+            val clampedRadius = radius.coerceAtLeast(0f).coerceAtMost(min(width, height) / 2f)
+            val textureArea = floatArrayOf(
+                u / tileWidth,
+                v / tileHeight,
+                (u + uWidth) / tileWidth,
+                (v + vHeight) / tileHeight
+            )
+
+            if (!RoundedTextureShader.render(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    floatArrayOf(clampedRadius, clampedRadius, clampedRadius, clampedRadius),
+                    floatArrayOf(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f),
+                    textureArea
+                )
+            ) {
+                drawRoundedTextureLegacy(x1, y1, x2, y2, clampedRadius, textureArea)
+            }
+        } else {
+            drawScaledCustomSizeModalRect(x, y, u, v, uWidth, vHeight, width, height, tileWidth, tileHeight)
+        }
+
         glColor(Color.WHITE)
         glPopMatrix()
+    }
+
+    private fun drawRoundedTextureLegacy(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        radius: Float,
+        textureArea: FloatArray
+    ) {
+        val radiusD = radius.toDouble()
+        val width = x2 - x1
+        val height = y2 - y1
+        val (u1, v1, u2, v2) = textureArea
+
+        drawWithTessellatorWorldRenderer {
+            begin(GL_TRIANGLE_FAN, DefaultVertexFormats.POSITION_TEX)
+
+            val corners = arrayOf(
+                doubleArrayOf(x2 - radiusD, y2 - radiusD, 0.0),
+                doubleArrayOf(x2 - radiusD, y1 + radiusD, 90.0),
+                doubleArrayOf(x1 + radiusD, y1 + radiusD, 180.0),
+                doubleArrayOf(x1 + radiusD, y2 - radiusD, 270.0),
+            )
+
+            for ((cx, cy, startAngle) in corners) {
+                for (i in 0..90 step 10) {
+                    val angle = Math.toRadians(startAngle + i)
+                    val px = cx + radiusD * sin(angle)
+                    val py = cy + radiusD * cos(angle)
+                    val texX = (u1..u2).lerpWith(((px - x1) / width).toFloat().coerceIn(0f, 1f))
+                    val texY = (v1..v2).lerpWith(((py - y1) / height).toFloat().coerceIn(0f, 1f))
+
+                    pos(px, py, 0.0).tex(texX, texY).endVertex()
+                }
+            }
+        }
     }
 
     fun drawImage(

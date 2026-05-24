@@ -26,6 +26,47 @@ float roundedDistance(vec2 p, vec2 size, vec4 r) {
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
 }
 
+float sideActivity(vec2 p, vec2 size, vec4 r) {
+    float left = sideMask.x;
+    float top = sideMask.y;
+    float right = sideMask.z;
+    float bottom = sideMask.w;
+
+    if (p.x <= r.x && p.y <= r.x) {
+        return max(left, top);
+    }
+
+    if (p.x >= size.x - r.y && p.y <= r.y) {
+        return max(right, top);
+    }
+
+    if (p.x >= size.x - r.z && p.y >= size.y - r.z) {
+        return max(right, bottom);
+    }
+
+    if (p.x <= r.w && p.y >= size.y - r.w) {
+        return max(left, bottom);
+    }
+
+    float dLeft = p.x;
+    float dTop = p.y;
+    float dRight = size.x - p.x;
+    float dBottom = size.y - p.y;
+    if (dLeft <= dTop && dLeft <= dRight && dLeft <= dBottom) {
+        return left;
+    }
+
+    if (dTop <= dRight && dTop <= dBottom) {
+        return top;
+    }
+
+    if (dRight <= dBottom) {
+        return right;
+    }
+
+    return bottom;
+}
+
 void main() {
     vec2 p = gl_TexCoord[0].st * rectSize;
     float dist = roundedDistance(p, rectSize, radii);
@@ -33,15 +74,7 @@ void main() {
     float shapeAlpha = 1.0 - smoothstep(-aa, aa, dist);
 
     float innerDist = dist + borderWidth;
-    float borderAlpha = borderWidth > 0.0 ? smoothstep(-aa, aa, innerDist) : 0.0;
-
-    float left = 1.0 - step(borderWidth, p.x);
-    float top = 1.0 - step(borderWidth, p.y);
-    float right = step(rectSize.x - borderWidth, p.x);
-    float bottom = step(rectSize.y - borderWidth, p.y);
-    float activeSide = max(max(left * sideMask.x, top * sideMask.y), max(right * sideMask.z, bottom * sideMask.w));
-
-    borderAlpha *= activeSide;
+    float borderAlpha = borderWidth > 0.0 ? smoothstep(-aa, aa, innerDist) * sideActivity(p, rectSize, radii) : 0.0;
 
     vec4 color = mix(fillColor, borderColor, borderAlpha);
     color.a *= shapeAlpha;
