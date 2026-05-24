@@ -1527,7 +1527,7 @@ object RenderUtils : MinecraftInstance {
                     val texX = (u1..u2).lerpWith(((px - x1) / width).toFloat().coerceIn(0f, 1f))
                     val texY = (v1..v2).lerpWith(((py - y1) / height).toFloat().coerceIn(0f, 1f))
 
-                    pos(px, py, 0.0).tex(texX, texY).endVertex()
+                    pos(px, py, 0.0).tex(texX.toDouble(), texY.toDouble()).endVertex()
                 }
             }
         }
