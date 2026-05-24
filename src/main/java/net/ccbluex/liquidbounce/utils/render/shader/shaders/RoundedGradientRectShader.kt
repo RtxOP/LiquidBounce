@@ -43,6 +43,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         if (x2 <= x1 || y2 <= y1) return
         check(loaded) { "${javaClass.name} is not loaded." }
 
+        var attribPushed = false
         var shaderStarted = false
         var previousProgram = 0
 
@@ -60,6 +61,8 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
             this.startColor = startColor
             this.endColor = endColor
 
+            glPushAttrib(GL_ALL_ATTRIB_BITS)
+            attribPushed = true
             glColor4f(1f, 1f, 1f, 1f)
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -72,13 +75,16 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
             stopShader()
             shaderStarted = false
             glUseProgram(previousProgram)
-            glDisable(GL_BLEND)
+            glPopAttrib()
+            attribPushed = false
         } catch (t: Throwable) {
             if (shaderStarted) {
                 stopShader()
             }
             glUseProgram(previousProgram)
-            glDisable(GL_BLEND)
+            if (attribPushed) {
+                glPopAttrib()
+            }
             throw t
         }
     }
