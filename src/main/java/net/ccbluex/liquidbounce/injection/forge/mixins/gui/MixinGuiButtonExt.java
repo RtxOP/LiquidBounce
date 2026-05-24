@@ -34,7 +34,7 @@ public abstract class MixinGuiButtonExt extends GuiButton {
     private boolean lastHover = false;
 
     @Unique
-    private float progress = xPosition;
+    private float progress = Float.NaN;
 
     public MixinGuiButtonExt(int p_i1020_1_, int p_i1020_2_, int p_i1020_3_, String p_i1020_4_) {
         super(p_i1020_1_, p_i1020_2_, p_i1020_3_, p_i1020_4_);
@@ -51,6 +51,10 @@ public abstract class MixinGuiButtonExt extends GuiButton {
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         final FontRenderer fontRenderer = mc.getLanguageManager().isCurrentLocaleUnicode() ? mc.fontRendererObj : Fonts.fontSemibold35;
 
+        if (Float.isNaN(progress)) {
+            progress = xPosition;
+        }
+
         hovered = mouseX >= xPosition && mouseY >= yPosition && mouseX < xPosition + width && mouseY < yPosition + height;
 
         float supposedWidth = width;
@@ -58,6 +62,10 @@ public abstract class MixinGuiButtonExt extends GuiButton {
         if ((Object) this instanceof GuiSlider) {
             supposedWidth *= (float) ((GuiSlider) (Object) this).sliderValue;
             hovered = true;
+        }
+
+        if (startTime < 0L) {
+            startTime = System.currentTimeMillis();
         }
 
         if (hovered != lastHover) {

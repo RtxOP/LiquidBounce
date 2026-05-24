@@ -65,7 +65,7 @@ public abstract class MixinGuiButton extends Gui {
     private boolean lastHover = false;
 
     @Unique
-    private float progress = xPosition;
+    private float progress = Float.NaN;
 
     /**
      * @author CCBlueX
@@ -73,6 +73,10 @@ public abstract class MixinGuiButton extends Gui {
     @Overwrite
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         if (visible) {
+            if (Float.isNaN(progress)) {
+                progress = xPosition;
+            }
+
             hovered = mouseX >= xPosition && mouseY >= yPosition && mouseX < xPosition + width && mouseY < yPosition + height;
 
             float supposedWidth = width;
@@ -85,6 +89,10 @@ public abstract class MixinGuiButton extends Gui {
             if ((Object) this instanceof GuiScreenOptionsSounds.Button) {
                 supposedWidth *= ((GuiScreenOptionsSounds.Button) (Object) this).field_146156_o;
                 hovered = true;
+            }
+
+            if (startTime < 0L) {
+                startTime = System.currentTimeMillis();
             }
 
             if (hovered != lastHover) {
