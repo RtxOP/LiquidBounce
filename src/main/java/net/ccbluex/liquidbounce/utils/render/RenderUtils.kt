@@ -17,7 +17,6 @@ import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.io.flipSafely
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
-import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
 import net.minecraft.client.gui.FontRenderer
@@ -1123,25 +1122,6 @@ object RenderUtils : MinecraftInstance {
     ) {
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
         val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
-        val start = ColorUtils.unpackARGBFloatValue(startColor).let { (alpha, red, green, blue) ->
-            floatArrayOf(red, green, blue, alpha)
-        }
-        val end = ColorUtils.unpackARGBFloatValue(endColor).let { (alpha, red, green, blue) ->
-            floatArrayOf(red, green, blue, alpha)
-        }
-
-        if (RoundedGradientRectShader.render(
-                newX1,
-                newY1,
-                newX2,
-                newY2,
-                radiiForCorners(clampedRadius, cornersToRound),
-                start,
-                end
-            )
-        ) {
-            return
-        }
 
         drawRoundedGradientRectangleLegacy(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius, cornersToRound)
     }
