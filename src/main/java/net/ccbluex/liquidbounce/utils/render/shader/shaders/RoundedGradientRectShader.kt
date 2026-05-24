@@ -19,8 +19,6 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
     private var startColor = FloatArray(4)
     private var endColor = FloatArray(4)
 
-    private const val QUAD_PADDING = 1f
-
     override fun setupUniforms() {
         setupUniform("rectSize")
         setupUniform("radii")
@@ -70,7 +68,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
             glDisable(GL_TEXTURE_2D)
-            drawQuad(x1, y1, x2, y2, QUAD_PADDING)
+            drawQuad(x1, y1, x2, y2)
             stopShader()
             shaderStarted = false
             glUseProgram(previousProgram)
@@ -90,29 +88,22 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         }
     }
 
-    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float, padding: Float) {
-        val width = x2 - x1
-        val height = y2 - y1
-        val u1 = -padding / width
-        val v1 = -padding / height
-        val u2 = 1f + padding / width
-        val v2 = 1f + padding / height
-
+    private fun drawQuad(x1: Float, y1: Float, x2: Float, y2: Float) {
         glBegin(GL_QUADS)
-        glTexCoord2f(u2, v1)
-        glVertex2f(x2 + padding, y1 - padding)
-        glTexCoord2f(u1, v1)
-        glVertex2f(x1 - padding, y1 - padding)
-        glTexCoord2f(u1, v2)
-        glVertex2f(x1 - padding, y2 + padding)
-        glTexCoord2f(u2, v2)
-        glVertex2f(x2 + padding, y2 + padding)
+        glTexCoord2f(1f, 0f)
+        glVertex2f(x2, y1)
+        glTexCoord2f(0f, 0f)
+        glVertex2f(x1, y1)
+        glTexCoord2f(0f, 1f)
+        glVertex2f(x1, y2)
+        glTexCoord2f(1f, 1f)
+        glVertex2f(x2, y2)
         glEnd()
     }
 
     private fun logFailure(e: Exception) {
         if (!loggedFailure) {
-            LOGGER.error("${javaClass.name} failed; falling back to tessellator rendering.", e)
+            LOGGER.error("${javaClass.name} failed; rounded gradients will not render.", e)
             loggedFailure = true
         }
     }

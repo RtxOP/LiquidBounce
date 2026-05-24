@@ -17,6 +17,7 @@ import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.io.flipSafely
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
 import net.minecraft.client.gui.FontRenderer
@@ -1123,7 +1124,22 @@ object RenderUtils : MinecraftInstance {
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
         val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
 
-        drawRoundedGradientRectangleLegacy(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius, cornersToRound)
+        val start = ColorUtils.unpackARGBFloatValue(startColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+        val end = ColorUtils.unpackARGBFloatValue(endColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            start,
+            end
+        )
     }
 
     enum class Corner {
@@ -1245,84 +1261,6 @@ object RenderUtils : MinecraftInstance {
                     }
                 } else {
                     pos(ox, oy, 0.0).endVertex()
-                }
-            }
-        }
-
-        glColor(Color.WHITE)
-        glEnable(GL_TEXTURE_2D)
-        glDisable(GL_LINE_SMOOTH)
-        glDisable(GL_BLEND)
-        glPopMatrix()
-    }
-
-    private fun drawRoundedGradientRectangleLegacy(
-        newX1: Float,
-        newY1: Float,
-        newX2: Float,
-        newY2: Float,
-        startColor: Int,
-        endColor: Int,
-        radius: Float,
-        cornersToRound: RoundedCorners
-    ) {
-        if (radius <= 0f || cornersToRound == RoundedCorners.NONE) {
-            drawGradientRect(newX1, newY1, newX2, newY2, startColor, endColor, 0f)
-            return
-        }
-
-        val (startAlpha, startRed, startGreen, startBlue) = ColorUtils.unpackARGBFloatValue(startColor)
-        val (endAlpha, endRed, endGreen, endBlue) = ColorUtils.unpackARGBFloatValue(endColor)
-        val radiusD = radius.toDouble()
-        val width = (newX2 - newX1).coerceAtLeast(1f)
-
-        glPushMatrix()
-        glEnable(GL_BLEND)
-        glDisable(GL_TEXTURE_2D)
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
-        glEnable(GL_LINE_SMOOTH)
-
-        val corners = arrayOf(
-            Corner.BOTTOM_RIGHT to doubleArrayOf(
-                newX2 - radiusD, newY2 - radiusD, 0.0, newX2.toDouble(), newY2.toDouble()
-            ), Corner.TOP_RIGHT to doubleArrayOf(
-                newX2 - radiusD, newY1 + radiusD, 90.0, newX2.toDouble(), newY1.toDouble()
-            ), Corner.TOP_LEFT to doubleArrayOf(
-                newX1 + radiusD, newY1 + radiusD, 180.0, newX1.toDouble(), newY1.toDouble()
-            ), Corner.BOTTOM_LEFT to doubleArrayOf(
-                newX1 + radiusD, newY2 - radiusD, 270.0, newX1.toDouble(), newY2.toDouble()
-            )
-        )
-
-        drawWithTessellatorWorldRenderer {
-            begin(GL_TRIANGLE_FAN, DefaultVertexFormats.POSITION_COLOR)
-
-            for ((corner, directionData) in corners) {
-                val (cx, cy, startAngle, ox, oy) = directionData
-
-                if (corner in cornersToRound.corners) {
-                    for (i in 0..90 step 10) {
-                        val angle = Math.toRadians(startAngle + i)
-                        val x = cx + radiusD * sin(angle)
-                        val y = cy + radiusD * cos(angle)
-                        val t = ((x.toFloat() - newX1) / width).coerceIn(0f, 1f)
-
-                        pos(x, y, 0.0).color(
-                            (startRed..endRed).lerpWith(t),
-                            (startGreen..endGreen).lerpWith(t),
-                            (startBlue..endBlue).lerpWith(t),
-                            (startAlpha..endAlpha).lerpWith(t)
-                        ).endVertex()
-                    }
-                } else {
-                    val t = ((ox.toFloat() - newX1) / width).coerceIn(0f, 1f)
-
-                    pos(ox, oy, 0.0).color(
-                        (startRed..endRed).lerpWith(t),
-                        (startGreen..endGreen).lerpWith(t),
-                        (startBlue..endBlue).lerpWith(t),
-                        (startAlpha..endAlpha).lerpWith(t)
-                    ).endVertex()
                 }
             }
         }
