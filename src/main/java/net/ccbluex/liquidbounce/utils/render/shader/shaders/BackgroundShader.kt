@@ -10,6 +10,7 @@ import net.ccbluex.liquidbounce.utils.render.drawWithTessellatorWorldRenderer
 import net.ccbluex.liquidbounce.utils.render.shader.Shader
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import org.lwjgl.opengl.Display
+import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL20.*
 import java.io.File
 import java.io.IOException
@@ -42,18 +43,48 @@ class BackgroundShader : Shader {
         if (!loaded)
             return false
 
-        startShader()
+        var attribPushed = false
+        var shaderStarted = false
+        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
-        drawWithTessellatorWorldRenderer {
-            begin(7, DefaultVertexFormats.POSITION)
-            pos(0.0, height.toDouble(), 0.0).endVertex()
-            pos(width.toDouble(), height.toDouble(), 0.0).endVertex()
-            pos(width.toDouble(), 0.0, 0.0).endVertex()
-            pos(0.0, 0.0, 0.0).endVertex()
+        return try {
+            glPushAttrib(GL_ALL_ATTRIB_BITS)
+            attribPushed = true
+
+            glColor4f(1f, 1f, 1f, 1f)
+            glDisable(GL_TEXTURE_2D)
+            glDisable(GL_DEPTH_TEST)
+            glDepthMask(false)
+            glDisable(GL_BLEND)
+
+            shaderStarted = true
+            startShader()
+
+            drawWithTessellatorWorldRenderer {
+                begin(7, DefaultVertexFormats.POSITION)
+                pos(0.0, height.toDouble(), 0.0).endVertex()
+                pos(width.toDouble(), height.toDouble(), 0.0).endVertex()
+                pos(width.toDouble(), 0.0, 0.0).endVertex()
+                pos(0.0, 0.0, 0.0).endVertex()
+            }
+
+            stopShader()
+            shaderStarted = false
+            glUseProgram(previousProgram)
+
+            glPopAttrib()
+            attribPushed = false
+            true
+        } catch (e: Exception) {
+            if (shaderStarted) {
+                stopShader()
+            }
+            glUseProgram(previousProgram)
+            if (attribPushed) {
+                glPopAttrib()
+            }
+            false
         }
-
-        stopShader()
-        return true
     }
 
     companion object {
