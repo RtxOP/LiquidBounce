@@ -8,12 +8,10 @@ package net.ccbluex.liquidbounce.utils.render.shader
 import net.ccbluex.liquidbounce.LiquidBounce.CLIENT_NAME
 import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance.Companion.mc
-import net.ccbluex.liquidbounce.utils.render.drawWithTessellatorWorldRenderer
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.BackgroundShader
 import net.minecraft.client.gui.Gui
 import net.minecraft.client.renderer.GlStateManager.color
 import net.minecraft.client.renderer.texture.DynamicTexture
-import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import net.minecraft.util.ResourceLocation
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -60,7 +58,7 @@ private class ImageBackground(backgroundFile: File) : Background(backgroundFile)
 private class ShaderBackground(backgroundFile: File) : Background(backgroundFile) {
 
     private var shaderInitialized = false
-    private lateinit var shader: Shader
+    private lateinit var shader: BackgroundShader
     private val initializationLatch = CountDownLatch(1)
 
     override fun initBackground() {
@@ -69,9 +67,10 @@ private class ShaderBackground(backgroundFile: File) : Background(backgroundFile
         }.onFailure {
             LOGGER.error("Failed to load background.", it)
         }.onSuccess {
-            initializationLatch.countDown()
             shaderInitialized = true
             LOGGER.info("Successfully loaded background.")
+        }.also {
+            initializationLatch.countDown()
         }
     }
 
@@ -86,17 +85,7 @@ private class ShaderBackground(backgroundFile: File) : Background(backgroundFile
         }
 
         if (shaderInitialized) {
-            shader.startShader()
-
-            drawWithTessellatorWorldRenderer {
-                begin(7, DefaultVertexFormats.POSITION)
-                pos(0.0, height.toDouble(), 0.0).endVertex()
-                pos(width.toDouble(), height.toDouble(), 0.0).endVertex()
-                pos(width.toDouble(), 0.0, 0.0).endVertex()
-                pos(0.0, 0.0, 0.0).endVertex()
-            }
-
-            shader.stopShader()
+            shader.render(width, height)
         }
     }
 }

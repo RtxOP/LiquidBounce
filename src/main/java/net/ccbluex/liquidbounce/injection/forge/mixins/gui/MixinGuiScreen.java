@@ -11,6 +11,7 @@ import net.ccbluex.liquidbounce.features.module.modules.misc.ComponentOnHover;
 import net.ccbluex.liquidbounce.features.module.modules.render.HUD;
 import net.ccbluex.liquidbounce.file.configs.models.ClientConfiguration;
 import net.ccbluex.liquidbounce.utils.render.shader.Background;
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.BackgroundShader;
 import net.ccbluex.liquidbounce.utils.render.ParticleUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.*;
@@ -86,7 +87,9 @@ public abstract class MixinGuiScreen {
             final Background background = LiquidBounce.INSTANCE.getBackground();
 
             if (background == null) {
-                Gui.drawRect(0, 0, width, height, 0xFF101820);
+                if (!BackgroundShader.renderDefault(width, height)) {
+                    Gui.drawRect(0, 0, width, height, 0xFF101820);
+                }
             } else {
                 // Use custom background
                 background.drawBackground(width, height);
