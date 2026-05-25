@@ -16,6 +16,10 @@ import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.io.flipSafely
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
 import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager.*
@@ -757,6 +761,41 @@ object RenderUtils : MinecraftInstance {
         drawRoundedBorder(x, y, x2, y2, width, color2, radius)
     }
 
+    fun drawRoundedRectWithBorder(
+        x: Float,
+        y: Float,
+        x2: Float,
+        y2: Float,
+        fillColor: Int,
+        borderColor: Int,
+        borderWidth: Float,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x, y, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+        val (fillAlpha, fillRed, fillGreen, fillBlue) = ColorUtils.unpackARGBFloatValue(fillColor)
+        val (borderAlpha, borderRed, borderGreen, borderBlue) = ColorUtils.unpackARGBFloatValue(borderColor)
+
+        if (RoundedRectShader.render(
+                newX1,
+                newY1,
+                newX2,
+                newY2,
+                radiiForCorners(clampedRadius, cornersToRound),
+                floatArrayOf(fillRed, fillGreen, fillBlue, fillAlpha),
+                floatArrayOf(borderRed, borderGreen, borderBlue, borderAlpha),
+                borderWidth,
+                floatArrayOf(1f, 1f, 1f, 1f)
+            )
+        ) {
+            return
+        }
+
+        drawRoundedRect(newX1, newY1, newX2, newY2, fillColor, clampedRadius, cornersToRound)
+        drawRoundedBorder(newX1, newY1, newX2, newY2, borderWidth, borderColor, clampedRadius)
+    }
+
     fun drawRoundedBorderRectInt(
         x: Int, y: Int, x2: Int, y2: Int, width: Int, color1: Int, color2: Int, radius: Float
     ) {
@@ -823,6 +862,39 @@ object RenderUtils : MinecraftInstance {
     ) {
         val (alpha, red, green, blue) = ColorUtils.unpackARGBFloatValue(color)
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        if (RoundedRectShader.render(
+                newX1,
+                newY1,
+                newX2,
+                newY2,
+                floatArrayOf(clampedRadius, clampedRadius, clampedRadius, clampedRadius),
+                floatArrayOf(red, green, blue, 0f),
+                floatArrayOf(red, green, blue, alpha),
+                width,
+                if (bottom) floatArrayOf(1f, 1f, 1f, 1f) else floatArrayOf(1f, 1f, 1f, 0f)
+            )
+        ) {
+            return
+        }
+
+        renderRoundedBorderLegacy(newX1, newY1, newX2, newY2, red, green, blue, alpha, width, clampedRadius, bottom)
+    }
+
+    private fun renderRoundedBorderLegacy(
+        newX1: Float,
+        newY1: Float,
+        newX2: Float,
+        newY2: Float,
+        red: Float,
+        green: Float,
+        blue: Float,
+        alpha: Float,
+        width: Float,
+        radius: Float,
+        bottom: Boolean
+    ) {
 
         glPushMatrix()
         glEnable(GL_BLEND)
@@ -833,7 +905,7 @@ object RenderUtils : MinecraftInstance {
 
         glColor4f(red, green, blue, alpha)
 
-        val radiusD = min(radius.toDouble(), min(newX2 - newX1, newY2 - newY1) / 2.0)
+        val radiusD = radius.toDouble()
 
         val corners = arrayOf(
             doubleArrayOf(newX2 - radiusD, newY2 - radiusD, 0.0),
@@ -1073,6 +1145,71 @@ object RenderUtils : MinecraftInstance {
         drawRoundedRectangle(newX1, newY1, newX2, newY2, red, green, blue, alpha, radius, cornersToRound)
     }
 
+    @JvmStatic
+    fun drawRoundedGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        startColor: Int,
+        endColor: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        val start = ColorUtils.unpackARGBFloatValue(startColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+        val end = ColorUtils.unpackARGBFloatValue(endColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            start,
+            end
+        )
+    }
+
+    @JvmStatic
+    fun drawRoundedVerticalGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        topColor: Int,
+        bottomColor: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        val top = ColorUtils.unpackARGBFloatValue(topColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+        val bottom = ColorUtils.unpackARGBFloatValue(bottomColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            top,
+            bottom,
+            true
+        )
+    }
+
     enum class Corner {
         TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT
     }
@@ -1121,6 +1258,39 @@ object RenderUtils : MinecraftInstance {
         cornersToRound: RoundedCorners = RoundedCorners.ALL
     ) {
         val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+        val radii = radiiForCorners(clampedRadius, cornersToRound)
+
+        if (RoundedRectShader.render(
+                newX1,
+                newY1,
+                newX2,
+                newY2,
+                radii,
+                floatArrayOf(red, green, blue, alpha),
+                floatArrayOf(red, green, blue, 0f),
+                0f,
+                floatArrayOf(1f, 1f, 1f, 1f)
+            )
+        ) {
+            return
+        }
+
+        drawRoundedRectangleLegacy(newX1, newY1, newX2, newY2, red, green, blue, alpha, clampedRadius, cornersToRound)
+    }
+
+    private fun drawRoundedRectangleLegacy(
+        newX1: Float,
+        newY1: Float,
+        newX2: Float,
+        newY2: Float,
+        red: Float,
+        green: Float,
+        blue: Float,
+        alpha: Float,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
 
         glPushMatrix()
         glEnable(GL_BLEND)
@@ -1130,7 +1300,7 @@ object RenderUtils : MinecraftInstance {
 
         glColor4f(red, green, blue, alpha)
 
-        val radiusD = min(radius.toDouble(), min(newX2 - newX1, newY2 - newY1) / 2.0)
+        val radiusD = radius.toDouble()
 
         val corners = arrayOf(
             Corner.BOTTOM_RIGHT to doubleArrayOf(
@@ -1178,7 +1348,30 @@ object RenderUtils : MinecraftInstance {
         return floatArrayOf(newX1, newY1, newX2, newY2)
     }
 
+    private fun clampRadius(radius: Float, x1: Float, y1: Float, x2: Float, y2: Float) =
+        radius.coerceAtLeast(0f).coerceAtMost(min(x2 - x1, y2 - y1) / 2f)
+
+    private fun radiiForCorners(radius: Float, cornersToRound: RoundedCorners) = floatArrayOf(
+        if (Corner.TOP_LEFT in cornersToRound.corners) radius else 0f,
+        if (Corner.TOP_RIGHT in cornersToRound.corners) radius else 0f,
+        if (Corner.BOTTOM_RIGHT in cornersToRound.corners) radius else 0f,
+        if (Corner.BOTTOM_LEFT in cornersToRound.corners) radius else 0f
+    )
+
     fun drawCircle(x: Float, y: Float, radius: Float, start: Int, end: Int) {
+        if (CircleShader.render(
+                x,
+                y,
+                radius + 1f,
+                floatArrayOf(1f, 1f, 1f, 1f),
+                (radius - 1f).coerceAtLeast(0f) / (radius + 1f),
+                start.toFloat().toRadians(),
+                end.toFloat().toRadians()
+            )
+        ) {
+            return
+        }
+
         enableBlend()
         disableTexture2D()
         tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
@@ -1201,6 +1394,19 @@ object RenderUtils : MinecraftInstance {
     }
 
     fun drawFilledCircle(xx: Int, yy: Int, radius: Float, color: Color) {
+        if (CircleShader.render(
+                xx.toFloat(),
+                yy.toFloat(),
+                radius,
+                floatArrayOf(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f),
+                0f,
+                0f,
+                (Math.PI * 2.0).toFloat()
+            )
+        ) {
+            return
+        }
+
         val sections = 50
         val dAngle = 2 * Math.PI / sections
         var x: Float
@@ -1234,16 +1440,83 @@ object RenderUtils : MinecraftInstance {
         height: Int,
         tileWidth: Float,
         tileHeight: Float,
-        color: Color
+        color: Color,
+        radius: Float = 0f
     ) {
         glPushMatrix()
         val texture: ResourceLocation = skin ?: mc.thePlayer.locationSkin
 
         glColor(color)
         mc.textureManager.bindTexture(texture)
-        drawScaledCustomSizeModalRect(x, y, u, v, uWidth, vHeight, width, height, tileWidth, tileHeight)
+
+        if (radius > 0f) {
+            val x1 = x.toFloat()
+            val y1 = y.toFloat()
+            val x2 = x1 + width
+            val y2 = y1 + height
+            val clampedRadius = radius.coerceAtLeast(0f).coerceAtMost(min(width, height) / 2f)
+            val textureArea = floatArrayOf(
+                u / tileWidth,
+                v / tileHeight,
+                (u + uWidth) / tileWidth,
+                (v + vHeight) / tileHeight
+            )
+
+            if (!RoundedTextureShader.render(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    floatArrayOf(clampedRadius, clampedRadius, clampedRadius, clampedRadius),
+                    floatArrayOf(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f),
+                    textureArea
+                )
+            ) {
+                drawRoundedTextureLegacy(x1, y1, x2, y2, clampedRadius, textureArea)
+            }
+        } else {
+            drawScaledCustomSizeModalRect(x, y, u, v, uWidth, vHeight, width, height, tileWidth, tileHeight)
+        }
+
         glColor(Color.WHITE)
         glPopMatrix()
+    }
+
+    private fun drawRoundedTextureLegacy(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        radius: Float,
+        textureArea: FloatArray
+    ) {
+        val radiusD = radius.toDouble()
+        val width = x2 - x1
+        val height = y2 - y1
+        val (u1, v1, u2, v2) = textureArea
+
+        drawWithTessellatorWorldRenderer {
+            begin(GL_TRIANGLE_FAN, DefaultVertexFormats.POSITION_TEX)
+
+            val corners = arrayOf(
+                doubleArrayOf(x2 - radiusD, y2 - radiusD, 0.0),
+                doubleArrayOf(x2 - radiusD, y1 + radiusD, 90.0),
+                doubleArrayOf(x1 + radiusD, y1 + radiusD, 180.0),
+                doubleArrayOf(x1 + radiusD, y2 - radiusD, 270.0),
+            )
+
+            for ((cx, cy, startAngle) in corners) {
+                for (i in 0..90 step 10) {
+                    val angle = Math.toRadians(startAngle + i)
+                    val px = cx + radiusD * sin(angle)
+                    val py = cy + radiusD * cos(angle)
+                    val texX = (u1..u2).lerpWith(((px - x1) / width).toFloat().coerceIn(0f, 1f))
+                    val texY = (v1..v2).lerpWith(((py - y1) / height).toFloat().coerceIn(0f, 1f))
+
+                    pos(px, py, 0.0).tex(texX.toDouble(), texY.toDouble()).endVertex()
+                }
+            }
+        }
     }
 
     fun drawImage(
@@ -1269,7 +1542,26 @@ object RenderUtils : MinecraftInstance {
             val y1 = y.toFloat()
             val x2 = x1 + width
             val y2 = y1 + height
-            val radiusD = min(radius.toDouble(), min(width, height) / 2.0)
+            val clampedRadius = radius.coerceAtMost(min(width, height) / 2f)
+
+            if (RoundedTextureShader.render(
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    floatArrayOf(clampedRadius, clampedRadius, clampedRadius, clampedRadius),
+                    floatArrayOf(color.red / 255f, color.green / 255f, color.blue / 255f, color.alpha / 255f)
+                )
+            ) {
+                glColor(Color.WHITE)
+                glDepthMask(true)
+                glDisable(GL_BLEND)
+                glEnable(GL_DEPTH_TEST)
+                glPopMatrix()
+                return
+            }
+
+            val radiusD = clampedRadius.toDouble()
 
             drawWithTessellatorWorldRenderer {
                 begin(GL_TRIANGLE_FAN, DefaultVertexFormats.POSITION_TEX)

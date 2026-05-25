@@ -17,15 +17,18 @@ object RainbowShader : Shader("rainbow_shader.frag"), Closeable {
     var strengthX = 0f
     var strengthY = 0f
     var offset = 0f
+    var alpha = 1f
 
     override fun setupUniforms() {
         setupUniform("offset")
         setupUniform("strength")
+        setupUniform("alpha")
     }
 
     override fun updateUniforms() {
         glUniform2f(getUniform("strength"), strengthX, strengthY)
         glUniform1f(getUniform("offset"), offset)
+        glUniform1f(getUniform("alpha"), alpha)
     }
 
     override fun startShader() {
@@ -47,10 +50,16 @@ object RainbowShader : Shader("rainbow_shader.frag"), Closeable {
 
     @JvmStatic
     fun begin(enable: Boolean, x: Float, y: Float, offset: Float): RainbowShader {
+        return begin(enable, x, y, offset, 1f)
+    }
+
+    @JvmStatic
+    fun begin(enable: Boolean, x: Float, y: Float, offset: Float, alpha: Float): RainbowShader {
         if (enable) {
             strengthX = x
             strengthY = y
             this.offset = offset
+            this.alpha = alpha
 
             startShader()
         }

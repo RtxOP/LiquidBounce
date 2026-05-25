@@ -102,7 +102,7 @@ object Fonts : MinecraftInstance {
 
             fontSemibold35 = register(
                 FontInfo(name = "Outfit Semibold", size = 35),
-                getFontFromFile("Outfit-Semibold.ttf", 35).asGameFontRenderer()
+                getFontFromFile("Outfit-SemiBold.ttf", 35).asGameFontRenderer()
             )
 
             fontRegular35 = register(
@@ -117,7 +117,7 @@ object Fonts : MinecraftInstance {
 
             fontSemibold40 = register(
                 FontInfo(name = "Outfit Semibold", size = 40),
-                getFontFromFile("Outfit-Semibold.ttf", 40).asGameFontRenderer()
+                getFontFromFile("Outfit-SemiBold.ttf", 40).asGameFontRenderer()
             )
 
             fontRegular45 = register(
@@ -127,17 +127,17 @@ object Fonts : MinecraftInstance {
 
             fontSemibold40 = register(
                 FontInfo(name = "Outfit Semibold", size = 40),
-                getFontFromFile("Outfit-Semibold.ttf", 40).asGameFontRenderer()
+                getFontFromFile("Outfit-SemiBold.ttf", 40).asGameFontRenderer()
             )
 
             fontExtraBold35 = register(
                 FontInfo(name = "Outfit Extrabold", size = 35),
-                getFontFromFile("Outfit-Extrabold.ttf", 35).asGameFontRenderer()
+                getFontFromFile("Outfit-ExtraBold.ttf", 35).asGameFontRenderer()
             )
 
             fontExtraBold40 = register(
                 FontInfo(name = "Outfit Extrabold", size = 40),
-                getFontFromFile("Outfit-Extrabold.ttf", 40).asGameFontRenderer()
+                getFontFromFile("Outfit-ExtraBold.ttf", 40).asGameFontRenderer()
             )
 
             fontBold180 = register(

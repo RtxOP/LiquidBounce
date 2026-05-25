@@ -1,102 +1,70 @@
-/*
- * Original shader from: https://www.shadertoy.com/view/ddKSDd
- * Slightly modified to match the client's atmosphere.
- */
 #version 120
 
-#ifdef GL_ES
-precision lowp float;
-#endif
-
-// glslsandbox uniforms
-uniform float iTime;
 uniform vec2 iResolution;
+uniform float iTime;
 
-// Simple hash function
-float hash(float n) {
-    return fract(sin(n) * 43758.5453);
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
 }
 
-// 2D noise function
 float noise(vec2 p) {
     vec2 i = floor(p);
     vec2 f = fract(p);
     vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(mix(hash(i.x + hash(i.y)), hash(i.x + 1.0 + hash(i.y)), u.x),
-    mix(hash(i.x + hash(i.y + 1.0)), hash(i.x + 1.0 + hash(i.y + 1.0)), u.x), u.y);
+
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-// Mountain range function
-float mountainRange(vec2 uv) {
-    float mountainHeight = 0.0;
-    float frequency = 2.0;
+float fbm(vec2 p) {
+    float value = 0.0;
     float amplitude = 0.5;
-    for (int i = 0; i < 5; i++) {
-        mountainHeight += noise(uv * frequency) * amplitude;
-        frequency *= 2.0;
+
+    for (int i = 0; i < 4; i++) {
+        value += amplitude * noise(p);
+        p = mat2(1.62, 1.18, -1.18, 1.62) * p + 17.0;
         amplitude *= 0.5;
     }
-    return mountainHeight;
-}
 
-// Aurora layer function
-vec3 auroraLayer(vec2 uv, float speed, float intensity, vec3 color) {
-    float t = iTime * speed;
-    vec2 scaleXY = vec2(2.0, 2.0);
-    vec2 movement = vec2(2.0, -2.0);
-    vec2 p = uv * scaleXY + t * movement;
-    float n = noise(p + noise(color.xy + p + t));
-
-    float topEdgeSharpness = 0.0; //the smaller this value, the crispier the edge
-    float bottomFadeOut = 0.3; //the higher this value, the more solid the aurora appears
-    float aurora = smoothstep(0.0, topEdgeSharpness, n - uv.y) * (1.0 - smoothstep(0.0, bottomFadeOut, n - uv.y));
-
-    aurora = (n - uv.y * 0.6) ;
-
-    return aurora * intensity * color * 0.5;
-
-}
-
-
-// Main image function
-void mainImage(out vec4 fragColor, in vec2 fragCoord) {
-    vec2 uv = fragCoord / iResolution.xy;
-    uv.x *= iResolution.x / iResolution.y;
-
-    // Create multiple aurora layers with varying colors, speeds, and intensities
-    vec3 color = vec3(0.0);
-    color += auroraLayer(uv, 0.05, 0.3, vec3(0.0, 1.0, 0.3));
-    color += auroraLayer(uv, 0.1, 0.4, vec3(0.1, 0.5, 0.9));
-    color += auroraLayer(uv, 0.15, 0.3, vec3(0.4, 0.1, 0.8));
-    color += auroraLayer(uv, 0.07, 0.2, vec3(0.8, 0.1, 0.6));
-
-    vec3 skyColor1 = vec3(0.2, 0.0, 0.4);
-    vec3 skyColor2 = vec3(0.15, 0.2, 0.35);
-    // Add a gradient to simulate the night sky
-    color += skyColor2 * (1.0 - smoothstep(1.0, 1.0, uv.y));
-    color += skyColor1 * (1.0 - smoothstep(0.0, 0.5, uv.y));
-
-    int numLayers = 5;
-    for (int i = 0; i < numLayers; i++) {
-        // Calculate the height of the mountain range
-        float height = float(numLayers-i) * 0.1
-        * smoothstep(1.0, 0.0,
-        mountainRange(
-        vec2(iTime * 0.03 * (float(i) + 1.0) + float(i) * 4.0, 0.0)
-        + uv * vec2( 1.0 + float(numLayers - i) * 0.05 , 0.23 )
-        )
-        );
-
-        // Create the black silhouette of the mountain range
-        float mountain = smoothstep(0.0, 0.0, height - uv.y);
-
-        // Combine the mountain range and sky
-        color = mix(color, skyColor2 * float(numLayers - i)/4.0, mountain);
-    }
-
-    fragColor = vec4(color, 1.0);
+    return value;
 }
 
 void main() {
-    mainImage(gl_FragColor, gl_FragCoord.xy);
+    vec2 resolution = max(iResolution, vec2(1.0));
+    vec2 uv = gl_FragCoord.xy / resolution;
+    vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
+
+    float t = iTime * 0.18;
+    vec2 drift = vec2(t * 0.32, -t * 0.18);
+    float warp = fbm(p * 1.15 + drift);
+
+    float ribbonA = sin((p.x * 1.35 + warp * 1.65 + t) * 3.14159);
+    float ribbonB = sin((p.x * -1.05 + p.y * 0.55 + warp * 1.35 - t * 0.8) * 3.14159);
+    float aurora = smoothstep(0.55, 1.0, ribbonA * 0.5 + 0.5);
+    aurora += smoothstep(0.62, 1.0, ribbonB * 0.5 + 0.5) * 0.65;
+
+    float verticalMask = smoothstep(-0.85, 0.25, p.y) * (1.0 - smoothstep(0.1, 1.25, p.y));
+    aurora *= verticalMask;
+    aurora *= 0.45 + fbm(p * 2.2 + vec2(-t, t * 0.7)) * 0.55;
+
+    vec3 base = vec3(0.018, 0.023, 0.031);
+    vec3 teal = vec3(0.02, 0.36, 0.40);
+    vec3 violet = vec3(0.22, 0.12, 0.34);
+    vec3 blue = vec3(0.04, 0.10, 0.18);
+
+    float depth = 1.0 - smoothstep(0.0, 1.25, length(p));
+    vec3 color = base + blue * depth * 0.42;
+    color += mix(teal, violet, smoothstep(-0.2, 0.75, p.x + warp * 0.35)) * aurora * 0.55;
+
+    float vignette = 1.0 - smoothstep(0.28, 1.45, length(p * vec2(0.82, 1.08)));
+    color *= 0.54 + vignette * 0.62;
+
+    float grain = hash(gl_FragCoord.xy + iTime * 23.0) - 0.5;
+    color += grain / 255.0;
+
+    gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }

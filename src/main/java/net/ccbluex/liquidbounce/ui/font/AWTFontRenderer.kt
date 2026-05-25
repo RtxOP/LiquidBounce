@@ -17,6 +17,9 @@ import net.minecraft.client.renderer.texture.TextureUtil
 import net.minecraftforge.fml.relauncher.Side
 import net.minecraftforge.fml.relauncher.SideOnly
 import org.lwjgl.opengl.GL11.*
+import org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM
+import org.lwjgl.opengl.GL20.glUseProgram
+import org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE
 import java.awt.Color
 import java.awt.Font
 import java.awt.RenderingHints
@@ -81,7 +84,10 @@ class AWTFontRenderer(
         val x: Int,
         val y: Int,
         val width: Int,
-        val height: Int
+        val height: Int,
+        val advance: Int,
+        val offsetX: Int,
+        val offsetY: Int
     )
 
     /**
@@ -92,6 +98,8 @@ class AWTFontRenderer(
         var lastUsage: Long,
         var deleted: Boolean = false
     )
+
+    private data class GlyphImage(val image: BufferedImage, val advance: Int, val layoutHeight: Int)
 
     private val charLocations = arrayOfNulls<CharLocation>(stopChar)
 
@@ -175,6 +183,8 @@ class AWTFontRenderer(
                 // Fallback => break quads, draw with MC font
                 glEnd()
                 GlStateManager.resetColor()
+                val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+                glUseProgram(previousProgram)
 
                 glPushMatrix()
 
@@ -197,11 +207,12 @@ class AWTFontRenderer(
                 } else {
                     bindTexture(textureID)
                 }
+                glUseProgram(previousProgram)
                 glPopMatrix()
                 glBegin(GL_QUADS)
             } else {
                 drawChar(loc, currX + (fallbackWidth * 4f), 0f)
-                currX += (loc.width - 8f)
+                currX += loc.advance
             }
         }
 
@@ -231,7 +242,7 @@ class AWTFontRenderer(
                 val w = mc.fontRendererObj.getCharWidth(char)
                 fallbackWidth += ((w + 8) * fallbackScale).coerceAtLeast(0f)
             } else {
-                myWidth += (loc.width - 8)
+                myWidth += loc.advance
             }
         }
 
@@ -257,6 +268,8 @@ class AWTFontRenderer(
     private fun drawChar(loc: CharLocation, x: Float, y: Float) {
         val w = loc.width.toFloat()
         val h = loc.height.toFloat()
+        val x1 = x + loc.offsetX
+        val y1 = y + loc.offsetY
 
         val u = loc.x.toFloat() / textureWidth
         val v = loc.y.toFloat() / textureHeight
@@ -265,40 +278,42 @@ class AWTFontRenderer(
 
         // 4 corners
         glTexCoord2f(u, v)
-        glVertex2f(x, y)
+        glVertex2f(x1, y1)
 
         glTexCoord2f(u, v + vh)
-        glVertex2f(x, y + h)
+        glVertex2f(x1, y1 + h)
 
         glTexCoord2f(u + uw, v + vh)
-        glVertex2f(x + w, y + h)
+        glVertex2f(x1 + w, y1 + h)
 
         glTexCoord2f(u + uw, v)
-        glVertex2f(x + w, y)
+        glVertex2f(x1 + w, y1)
     }
 
     /**
      * Builds the single large texture with [startChar] to [stopChar] glyphs.
      */
     private fun renderBitmap(startChar: Int, stopChar: Int) {
-        val fontImages = arrayOfNulls<BufferedImage>(stopChar)
+        val fontImages = arrayOfNulls<GlyphImage>(stopChar)
+        val padding = 0
 
         var rowHeight = 0
         var charX = 0
         var charY = 0
 
         for (charCode in startChar until stopChar) {
-            val charImg = drawCharToImage(charCode.toChar())
+            val glyph = drawCharToImage(charCode.toChar())
+            val charImg = glyph.image
             val cw = charImg.width
             val ch = charImg.height
 
-            if (ch > fontHeight) {
-                fontHeight = ch
+            if (glyph.layoutHeight > fontHeight) {
+                fontHeight = glyph.layoutHeight
             }
 
-            val loc = CharLocation(charX, charY, cw, ch)
+            val loc = CharLocation(charX, charY, cw, ch, glyph.advance, -padding, -padding)
             charLocations[charCode] = loc
-            fontImages[charCode] = charImg
+            fontImages[charCode] = glyph
 
             charX += cw
             if (cw > 0 && ch > rowHeight) {
@@ -327,19 +342,25 @@ class AWTFontRenderer(
 
         // Draw each char subimage
         for (charCode in startChar until stopChar) {
-            val subImg = fontImages[charCode] ?: continue
+            val subImg = fontImages[charCode]?.image ?: continue
             val loc = charLocations[charCode] ?: continue
             g.drawImage(subImg, loc.x, loc.y, null)
         }
+        g.dispose()
 
         // Upload to GPU
         textureID = TextureUtil.uploadTextureImageAllocate(TextureUtil.glGenTextures(), bigImage, true, true)
+        glBindTexture(GL_TEXTURE_2D, textureID)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
     }
 
     /**
      * Draws a single char [c] into a small [BufferedImage].
      */
-    private fun drawCharToImage(c: Char): BufferedImage {
+    private fun drawCharToImage(c: Char): GlyphImage {
         // measure to get width/height
         val measureImg = BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB)
         val measureG = measureImg.createGraphics()
@@ -347,7 +368,8 @@ class AWTFontRenderer(
         measureG.font = font
 
         val fm = measureG.fontMetrics
-        var w = fm.charWidth(c) + 8
+        val advance = max(fm.charWidth(c), 0)
+        var w = advance + 8
         if (w <= 0) w = 7
         var h = fm.height + 3
         if (h <= 0) h = font.size
@@ -355,11 +377,16 @@ class AWTFontRenderer(
         // real
         val charImg = BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB)
         val g2d = charImg.createGraphics()
+        g2d.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
         g2d.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g2d.font = font
         g2d.color = Color.WHITE
         g2d.drawString(c.toString(), 3, 1 + fm.ascent)
-        return charImg
+        g2d.dispose()
+        measureG.dispose()
+
+        return GlyphImage(charImg, advance, h)
     }
 
     /**

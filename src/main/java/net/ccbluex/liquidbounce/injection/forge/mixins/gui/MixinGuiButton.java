@@ -65,7 +65,7 @@ public abstract class MixinGuiButton extends Gui {
     private boolean lastHover = false;
 
     @Unique
-    private float progress = xPosition;
+    private float progress = Float.NaN;
 
     /**
      * @author CCBlueX
@@ -73,18 +73,29 @@ public abstract class MixinGuiButton extends Gui {
     @Overwrite
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         if (visible) {
+            if (Float.isNaN(progress)) {
+                progress = xPosition;
+            }
+
             hovered = mouseX >= xPosition && mouseY >= yPosition && mouseX < xPosition + width && mouseY < yPosition + height;
 
             float supposedWidth = width;
+            boolean slider = false;
 
             if ((Object) this instanceof GuiOptionSlider) {
                 supposedWidth *= ((GuiOptionSlider) (Object) this).sliderValue;
                 hovered = true;
+                slider = true;
             }
 
             if ((Object) this instanceof GuiScreenOptionsSounds.Button) {
                 supposedWidth *= ((GuiScreenOptionsSounds.Button) (Object) this).field_146156_o;
                 hovered = true;
+                slider = true;
+            }
+
+            if (startTime < 0L) {
+                startTime = System.currentTimeMillis();
             }
 
             if (hovered != lastHover) {
@@ -102,17 +113,29 @@ public abstract class MixinGuiButton extends Gui {
             progress = (int) (startingPos + (endingPos - startingPos) * MathHelper.clamp_float(elapsed / 200f, 0f, 1f));
 
             float radius = 2.5F;
+            float hoverProgress = enabled && supposedWidth > 0F
+                    ? MathHelper.clamp_float((progress - xPosition) / supposedWidth, 0F, 1F)
+                    : 0F;
+            float drawY = yPosition - hoverProgress;
+            int baseRed = (int) (18 + 8 * hoverProgress);
+            int baseGreen = (int) (23 + 11 * hoverProgress);
+            int baseBlue = (int) (29 + 14 * hoverProgress);
+            int baseAlpha = (int) (185 + 20 * hoverProgress);
+            int borderAlpha = (int) (80 * hoverProgress);
+            int baseColor = enabled
+                    ? new Color(baseRed, baseGreen, baseBlue, baseAlpha).getRGB()
+                    : new Color(0.45F, 0.45F, 0.45F, 90 / 255F).getRGB();
+            int borderColor = enabled ? new Color(255, 255, 255, borderAlpha).getRGB() : new Color(255, 255, 255, 0).getRGB();
 
-            RenderUtils.INSTANCE.withClipping(() -> {
-                RenderUtils.INSTANCE.drawRoundedRect(xPosition, yPosition, xPosition + width, yPosition + height, enabled ? new Color(0F, 0F, 0F, 120 / 255f).getRGB() : new Color(0.5F, 0.5F, 0.5F, 0.5F).getRGB(), radius, RenderUtils.RoundedCorners.ALL);
-                return null;
-            }, () -> {
-                if (enabled && progress != xPosition) {
-                    // Draw blue overlay
-                    RenderUtils.INSTANCE.drawGradientRect(xPosition, yPosition, progress, yPosition + height, Color.CYAN.darker().getRGB(), Color.BLUE.darker().getRGB(), 0F);
-                }
-                return null;
-            });
+            RenderUtils.INSTANCE.drawRoundedRectWithBorder(xPosition, drawY, xPosition + width, drawY + height, baseColor, borderColor, 1F, radius, RenderUtils.RoundedCorners.ALL);
+
+            if (enabled && slider) {
+                float fillRight = MathHelper.clamp_float(xPosition + supposedWidth, xPosition + 3F, xPosition + width - 3F);
+                float thumbX = MathHelper.clamp_float(xPosition + supposedWidth, xPosition + 4F, xPosition + width - 4F);
+
+                RenderUtils.INSTANCE.drawRoundedRect(xPosition + 2F, drawY + 2F, fillRight, drawY + height - 2F, new Color(0, 111, 255, 90).getRGB(), radius - 1F, RenderUtils.RoundedCorners.ALL);
+                RenderUtils.INSTANCE.drawRoundedRect(thumbX - 1.5F, drawY + 2F, thumbX + 1.5F, drawY + height - 2F, new Color(255, 255, 255, 155).getRGB(), 1.5F, RenderUtils.RoundedCorners.ALL);
+            }
 
             mc.getTextureManager().bindTexture(buttonTextures);
             mouseDragged(mc, mouseX, mouseY);
@@ -120,7 +143,7 @@ public abstract class MixinGuiButton extends Gui {
             AWTFontRenderer.Companion.setAssumeNonVolatile(true);
 
             final FontRenderer fontRenderer = Fonts.fontSemibold35;
-            fontRenderer.drawStringWithShadow(displayString, (float) (xPosition + width / 2 - fontRenderer.getStringWidth(displayString) / 2), yPosition + (height - 5) / 2F, 14737632);
+            fontRenderer.drawStringWithShadow(displayString, (float) (xPosition + width / 2 - fontRenderer.getStringWidth(displayString) / 2), drawY + (height - 5) / 2F, 14737632);
 
             AWTFontRenderer.Companion.setAssumeNonVolatile(false);
 

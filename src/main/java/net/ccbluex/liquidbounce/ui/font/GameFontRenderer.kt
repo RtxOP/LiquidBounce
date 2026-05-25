@@ -16,6 +16,7 @@ import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.renderer.GlStateManager.*
 import net.minecraft.util.ResourceLocation
 import org.lwjgl.opengl.GL11.*
+import org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM
 import org.lwjgl.opengl.GL20.glUseProgram
 import java.awt.Color
 import java.awt.Font
@@ -189,9 +190,13 @@ class GameFontRenderer(
     ): Int {
         if (text.isNullOrEmpty()) return x.toInt()
 
-        // Potentially enable rainbow or gradient shaders
-        if (rainbow) glUseProgram(RainbowFontShader.programId)
-        if (gradient) glUseProgram(GradientFontShader.programId)
+        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+        val initialShaderMode = when {
+            gradient -> 2
+            rainbow -> 1
+            else -> 0
+        }
+        var shaderMode = initialShaderMode
 
         // Position & GL states
         glTranslated(x - 1.5, y + 0.5, 0.0)
@@ -200,7 +205,7 @@ class GameFontRenderer(
         tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
         enableTexture2D()
 
-        var drawColor = if ((color and -0x4000000) == 0) (color or -16777216) else color
+        var drawColor = if ((color ushr 24) == 0 && (color and 0xFFFFFF) != 0) (color or -16777216) else color
         val alpha = (drawColor ushr 24) and 0xFF
 
         // If text has color codes => parse them
@@ -218,7 +223,7 @@ class GameFontRenderer(
                 if (segment.isEmpty()) return@forEachIndexed
                 if (index == 0) {
                     // No color code => normal draw
-                    currFont.drawString(segment, widthSoFar, 0.0, drawColor)
+                    drawFontSegment(currFont, segment, widthSoFar, drawColor, shaderMode)
                     widthSoFar += currFont.getStringWidth(segment)
                 } else {
                     val codeType = segment[0]
@@ -228,9 +233,7 @@ class GameFontRenderer(
                         in 0..15 -> {
                             if (!ignoreColor) {
                                 drawColor = hexColors[colorIndex] or (alpha shl 24)
-                                // If we see a normal color => turn off rainbow/gradient
-                                if (rainbow) glUseProgram(0)
-                                if (gradient) glUseProgram(0)
+                                shaderMode = 0
                             }
                             randomCase = false; bold = false; italic = false
                             underline = false; strikeThrough = false
@@ -243,11 +246,10 @@ class GameFontRenderer(
                         20 -> italic = true            // §o => italic
                         21 -> {                        // §r => reset
                             drawColor = color
-                            if ((drawColor and -67108864) == 0) {
+                            if ((drawColor ushr 24) == 0 && (drawColor and 0xFFFFFF) != 0) {
                                 drawColor = drawColor or -16777216
                             }
-                            if (rainbow) glUseProgram(RainbowFontShader.programId)
-                            if (gradient) glUseProgram(GradientFontShader.programId)
+                            shaderMode = initialShaderMode
 
                             randomCase = false; bold = false; italic = false
                             underline = false; strikeThrough = false
@@ -265,7 +267,7 @@ class GameFontRenderer(
                     // Possibly random-case (magic text)
                     val strToDraw = if (randomCase) randomMagicText(remainder) else remainder
                     // Draw
-                    currFont.drawString(strToDraw, widthSoFar, 0.0, drawColor)
+                    drawFontSegment(currFont, strToDraw, widthSoFar, drawColor, shaderMode)
 
                     // Strikethrough => draw a line
                     if (strikeThrough) {
@@ -294,7 +296,7 @@ class GameFontRenderer(
             }
         } else {
             // No color codes => just default
-            defaultFont.drawString(text, 0.0, 0.0, drawColor)
+            drawFontSegment(defaultFont, text, 0.0, drawColor, shaderMode)
         }
 
         // Cleanup
@@ -302,7 +304,26 @@ class GameFontRenderer(
         glTranslated(-(x - 1.5), -(y + 0.5), 0.0)
         glColor4f(1f, 1f, 1f, 1f)
         resetColor()
+        glUseProgram(previousProgram)
         return (x + getStringWidth(text)).toInt()
+    }
+
+    private fun drawFontSegment(font: AWTFontRenderer, text: String, x: Double, color: Int, shaderMode: Int) {
+        val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
+
+        glUseProgram(
+            when (shaderMode) {
+                2 -> GradientFontShader.programId
+                1 -> RainbowFontShader.programId
+                else -> 0
+            }
+        )
+
+        try {
+            font.drawString(text, x, 0.0, color)
+        } finally {
+            glUseProgram(previousProgram)
+        }
     }
 
     override fun getColorCode(charCode: Char): Int {
