@@ -16,12 +16,14 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
     private var radii = FloatArray(4)
     private var startColor = FloatArray(4)
     private var endColor = FloatArray(4)
+    private var vertical = false
 
     override fun setupUniforms() {
         setupUniform("rectSize")
         setupUniform("radii")
         setupUniform("startColor")
         setupUniform("endColor")
+        setupUniform("vertical")
     }
 
     override fun updateUniforms() {
@@ -29,6 +31,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         glUniform4f(getUniform("radii"), radii[0], radii[1], radii[2], radii[3])
         glUniform4f(getUniform("startColor"), startColor[0], startColor[1], startColor[2], startColor[3])
         glUniform4f(getUniform("endColor"), endColor[0], endColor[1], endColor[2], endColor[3])
+        glUniform1f(getUniform("vertical"), if (vertical) 1f else 0f)
     }
 
     fun render(
@@ -38,7 +41,8 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
         y2: Float,
         radii: FloatArray,
         startColor: FloatArray,
-        endColor: FloatArray
+        endColor: FloatArray,
+        vertical: Boolean = false
     ) {
         if (x2 <= x1 || y2 <= y1) return
         check(loaded) { "${javaClass.name} is not loaded." }
@@ -60,6 +64,7 @@ object RoundedGradientRectShader : Shader("rounded_gradient_rect.frag") {
             this.radii = radii.map { it * scale }.toFloatArray()
             this.startColor = startColor
             this.endColor = endColor
+            this.vertical = vertical
 
             glPushAttrib(GL_ALL_ATTRIB_BITS)
             attribPushed = true

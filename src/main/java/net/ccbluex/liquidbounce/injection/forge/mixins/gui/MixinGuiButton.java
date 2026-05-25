@@ -123,19 +123,16 @@ public abstract class MixinGuiButton extends Gui {
             int baseColor = enabled
                     ? new Color(baseShade, baseShade, baseShade, baseAlpha).getRGB()
                     : new Color(0.5F, 0.5F, 0.5F, 0.5F).getRGB();
+            int borderColor = enabled ? new Color(255, 255, 255, borderAlpha).getRGB() : new Color(255, 255, 255, 0).getRGB();
 
-            RenderUtils.INSTANCE.drawRoundedRect(xPosition, drawY, xPosition + width, drawY + height, baseColor, radius, RenderUtils.RoundedCorners.ALL);
+            RenderUtils.INSTANCE.drawRoundedRectWithBorder(xPosition, drawY, xPosition + width, drawY + height, baseColor, borderColor, 1F, radius, RenderUtils.RoundedCorners.ALL);
 
             if (enabled && slider) {
                 float fillRight = MathHelper.clamp_float(xPosition + supposedWidth, xPosition + 3F, xPosition + width - 3F);
                 float thumbX = MathHelper.clamp_float(xPosition + supposedWidth, xPosition + 4F, xPosition + width - 4F);
 
                 RenderUtils.INSTANCE.drawRoundedRect(xPosition + 2F, drawY + 2F, fillRight, drawY + height - 2F, new Color(0, 111, 255, 90).getRGB(), radius - 1F, RenderUtils.RoundedCorners.ALL);
-                RenderUtils.INSTANCE.drawRoundedRect(thumbX - 1.5F, drawY + 3F, thumbX + 1.5F, drawY + height - 3F, new Color(255, 255, 255, 155).getRGB(), 1.5F, RenderUtils.RoundedCorners.ALL);
-            }
-
-            if (enabled) {
-                RenderUtils.INSTANCE.drawRoundedBorder(xPosition, drawY, xPosition + width, drawY + height, 1F, new Color(255, 255, 255, borderAlpha).getRGB(), radius);
+                RenderUtils.INSTANCE.drawRoundedRect(thumbX - 1.5F, drawY + 2F, thumbX + 1.5F, drawY + height - 2F, new Color(255, 255, 255, 155).getRGB(), 1.5F, RenderUtils.RoundedCorners.ALL);
             }
 
             mc.getTextureManager().bindTexture(buttonTextures);

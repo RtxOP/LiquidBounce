@@ -761,6 +761,41 @@ object RenderUtils : MinecraftInstance {
         drawRoundedBorder(x, y, x2, y2, width, color2, radius)
     }
 
+    fun drawRoundedRectWithBorder(
+        x: Float,
+        y: Float,
+        x2: Float,
+        y2: Float,
+        fillColor: Int,
+        borderColor: Int,
+        borderWidth: Float,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x, y, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+        val (fillAlpha, fillRed, fillGreen, fillBlue) = ColorUtils.unpackARGBFloatValue(fillColor)
+        val (borderAlpha, borderRed, borderGreen, borderBlue) = ColorUtils.unpackARGBFloatValue(borderColor)
+
+        if (RoundedRectShader.render(
+                newX1,
+                newY1,
+                newX2,
+                newY2,
+                radiiForCorners(clampedRadius, cornersToRound),
+                floatArrayOf(fillRed, fillGreen, fillBlue, fillAlpha),
+                floatArrayOf(borderRed, borderGreen, borderBlue, borderAlpha),
+                borderWidth,
+                floatArrayOf(1f, 1f, 1f, 1f)
+            )
+        ) {
+            return
+        }
+
+        drawRoundedRect(newX1, newY1, newX2, newY2, fillColor, clampedRadius, cornersToRound)
+        drawRoundedBorder(newX1, newY1, newX2, newY2, borderWidth, borderColor, clampedRadius)
+    }
+
     fun drawRoundedBorderRectInt(
         x: Int, y: Int, x2: Int, y2: Int, width: Int, color1: Int, color2: Int, radius: Float
     ) {
@@ -1139,6 +1174,39 @@ object RenderUtils : MinecraftInstance {
             radiiForCorners(clampedRadius, cornersToRound),
             start,
             end
+        )
+    }
+
+    @JvmStatic
+    fun drawRoundedVerticalGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        topColor: Int,
+        bottomColor: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        val top = ColorUtils.unpackARGBFloatValue(topColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+        val bottom = ColorUtils.unpackARGBFloatValue(bottomColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            top,
+            bottom,
+            true
         )
     }
 

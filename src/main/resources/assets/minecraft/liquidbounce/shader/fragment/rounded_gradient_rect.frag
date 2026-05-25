@@ -4,6 +4,7 @@ uniform vec2 rectSize;
 uniform vec4 radii;
 uniform vec4 startColor;
 uniform vec4 endColor;
+uniform float vertical;
 
 #define NOISE (0.5 / 255.0)
 
@@ -31,7 +32,7 @@ void main() {
     float dist = roundedDistance(uv * rectSize, rectSize, radii);
     float aa = max(fwidth(dist), 0.75);
     float alpha = 1.0 - smoothstep(-aa, aa, dist);
-    vec4 color = mix(startColor, endColor, clamp(uv.x, 0.0, 1.0));
+    vec4 color = mix(startColor, endColor, clamp(mix(uv.x, uv.y, vertical), 0.0, 1.0));
     color.rgb += mix(NOISE, -NOISE, fract(sin(dot(uv, vec2(12.9898, 78.233))) * 43758.5453));
     color.a *= alpha;
 

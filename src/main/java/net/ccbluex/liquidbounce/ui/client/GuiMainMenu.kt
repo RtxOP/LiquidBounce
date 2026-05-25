@@ -18,7 +18,7 @@ import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.client.JavaVersion
 import net.ccbluex.liquidbounce.utils.client.javaVersion
 import net.ccbluex.liquidbounce.utils.io.MiscUtils
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBorderRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedVerticalGradientRect
 import net.ccbluex.liquidbounce.utils.ui.AbstractScreen
 import net.minecraft.client.gui.GuiButton
 import net.minecraft.client.gui.GuiMultiplayer
@@ -203,12 +203,14 @@ class GuiMainMenu : AbstractScreen() {
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         drawBackground(0)
 
-        drawRoundedBorderRect(
-            width / 2f - 115, height / 4f + 35, width / 2f + 115, height / 4f + 175,
-            2f,
-            Integer.MIN_VALUE,
-            Integer.MIN_VALUE,
-            3F
+        drawRoundedVerticalGradientRect(
+            width / 2f - 124,
+            height / 4f + 30,
+            width / 2f + 124,
+            height / 4f + 182,
+            0xD3181D24.toInt(),
+            0xDD070A0E.toInt(),
+            7F
         )
 
         Fonts.fontBold180.drawCenteredString(CLIENT_NAME, width / 2F, height / 8F, 4673984, true)

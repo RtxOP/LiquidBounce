@@ -1,6 +1,7 @@
 #version 120
 
 uniform float offset;
+uniform float alpha;
 uniform vec2 strength;
 
 void main() {
@@ -9,7 +10,6 @@ void main() {
     ((fract((vec3(
     (float(mod (((tmpvar_1.x + tmpvar_1.y) + offset), 1.0)))
     ) + vec3(1.0, 0.6666667, 0.3333333))) * 6.0) - vec3(3.0, 3.0, 3.0))
-    ) - vec3(1.0, 1.0, 1.0)), 0.0, 1.0), 1.0);
+    ) - vec3(1.0, 1.0, 1.0)), 0.0, 1.0), alpha);
     gl_FragColor = tmpvar_2;
 }
-
