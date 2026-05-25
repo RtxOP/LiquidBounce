@@ -8,6 +8,7 @@ package net.ccbluex.liquidbounce.utils.render.shader.shaders
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.deltaTime
 import net.ccbluex.liquidbounce.utils.render.drawWithTessellatorWorldRenderer
 import net.ccbluex.liquidbounce.utils.render.shader.Shader
+import net.minecraft.client.renderer.GlStateManager
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats
 import org.lwjgl.opengl.Display
 import org.lwjgl.opengl.GL11.*
@@ -43,19 +44,11 @@ class BackgroundShader : Shader {
         if (!loaded)
             return false
 
-        var attribPushed = false
         var shaderStarted = false
         val previousProgram = glGetInteger(GL_CURRENT_PROGRAM)
 
         return try {
-            glPushAttrib(GL_ALL_ATTRIB_BITS)
-            attribPushed = true
-
-            glColor4f(1f, 1f, 1f, 1f)
-            glDisable(GL_TEXTURE_2D)
-            glDisable(GL_DEPTH_TEST)
-            glDepthMask(false)
-            glDisable(GL_BLEND)
+            setupBackgroundState()
 
             shaderStarted = true
             startShader()
@@ -72,19 +65,39 @@ class BackgroundShader : Shader {
             shaderStarted = false
             glUseProgram(previousProgram)
 
-            glPopAttrib()
-            attribPushed = false
+            setupGuiState()
             true
         } catch (e: Exception) {
             if (shaderStarted) {
                 stopShader()
             }
             glUseProgram(previousProgram)
-            if (attribPushed) {
-                glPopAttrib()
-            }
+            setupGuiState()
             false
         }
+    }
+
+    private fun setupBackgroundState() {
+        GlStateManager.resetColor()
+        GlStateManager.disableTexture2D()
+        GlStateManager.disableDepth()
+        GlStateManager.depthMask(false)
+        GlStateManager.disableBlend()
+        GlStateManager.disableLighting()
+        GlStateManager.disableFog()
+    }
+
+    private fun setupGuiState() {
+        GlStateManager.resetColor()
+        GlStateManager.enableTexture2D()
+        GlStateManager.disableDepth()
+        GlStateManager.depthMask(false)
+        GlStateManager.enableBlend()
+        GlStateManager.tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
+        GlStateManager.enableAlpha()
+        GlStateManager.disableLighting()
+        GlStateManager.disableFog()
+        GlStateManager.shadeModel(GL_FLAT)
     }
 
     companion object {
