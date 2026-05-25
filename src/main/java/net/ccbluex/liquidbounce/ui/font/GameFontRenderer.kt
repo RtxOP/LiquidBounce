@@ -205,7 +205,7 @@ class GameFontRenderer(
         tryBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO)
         enableTexture2D()
 
-        var drawColor = if ((color and -0x4000000) == 0) (color or -16777216) else color
+        var drawColor = if ((color ushr 24) == 0 && (color and 0xFFFFFF) != 0) (color or -16777216) else color
         val alpha = (drawColor ushr 24) and 0xFF
 
         // If text has color codes => parse them
@@ -246,7 +246,7 @@ class GameFontRenderer(
                         20 -> italic = true            // §o => italic
                         21 -> {                        // §r => reset
                             drawColor = color
-                            if ((drawColor and -67108864) == 0) {
+                            if ((drawColor ushr 24) == 0 && (drawColor and 0xFFFFFF) != 0) {
                                 drawColor = drawColor or -16777216
                             }
                             shaderMode = initialShaderMode

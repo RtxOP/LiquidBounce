@@ -89,12 +89,14 @@ public abstract class MixinGuiButtonExt extends GuiButton {
                 ? MathHelper.clamp_float((progress - xPosition) / supposedWidth, 0F, 1F)
                 : 0F;
         float drawY = yPosition - hoverProgress;
-        int baseAlpha = (int) (120 + 26 * hoverProgress);
-        int baseShade = (int) (10 * hoverProgress);
-        int borderAlpha = (int) (34 + 46 * hoverProgress);
+        int baseRed = (int) (18 + 8 * hoverProgress);
+        int baseGreen = (int) (23 + 11 * hoverProgress);
+        int baseBlue = (int) (29 + 14 * hoverProgress);
+        int baseAlpha = (int) (185 + 20 * hoverProgress);
+        int borderAlpha = (int) (80 * hoverProgress);
         int baseColor = enabled
-                ? new Color(baseShade, baseShade, baseShade, baseAlpha).getRGB()
-                : new Color(0.5F, 0.5F, 0.5F, 0.5F).getRGB();
+                ? new Color(baseRed, baseGreen, baseBlue, baseAlpha).getRGB()
+                : new Color(0.45F, 0.45F, 0.45F, 90 / 255F).getRGB();
         int borderColor = enabled ? new Color(255, 255, 255, borderAlpha).getRGB() : new Color(255, 255, 255, 0).getRGB();
 
         RenderUtils.INSTANCE.drawRoundedRectWithBorder(xPosition, drawY, xPosition + width, drawY + height, baseColor, borderColor, 1F, radius, RenderUtils.RoundedCorners.ALL);

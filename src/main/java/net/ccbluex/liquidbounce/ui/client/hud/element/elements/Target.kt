@@ -149,6 +149,7 @@ class Target : Element("Target") {
                 val healthColor1 = healthBarColor1.withAlpha((healthBarColor1.alpha * easedVisibility).toInt()).rgb
                 val healthColor2 = healthBarColor2.withAlpha((healthBarColor2.alpha * easedVisibility).toInt()).rgb
                 val healthBackgroundColor = Color.BLACK.withAlpha((255 * easedVisibility).toInt()).rgb
+                val contentVisible = !fadeMode || easedVisibility > 0.04F
 
                 val rainbowOffset = System.currentTimeMillis() % 10000 / 10000F
                 val rainbowX = 1f safeDiv rainbowX
@@ -224,10 +225,12 @@ class Target : Element("Target") {
                         val calcX = healthBarStart + currentWidth - textWidth
                         val textX = max(healthBarStart, calcX)
                         val textY = healthBarTop - Fonts.fontRegular30.fontHeight / 2 - 2F
-                        healthFont.drawString(percentageText, textX, textY, textCustomColor, textShadow)
+                        if (contentVisible) {
+                            healthFont.drawString(percentageText, textX, textY, textCustomColor, textShadow)
+                        }
 
                         val shouldRenderBody =
-                            (fadeMode && easedVisibility > 0.01F) || (smoothMode && width + height > 100)
+                            (fadeMode && contentVisible) || (smoothMode && width + height > 100)
 
                         if (shouldRenderBody) {
                             val renderer = mc.renderManager.getEntityRenderObject<Entity>(target)
