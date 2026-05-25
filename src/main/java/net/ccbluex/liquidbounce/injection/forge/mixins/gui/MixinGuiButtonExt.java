@@ -83,13 +83,41 @@ public abstract class MixinGuiButtonExt extends GuiButton {
         progress = (int) (startingPos + (endingPos - startingPos) * MathHelper.clamp_float(elapsed / 200f, 0f, 1f));
 
         float radius = 2.5F;
+        float hoverProgress = enabled && supposedWidth > 0F
+                ? MathHelper.clamp_float((progress - xPosition) / supposedWidth, 0F, 1F)
+                : 0F;
+        float drawY = yPosition - hoverProgress;
+        int baseAlpha = (int) (120 + 26 * hoverProgress);
+        int baseShade = (int) (10 * hoverProgress);
+        int borderAlpha = (int) (34 + 46 * hoverProgress);
+        int sheenAlpha = (int) (30 * hoverProgress);
+        int baseColor = enabled
+                ? new Color(baseShade, baseShade, baseShade, baseAlpha).getRGB()
+                : new Color(0.5F, 0.5F, 0.5F, 0.5F).getRGB();
 
-        RenderUtils.INSTANCE.drawRoundedRect(xPosition, yPosition, xPosition + width, yPosition + height, enabled ? new Color(0F, 0F, 0F, 120 / 255f).getRGB() : new Color(0.5F, 0.5F, 0.5F, 0.5F).getRGB(), radius, RenderUtils.RoundedCorners.ALL);
+        RenderUtils.INSTANCE.drawRoundedRect(xPosition, drawY, xPosition + width, drawY + height, baseColor, radius, RenderUtils.RoundedCorners.ALL);
+
+        if (enabled) {
+            RenderUtils.INSTANCE.drawRoundedBorder(xPosition, drawY, xPosition + width, drawY + height, 1F, new Color(255, 255, 255, borderAlpha).getRGB(), radius);
+
+            if (sheenAlpha > 0) {
+                float sheenCenter = MathHelper.clamp_float(mouseX, xPosition, xPosition + width);
+                float sheenHalfWidth = Math.max(18F, width * 0.32F);
+                float sheenLeft = Math.max(xPosition, sheenCenter - sheenHalfWidth);
+                float sheenRight = Math.min(xPosition + width, sheenCenter + sheenHalfWidth);
+                float sheenMid = (sheenLeft + sheenRight) * 0.5F;
+                int transparent = new Color(255, 255, 255, 0).getRGB();
+                int highlight = new Color(255, 255, 255, sheenAlpha).getRGB();
+
+                RenderUtils.drawRoundedGradientRect(sheenLeft, drawY + 1F, sheenMid, drawY + Math.max(3F, height * 0.45F), transparent, highlight, radius, RenderUtils.RoundedCorners.TOP_ONLY);
+                RenderUtils.drawRoundedGradientRect(sheenMid, drawY + 1F, sheenRight, drawY + Math.max(3F, height * 0.45F), highlight, transparent, radius, RenderUtils.RoundedCorners.TOP_ONLY);
+            }
+        }
 
         mc.getTextureManager().bindTexture(buttonTextures);
         mouseDragged(mc, mouseX, mouseY);
 
-        fontRenderer.drawStringWithShadow(displayString, (float) (xPosition + width / 2 - fontRenderer.getStringWidth(displayString) / 2), yPosition + (height - 5) / 2F, 14737632);
+        fontRenderer.drawStringWithShadow(displayString, (float) (xPosition + width / 2 - fontRenderer.getStringWidth(displayString) / 2), drawY + (height - 5) / 2F, 14737632);
         resetColor();
     }
 }
