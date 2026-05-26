@@ -18,7 +18,7 @@ import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.client.JavaVersion
 import net.ccbluex.liquidbounce.utils.client.javaVersion
 import net.ccbluex.liquidbounce.utils.io.MiscUtils
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedVerticalGradientRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBlurredDiagonalGradientRect
 import net.ccbluex.liquidbounce.utils.ui.AbstractScreen
 import net.minecraft.client.gui.GuiButton
 import net.minecraft.client.gui.GuiMultiplayer
@@ -203,22 +203,28 @@ class GuiMainMenu : AbstractScreen() {
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         drawBackground(0)
 
-        drawRoundedVerticalGradientRect(
+        drawRoundedBlurredDiagonalGradientRect(
             width / 2f - 124,
             height / 4f + 30,
             width / 2f + 124,
             height / 4f + 182,
-            0xD3181D24.toInt(),
-            0xDD070A0E.toInt(),
-            7F
+            0x66372470,
+            0x662057A8,
+            7F,
+            9F
         )
 
-        Fonts.fontBold180.drawCenteredString(CLIENT_NAME, width / 2F, height / 8F, 4673984, true)
-        Fonts.fontSemibold35.drawCenteredString(
+        val titleText = "Tyr"
+        val titleX = width / 2F
+        val titleY = height / 8F
+        val titleHalfWidth = Fonts.fontBold180.getStringWidth(titleText) / 2F
+
+        Fonts.fontBold180.drawCenteredString(titleText, titleX, titleY, 0xF2ECFF, true)
+        Fonts.fontSemibold35.drawString(
             clientVersionText,
-            width / 2F + 148,
-            height / 8F + Fonts.fontSemibold35.fontHeight,
-            0xffffff,
+            titleX + titleHalfWidth - 6F,
+            titleY + Fonts.fontBold180.fontHeight * 0.62F,
+            0xD8E0FF,
             true
         )
 

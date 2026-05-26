@@ -20,11 +20,13 @@ import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.TextureBlurShader
 import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.gui.ScaledResolution
 import net.minecraft.client.renderer.GlStateManager.*
 import net.minecraft.client.renderer.Tessellator
 import net.minecraft.client.renderer.vertex.DefaultVertexFormats
+import net.minecraft.client.shader.Framebuffer
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.util.*
@@ -50,6 +52,8 @@ object RenderUtils : MinecraftInstance {
         glGenLists(1)
     }
     var deltaTime = 0
+    private var blurFramebuffer: Framebuffer? = null
+    private var blurSwapFramebuffer: Framebuffer? = null
 
     /**
      * Useful for clipping any top-layered rectangle that falls outside a bottom-layered rectangle.
@@ -1208,6 +1212,177 @@ object RenderUtils : MinecraftInstance {
             bottom,
             true
         )
+    }
+
+    @JvmStatic
+    fun drawRoundedDiagonalGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        startColor: Int,
+        endColor: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        val start = ColorUtils.unpackARGBFloatValue(startColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+        val end = ColorUtils.unpackARGBFloatValue(endColor).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            start,
+            end,
+            diagonal = true
+        )
+    }
+
+    fun drawRoundedBlurredDiagonalGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        startColor: Int,
+        endColor: Int,
+        radius: Float,
+        blurRadius: Float = 9f,
+        borderColor: Int = 0x33FFFFFF
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        if (!TextureBlurShader.loaded) {
+            drawRoundedDiagonalGradientRect(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius)
+            return
+        }
+
+        var attribPushed = false
+
+        try {
+            val scaledResolution = ScaledResolution(mc)
+            val scaledWidth = scaledResolution.scaledWidth_double
+            val scaledHeight = scaledResolution.scaledHeight_double
+            val firstPass = getBlurFramebuffer(blurFramebuffer).also { blurFramebuffer = it }
+            val secondPass = getBlurFramebuffer(blurSwapFramebuffer).also { blurSwapFramebuffer = it }
+
+            blurFramebufferPass(mc.framebuffer.framebufferTexture, firstPass, 1f, 0f, blurRadius, scaledWidth, scaledHeight)
+            blurFramebufferPass(firstPass.framebufferTexture, secondPass, 0f, 1f, blurRadius, scaledWidth, scaledHeight)
+
+            mc.framebuffer.bindFramebuffer(true)
+            mc.entityRenderer.setupOverlayRendering()
+
+            OutlineUtils.checkSetupFBO()
+            glPushAttrib(GL_ALL_ATTRIB_BITS)
+            attribPushed = true
+
+            glEnable(GL_STENCIL_TEST)
+            glClear(GL_STENCIL_BUFFER_BIT)
+            glStencilFunc(GL_ALWAYS, 1, 1)
+            glStencilOp(GL_REPLACE, GL_REPLACE, GL_REPLACE)
+            glStencilMask(0xFF)
+            glColorMask(false, false, false, false)
+
+            drawRoundedRect(newX1, newY1, newX2, newY2, -1, clampedRadius)
+
+            glColorMask(true, true, true, true)
+            glStencilFunc(GL_EQUAL, 1, 1)
+            glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP)
+            glStencilMask(0x00)
+
+            drawFullscreenTexture(secondPass.framebufferTexture, scaledWidth, scaledHeight)
+            drawRoundedDiagonalGradientRect(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius)
+
+            if ((borderColor ushr 24) != 0) {
+                drawRoundedBorder(newX1, newY1, newX2, newY2, 0.75f, borderColor, clampedRadius)
+            }
+
+            glStencilMask(0xFF)
+            glDisable(GL_STENCIL_TEST)
+            glPopAttrib()
+            attribPushed = false
+        } catch (t: Throwable) {
+            glColorMask(true, true, true, true)
+            glStencilMask(0xFF)
+            glDisable(GL_STENCIL_TEST)
+            if (attribPushed) {
+                glPopAttrib()
+            }
+            mc.framebuffer.bindFramebuffer(true)
+            mc.entityRenderer.setupOverlayRendering()
+            drawRoundedDiagonalGradientRect(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius)
+        }
+    }
+
+    private fun getBlurFramebuffer(framebuffer: Framebuffer?): Framebuffer {
+        if (framebuffer == null ||
+            framebuffer.framebufferWidth != mc.displayWidth ||
+            framebuffer.framebufferHeight != mc.displayHeight
+        ) {
+            framebuffer?.deleteFramebuffer()
+            return Framebuffer(mc.displayWidth, mc.displayHeight, false).apply {
+                setFramebufferFilter(GL_LINEAR)
+            }
+        }
+
+        return framebuffer
+    }
+
+    private fun blurFramebufferPass(
+        inputTexture: Int,
+        outputFramebuffer: Framebuffer,
+        directionX: Float,
+        directionY: Float,
+        radius: Float,
+        scaledWidth: Double,
+        scaledHeight: Double
+    ) {
+        outputFramebuffer.framebufferClear()
+        outputFramebuffer.bindFramebuffer(true)
+
+        var shaderStarted = false
+        glPushAttrib(GL_ALL_ATTRIB_BITS)
+        try {
+            glColor4f(1f, 1f, 1f, 1f)
+            glDisable(GL_BLEND)
+            glDisable(GL_ALPHA_TEST)
+            glDisable(GL_DEPTH_TEST)
+            glEnable(GL_TEXTURE_2D)
+
+            TextureBlurShader.configure(directionX, directionY, radius)
+            TextureBlurShader.startShader()
+            shaderStarted = true
+            drawFullscreenTexture(inputTexture, scaledWidth, scaledHeight)
+            TextureBlurShader.stopShader()
+            shaderStarted = false
+        } finally {
+            if (shaderStarted) {
+                TextureBlurShader.stopShader()
+            }
+            glPopAttrib()
+        }
+    }
+
+    private fun drawFullscreenTexture(texture: Int, scaledWidth: Double, scaledHeight: Double) {
+        glEnable(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, texture)
+
+        drawWithTessellatorWorldRenderer {
+            begin(GL_QUADS, DefaultVertexFormats.POSITION_TEX)
+            pos(0.0, 0.0, 1.0).tex(0.0, 1.0).endVertex()
+            pos(0.0, scaledHeight, 1.0).tex(0.0, 0.0).endVertex()
+            pos(scaledWidth, scaledHeight, 1.0).tex(1.0, 0.0).endVertex()
+            pos(scaledWidth, 0.0, 1.0).tex(1.0, 1.0).endVertex()
+        }
     }
 
     enum class Corner {
