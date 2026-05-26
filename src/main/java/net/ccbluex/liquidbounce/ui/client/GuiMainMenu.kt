@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.utils.client.JavaVersion
 import net.ccbluex.liquidbounce.utils.client.javaVersion
 import net.ccbluex.liquidbounce.utils.io.MiscUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBlurredDiagonalGradientRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedShadow
 import net.ccbluex.liquidbounce.utils.ui.AbstractScreen
 import net.minecraft.client.gui.GuiButton
 import net.minecraft.client.gui.GuiMultiplayer
@@ -203,15 +204,24 @@ class GuiMainMenu : AbstractScreen() {
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         drawBackground(0)
 
+        val panelLeft = width / 2f - 124
+        val panelTop = height / 4f + 30
+        val panelRight = width / 2f + 124
+        val panelBottom = height / 4f + 182
+        val panelRadius = 12F
+
+        drawRoundedShadow(panelLeft, panelTop, panelRight, panelBottom, 0x3A000000, panelRadius, 18F)
+
         drawRoundedBlurredDiagonalGradientRect(
-            width / 2f - 124,
-            height / 4f + 30,
-            width / 2f + 124,
-            height / 4f + 182,
-            0x66372470,
-            0x662057A8,
-            7F,
-            9F
+            panelLeft,
+            panelTop,
+            panelRight,
+            panelBottom,
+            0x242A2848,
+            0x221F344F,
+            panelRadius,
+            12F,
+            0x00FFFFFF
         )
 
         val titleText = "Tyr"

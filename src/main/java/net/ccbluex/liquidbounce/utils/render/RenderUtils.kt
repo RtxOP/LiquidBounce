@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedShadowShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.TextureBlurShader
 import net.minecraft.client.gui.FontRenderer
@@ -1321,6 +1322,37 @@ object RenderUtils : MinecraftInstance {
             mc.entityRenderer.setupOverlayRendering()
             drawRoundedDiagonalGradientRect(newX1, newY1, newX2, newY2, startColor, endColor, clampedRadius)
         }
+    }
+
+    fun drawRoundedShadow(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        color: Int,
+        radius: Float,
+        spread: Float,
+        offsetX: Float = 0f,
+        offsetY: Float = 0f,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+        val shadowColor = ColorUtils.unpackARGBFloatValue(color).let { (alpha, red, green, blue) ->
+            floatArrayOf(red, green, blue, alpha)
+        }
+
+        RoundedShadowShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            shadowColor,
+            spread,
+            offsetX,
+            offsetY
+        )
     }
 
     private fun getBlurFramebuffer(framebuffer: Framebuffer?): Framebuffer {

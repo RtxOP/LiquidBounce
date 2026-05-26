@@ -106,33 +106,25 @@ public abstract class MixinGuiButtonExt extends GuiButton {
 
         if (enabled && slider) {
             float sliderProgress = MathHelper.clamp_float(supposedWidth / width, 0F, 1F);
-            float trackLeft = xPosition + 7F;
-            float trackRight = xPosition + width - 7F;
-            float trackWidth = trackRight - trackLeft;
-            float trackY = drawY + height / 2F - 2.5F;
-            float trackBottom = trackY + 5F;
-            float fillRight = MathHelper.clamp_float(trackLeft + trackWidth * sliderProgress, trackLeft, trackRight);
-            float thumbX = MathHelper.clamp_float(fillRight, trackLeft + 2F, trackRight - 2F);
-            float thumbHeight = 13F;
-            float thumbY = drawY + height / 2F - thumbHeight / 2F;
-            int thumbAlpha = (int) (178 + 45 * hoverProgress);
+            float fillRight = MathHelper.clamp_float(xPosition + width * sliderProgress, xPosition + 3F, xPosition + width - 3F);
+            float thumbX = MathHelper.clamp_float(fillRight, xPosition + 4F, xPosition + width - 4F);
+            int fillAlpha = (int) (58 + 16 * hoverProgress);
+            int thumbAlpha = (int) (150 + 45 * hoverProgress);
 
-            RenderUtils.INSTANCE.drawRoundedRect(trackLeft, trackY, trackRight, trackBottom, new Color(255, 255, 255, 24).getRGB(), 2.5F, RenderUtils.RoundedCorners.ALL);
-
-            if (fillRight > trackLeft + 0.5F) {
+            if (fillRight > xPosition + 3.5F) {
                 RenderUtils.INSTANCE.drawRoundedGradientRect(
-                        trackLeft,
-                        trackY,
+                        xPosition + 2F,
+                        drawY + 2F,
                         fillRight,
-                        trackBottom,
-                        new Color(104, 86, 255, 145).getRGB(),
-                        new Color(56, 189, 248, 145).getRGB(),
-                        2.5F,
+                        drawY + height - 2F,
+                        new Color(72, 68, 132, fillAlpha).getRGB(),
+                        new Color(58, 92, 140, fillAlpha).getRGB(),
+                        radius - 1F,
                         RenderUtils.RoundedCorners.ALL
                 );
             }
 
-            RenderUtils.INSTANCE.drawRoundedRect(thumbX - 3F, thumbY, thumbX + 3F, thumbY + thumbHeight, new Color(236, 241, 255, thumbAlpha).getRGB(), 3F, RenderUtils.RoundedCorners.ALL);
+            RenderUtils.INSTANCE.drawRoundedRect(thumbX - 2F, drawY + 2.5F, thumbX + 2F, drawY + height - 2.5F, new Color(236, 241, 255, thumbAlpha).getRGB(), 2F, RenderUtils.RoundedCorners.ALL);
         }
 
         mc.getTextureManager().bindTexture(buttonTextures);
