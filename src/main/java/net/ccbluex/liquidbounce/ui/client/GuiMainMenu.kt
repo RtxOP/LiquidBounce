@@ -18,7 +18,7 @@ import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.client.JavaVersion
 import net.ccbluex.liquidbounce.utils.client.javaVersion
 import net.ccbluex.liquidbounce.utils.io.MiscUtils
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedBlurredDiagonalGradientRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedDiagonalGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedShadow
 import net.ccbluex.liquidbounce.utils.ui.AbstractScreen
 import net.minecraft.client.gui.GuiButton
@@ -208,20 +208,18 @@ class GuiMainMenu : AbstractScreen() {
         val panelTop = height / 4f + 30
         val panelRight = width / 2f + 124
         val panelBottom = height / 4f + 182
-        val panelRadius = 12F
+        val panelRadius = 14F
 
-        drawRoundedShadow(panelLeft, panelTop, panelRight, panelBottom, 0x3A000000, panelRadius, 18F)
+        drawRoundedShadow(panelLeft, panelTop, panelRight, panelBottom, 0x59000000, panelRadius, 20F)
 
-        drawRoundedBlurredDiagonalGradientRect(
+        drawRoundedDiagonalGradientRect(
             panelLeft,
             panelTop,
             panelRight,
             panelBottom,
-            0x242A2848,
-            0x221F344F,
-            panelRadius,
-            12F,
-            0x00FFFFFF
+            0xF01C1C1E.toInt(),
+            0xF02C2C2E.toInt(),
+            panelRadius
         )
 
         val titleText = "Tyr"
@@ -229,12 +227,12 @@ class GuiMainMenu : AbstractScreen() {
         val titleY = height / 8F
         val titleHalfWidth = Fonts.fontBold180.getStringWidth(titleText) / 2F
 
-        Fonts.fontBold180.drawCenteredString(titleText, titleX, titleY, 0xF2ECFF, true)
+        Fonts.fontBold180.drawCenteredString(titleText, titleX, titleY, 0xF4FAFF, true)
         Fonts.fontSemibold35.drawString(
             clientVersionText,
             titleX + titleHalfWidth - 6F,
             titleY + Fonts.fontBold180.fontHeight * 0.62F,
-            0xD8E0FF,
+            0xB8B8C0,
             true
         )
 

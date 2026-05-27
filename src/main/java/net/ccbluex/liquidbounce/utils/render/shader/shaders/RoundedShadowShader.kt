@@ -14,6 +14,8 @@ import org.lwjgl.opengl.GL20.*
 object RoundedShadowShader : Shader("rounded_shadow.frag") {
     private var rectWidth = 0f
     private var rectHeight = 0f
+    private var shapeWidth = 0f
+    private var shapeHeight = 0f
     private var radii = FloatArray(4)
     private var shadowColor = FloatArray(4)
     private var spread = 0f
@@ -23,6 +25,7 @@ object RoundedShadowShader : Shader("rounded_shadow.frag") {
 
     override fun setupUniforms() {
         setupUniform("rectSize")
+        setupUniform("shapeSize")
         setupUniform("radii")
         setupUniform("shadowColor")
         setupUniform("spread")
@@ -31,6 +34,7 @@ object RoundedShadowShader : Shader("rounded_shadow.frag") {
 
     override fun updateUniforms() {
         glUniform2f(getUniform("rectSize"), rectWidth, rectHeight)
+        glUniform2f(getUniform("shapeSize"), shapeWidth, shapeHeight)
         glUniform4f(getUniform("radii"), radii[0], radii[1], radii[2], radii[3])
         glUniform4f(getUniform("shadowColor"), shadowColor[0], shadowColor[1], shadowColor[2], shadowColor[3])
         glUniform1f(getUniform("spread"), spread)
@@ -64,6 +68,8 @@ object RoundedShadowShader : Shader("rounded_shadow.frag") {
 
             this.rectWidth = width * scale
             this.rectHeight = height * scale
+            this.shapeWidth = (x2 - x1) * scale
+            this.shapeHeight = (y2 - y1) * scale
             this.radii = radii.map { it * scale }.toFloatArray()
             this.shadowColor = color
             this.spread = spread * scale

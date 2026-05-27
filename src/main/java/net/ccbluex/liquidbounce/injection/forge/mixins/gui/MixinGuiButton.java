@@ -110,24 +110,27 @@ public abstract class MixinGuiButton extends Gui {
 
             progress = (int) (startingPos + (endingPos - startingPos) * MathHelper.clamp_float(elapsed / 200f, 0f, 1f));
 
-            float radius = 2.5F;
+            float radius = 6F;
             float hoverProgress = enabled && supposedWidth > 0F
                     ? MathHelper.clamp_float((progress - xPosition) / supposedWidth, 0F, 1F)
                     : 0F;
-            float drawY = yPosition - hoverProgress;
-            int baseRed = (int) (18 + 8 * hoverProgress);
-            int baseGreen = (int) (23 + 11 * hoverProgress);
-            int baseBlue = (int) (29 + 14 * hoverProgress);
-            int baseAlpha = (int) (150 + 42 * hoverProgress);
-            int borderAlpha = (int) (95 * hoverProgress);
-            int baseColor = enabled
-                    ? new Color(baseRed, baseGreen, baseBlue, baseAlpha).getRGB()
-                    : new Color(0.45F, 0.45F, 0.45F, 90 / 255F).getRGB();
-
-            if (enabled && hoverProgress > 0.02F) {
-                int borderColor = new Color(198, 214, 255, borderAlpha).getRGB();
-                RenderUtils.INSTANCE.drawRoundedRectWithBorder(xPosition, drawY, xPosition + width, drawY + height, baseColor, borderColor, 1F, radius, RenderUtils.RoundedCorners.ALL);
+            float drawY = yPosition;
+            if (enabled) {
+                int topColor = new Color(
+                        (int) (58 + 10 * hoverProgress),
+                        (int) (58 + 10 * hoverProgress),
+                        (int) (61 + 10 * hoverProgress),
+                        (int) (238 + 10 * hoverProgress)
+                ).getRGB();
+                int bottomColor = new Color(
+                        (int) (42 + 8 * hoverProgress),
+                        (int) (42 + 8 * hoverProgress),
+                        (int) (45 + 8 * hoverProgress),
+                        (int) (242 + 8 * hoverProgress)
+                ).getRGB();
+                RenderUtils.INSTANCE.drawRoundedVerticalGradientRect(xPosition, drawY, xPosition + width, drawY + height, topColor, bottomColor, radius, RenderUtils.RoundedCorners.ALL);
             } else {
+                int baseColor = new Color(0.31F, 0.31F, 0.33F, 120 / 255F).getRGB();
                 RenderUtils.INSTANCE.drawRoundedRect(xPosition, drawY, xPosition + width, drawY + height, baseColor, radius, RenderUtils.RoundedCorners.ALL);
             }
 
@@ -144,14 +147,14 @@ public abstract class MixinGuiButton extends Gui {
                             drawY + 2F,
                             fillRight,
                             drawY + height - 2F,
-                            new Color(72, 68, 132, fillAlpha).getRGB(),
-                            new Color(58, 92, 140, fillAlpha).getRGB(),
+                            new Color(10, 132, 255, fillAlpha + 36).getRGB(),
+                            new Color(64, 156, 255, fillAlpha + 30).getRGB(),
                             radius - 1F,
                             RenderUtils.RoundedCorners.ALL
                     );
                 }
 
-                RenderUtils.INSTANCE.drawRoundedRect(thumbX - 2F, drawY + 2.5F, thumbX + 2F, drawY + height - 2.5F, new Color(236, 241, 255, thumbAlpha).getRGB(), 2F, RenderUtils.RoundedCorners.ALL);
+                RenderUtils.INSTANCE.drawRoundedRect(thumbX - 2F, drawY + 2.5F, thumbX + 2F, drawY + height - 2.5F, new Color(242, 242, 247, thumbAlpha).getRGB(), 2F, RenderUtils.RoundedCorners.ALL);
             }
 
             mc.getTextureManager().bindTexture(buttonTextures);
@@ -161,9 +164,9 @@ public abstract class MixinGuiButton extends Gui {
 
             final FontRenderer fontRenderer = Fonts.fontSemibold35;
             int textColor = new Color(
-                    (int) (216 + 27 * hoverProgress),
-                    (int) (222 + 24 * hoverProgress),
-                    255
+                    (int) (235 + 12 * hoverProgress),
+                    (int) (235 + 12 * hoverProgress),
+                    (int) (242 + 8 * hoverProgress)
             ).getRGB();
             fontRenderer.drawStringWithShadow(displayString, (float) (xPosition + width / 2 - fontRenderer.getStringWidth(displayString) / 2), drawY + (height - 5) / 2F, textColor);
 

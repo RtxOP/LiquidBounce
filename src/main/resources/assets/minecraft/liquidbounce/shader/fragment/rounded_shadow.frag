@@ -1,14 +1,15 @@
 #version 120
 
 uniform vec2 rectSize;
+uniform vec2 shapeSize;
 uniform vec4 radii;
 uniform vec4 shadowColor;
 uniform float spread;
 uniform vec2 offset;
 
 float roundedDistance(vec2 p, vec2 size, vec4 r) {
-    vec2 rectP = p - offset - vec2(spread);
-    vec2 innerSize = size - vec2(spread * 2.0);
+    vec2 rectP = p - offset;
+    vec2 innerSize = shapeSize;
     float radius = r.x;
 
     if (rectP.x > innerSize.x * 0.5 && rectP.y < innerSize.y * 0.5) {
@@ -30,8 +31,9 @@ float roundedDistance(vec2 p, vec2 size, vec4 r) {
 void main() {
     vec2 p = gl_TexCoord[0].st * rectSize;
     float dist = roundedDistance(p, rectSize, radii);
-    float shadow = 1.0 - smoothstep(-spread * 0.25, spread, dist);
-    shadow *= smoothstep(-spread * 0.7, spread * 0.35, dist);
+    float edge = smoothstep(-spread * 0.35, 0.0, dist);
+    float fade = 1.0 - smoothstep(0.0, spread, dist);
+    float shadow = edge * fade * fade;
 
     vec4 color = shadowColor;
     color.a *= shadow;
