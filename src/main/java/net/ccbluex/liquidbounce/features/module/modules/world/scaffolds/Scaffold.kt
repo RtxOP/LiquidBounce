@@ -11,6 +11,8 @@ import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.attack.CPSCounter
 import net.ccbluex.liquidbounce.utils.block.*
+import net.ccbluex.liquidbounce.utils.client.ClientUtils
+import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
@@ -43,7 +45,9 @@ import net.minecraft.util.*
 import net.minecraft.world.WorldSettings
 import net.minecraftforge.event.ForgeEventFactory
 import org.lwjgl.input.Keyboard
+import org.lwjgl.opengl.GL11.*
 import java.awt.Color
+import java.util.Locale
 import kotlin.math.*
 
 object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
@@ -117,6 +121,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     val jumpAutomatically by boolean("JumpAutomatically", true) { scaffoldMode == "GodBridge" }
     private val blocksToJumpRange by intRange("BlocksToJumpRange", 4..4, 1..8) {  scaffoldMode == "GodBridge" && !jumpAutomatically }
+    private val godBridgeDebugDump by boolean("GodBridgeDebugDump", true) { isGodBridgeEnabled }
+    private val godBridgeRaytraceTracer by boolean("GodBridgeRaytraceTracer", true) { isGodBridgeEnabled }
 
     // Telly mode sub-values
     private val startHorizontally by boolean("StartHorizontally", true) { scaffoldMode == "Telly" }
@@ -255,6 +261,32 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         get() = scaffoldMode == "GodBridge" || scaffoldMode == "Normal" && options.rotationMode == "GodBridge"
 
     private var godBridgeTargetRotation: Rotation? = null
+
+    private data class RaytraceDebugFrame(
+        val tick: Int,
+        val posY: Double,
+        val prevPosY: Double,
+        val onGround: Boolean,
+        val eyes: Vec3,
+        val motionX: Double,
+        val motionY: Double,
+        val motionZ: Double,
+        val rotation: Rotation,
+        val rotationVec: Vec3,
+        val reach: Vec3,
+        val targetBlock: BlockPos?,
+        val targetSide: EnumFacing?,
+        val raytraceBlock: BlockPos?,
+        val raytraceSide: EnumFacing?,
+        val hitVec: Vec3?,
+        val hitCorrectSide: Boolean,
+    )
+
+    private val raytraceDebugFrames = ArrayDeque<RaytraceDebugFrame>(5)
+    private var lastRaytraceDebugDumpTick = -100
+    private var raytraceTracerStart: Vec3? = null
+    private var raytraceTracerEnd: Vec3? = null
+    private var raytraceTracerHit = false
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -469,6 +501,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     val onTick = handler<GameTickEvent> {
+        val player = mc.thePlayer ?: return@handler
         val target = placeRotation?.placeInfo
 
         val raycastProperly = !(scaffoldMode == "Expand" && expandLength > 1 || shouldGoDown) && options.rotationsActive
@@ -478,7 +511,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
          *
          * @see net.minecraft.client.Minecraft.runTick Line 1345
          */
-        val raycast = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+        val currentRotation = currRotation
+        val raycast = performBlockRaytrace(currentRotation, mc.playerController.blockReachDistance)
+        val hitCorrectSide = raycast != null && target != null && raycast.blockPos == target.blockPos &&
+            (!raycastProperly || raycast.sideHit == target.enumFacing)
+
+        captureRaytraceDebugFrame(player, currentRotation, raycast, target, hitCorrectSide)
 
         var alreadyPlaced = false
 
@@ -507,7 +545,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         raycast.let {
-            if (!options.rotationsActive || it != null && it.blockPos == target.blockPos && (!raycastProperly || it.sideHit == target.enumFacing)) {
+            if (!options.rotationsActive || hitCorrectSide) {
                 val result = if (raycastProperly && it != null) {
                     PlaceInfo(it.blockPos, it.sideHit, it.hitVec)
                 } else {
@@ -757,6 +795,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         placeRotation = null
+        raytraceDebugFrames.clear()
+        raytraceTracerStart = null
+        raytraceTracerEnd = null
         mc.timer.timerSpeed = 1f
 
         SilentHotbar.resetSlot(this)
@@ -808,6 +849,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                     }
                 }
             }
+        }
+
+        if (godBridgeRaytraceTracer && isGodBridgeEnabled) {
+            drawGodBridgeRaytraceTracer()
         }
 
         if (!mark) {
@@ -1015,6 +1060,135 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         return world.rayTraceBlocks(eyes, reach, false, false, true)
     }
+
+    private fun captureRaytraceDebugFrame(
+        player: net.minecraft.client.entity.EntityPlayerSP,
+        rotation: Rotation,
+        raytrace: MovingObjectPosition?,
+        target: PlaceInfo?,
+        hitCorrectSide: Boolean,
+    ) {
+        if (!isGodBridgeEnabled || (!godBridgeDebugDump && !godBridgeRaytraceTracer)) {
+            return
+        }
+
+        val eyes = player.eyes
+        val rotationVec = getVectorForRotation(rotation)
+        val reach = eyes + (rotationVec * mc.playerController.blockReachDistance.toDouble())
+
+        if (godBridgeRaytraceTracer) {
+            raytraceTracerStart = eyes
+            raytraceTracerEnd = raytrace?.hitVec ?: reach
+            raytraceTracerHit = raytrace?.hitVec != null
+        }
+
+        if (!godBridgeDebugDump) {
+            return
+        }
+
+        val frame = RaytraceDebugFrame(
+            player.ticksExisted,
+            player.posY,
+            player.prevPosY,
+            player.onGround,
+            eyes,
+            player.motionX,
+            player.motionY,
+            player.motionZ,
+            rotation,
+            rotationVec,
+            reach,
+            target?.blockPos,
+            target?.enumFacing,
+            raytrace?.blockPos,
+            raytrace?.sideHit,
+            raytrace?.hitVec,
+            hitCorrectSide,
+        )
+
+        if (raytraceDebugFrames.size == 5) {
+            raytraceDebugFrames.removeFirst()
+        }
+
+        raytraceDebugFrames.addLast(frame)
+
+        val startedDropping = player.posY < player.prevPosY || player.motionY < -0.003
+        val shouldDump = target != null && !hitCorrectSide && startedDropping &&
+            player.ticksExisted - lastRaytraceDebugDumpTick > 20
+
+        if (shouldDump) {
+            lastRaytraceDebugDumpTick = player.ticksExisted
+            dumpRaytraceDebugFrames()
+        }
+    }
+
+    private fun dumpRaytraceDebugFrames() {
+        val header = "[Scaffold/GodBridge] Raytrace miss while falling; dumping last ${raytraceDebugFrames.size} ticks"
+
+        chat("§c$header")
+        ClientUtils.LOGGER.info(header)
+
+        raytraceDebugFrames.forEach { frame ->
+            val line = buildString {
+                append("tick=${frame.tick} ")
+                append("posY=${fmt(frame.posY)} prevY=${fmt(frame.prevPosY)} onGround=${frame.onGround} ")
+                append("eyes=${fmt(frame.eyes)} ")
+                append("motion=(${fmt(frame.motionX)}, ${fmt(frame.motionY)}, ${fmt(frame.motionZ)}) ")
+                append("rotation=(yaw=${fmt(frame.rotation.yaw)}, pitch=${fmt(frame.rotation.pitch)}) ")
+                append("rotationVec=${fmt(frame.rotationVec)} ")
+                append("reach=${fmt(frame.reach)} ")
+                append("target=${frame.targetBlock}/${frame.targetSide} ")
+                append("raytrace=${frame.raytraceBlock}/${frame.raytraceSide} ")
+                append("hitVec=${frame.hitVec?.let(::fmt) ?: "null"} ")
+                append("hitCorrectSide=${frame.hitCorrectSide}")
+            }
+
+            chat("§7$line")
+            ClientUtils.LOGGER.info("[Scaffold/GodBridge] $line")
+        }
+    }
+
+    private fun drawGodBridgeRaytraceTracer() {
+        val start = raytraceTracerStart ?: return
+        val end = raytraceTracerEnd ?: return
+        val renderPos = mc.renderManager.renderPos
+        val startRender = start - renderPos
+        val endRender = end - renderPos
+
+        glPushMatrix()
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_BLEND)
+        glEnable(GL_LINE_SMOOTH)
+        glLineWidth(2.5f)
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_DEPTH_TEST)
+        glDepthMask(false)
+
+        if (raytraceTracerHit) {
+            glColor4f(0.1f, 1.0f, 0.2f, 0.9f)
+        } else {
+            glColor4f(1.0f, 0.1f, 0.1f, 0.9f)
+        }
+
+        glBegin(GL_LINES)
+        glVertex3d(startRender.xCoord, startRender.yCoord, startRender.zCoord)
+        glVertex3d(endRender.xCoord, endRender.yCoord, endRender.zCoord)
+        glEnd()
+
+        glDepthMask(true)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_TEXTURE_2D)
+        glDisable(GL_LINE_SMOOTH)
+        glDisable(GL_BLEND)
+        glColor4f(1f, 1f, 1f, 1f)
+        glPopMatrix()
+    }
+
+    private fun fmt(value: Double) = String.format(Locale.ROOT, "%.8f", value)
+
+    private fun fmt(value: Float) = String.format(Locale.ROOT, "%.6f", value)
+
+    private fun fmt(vec: Vec3) = "(${fmt(vec.xCoord)}, ${fmt(vec.yCoord)}, ${fmt(vec.zCoord)})"
 
     private fun compareDifferences(
         new: PlaceRotation, old: PlaceRotation?, rotation: Rotation = currRotation,
