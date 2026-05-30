@@ -1408,7 +1408,38 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 if (isOnRightSide) 45f else -45f
             } else 0f
 
-            Rotation(movingYaw + side, if (useOptimizedPitch) 73.5f else customGodPitch)
+            // --- DYNAMIC PITCH (UNCLAMPED EXPERIMENT) ---
+            val isMovingAlongZ = movingYaw % 180 == 0f
+            val offset = if (isMovingAlongZ) {
+                player.posX - kotlin.math.floor(player.posX)
+            } else {
+                player.posZ - kotlin.math.floor(player.posZ)
+            }
+
+            // isOnRightSide already flips the Yaw to face the largest remaining half of the block.
+            // This guarantees our lateral margin is the maximum available distance.
+            val lateralMargin = kotlin.math.max(offset, 1.0 - offset)
+
+            // Trigonometry: Calculate pitch to accommodate walking and jumping apex
+            val maxDrop = 3.02 // Eye height (1.62) + Jump apex (1.25) + step-off allowance (0.15)
+            val horizontalReach = lateralMargin * kotlin.math.sqrt(2.0)
+
+            // Calculate exact pitch based on margin
+            val calculatedPitch = Math.toDegrees(kotlin.math.atan(maxDrop / horizontalReach)).toFloat()
+
+            // We do not clamp the maximum bound for testing purposes.
+            // We only prevent it from going too shallow (< 71.0f).
+            val testPitch = calculatedPitch.coerceAtLeast(71.0f)
+
+            val finalPitch = if (useOptimizedPitch) testPitch else customGodPitch
+
+            // Debug print to verify calculated pitch in-game
+            if (useOptimizedPitch) {
+                net.ccbluex.liquidbounce.utils.client.ClientUtils.getLogger().info("[ScaffoldDebug] Unclamped Pitch Calculated: $testPitch | Margin: $lateralMargin")
+            }
+            // --- END DYNAMIC PITCH ---
+
+            Rotation(movingYaw + side, finalPitch)
         } else {
             Rotation(movingYaw, 75.6f)
         }.fixedSensitivity()
