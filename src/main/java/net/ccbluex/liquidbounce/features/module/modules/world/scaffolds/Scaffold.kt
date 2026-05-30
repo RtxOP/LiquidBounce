@@ -1125,7 +1125,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun dumpRaytraceDebugFrames() {
         val header = "[Scaffold/GodBridge] Raytrace miss while falling; dumping last ${raytraceDebugFrames.size} ticks"
 
-        chat("§c$header")
         ClientUtils.LOGGER.info(header)
 
         raytraceDebugFrames.forEach { frame ->
@@ -1143,7 +1142,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 append("hitCorrectSide=${frame.hitCorrectSide}")
             }
 
-            chat("§7$line")
             ClientUtils.LOGGER.info("[Scaffold/GodBridge] $line")
         }
     }
@@ -1435,7 +1433,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
             // Debug print to verify calculated pitch in-game
             if (useOptimizedPitch) {
-                net.ccbluex.liquidbounce.utils.client.ClientUtils.getLogger().info("[ScaffoldDebug] Unclamped Pitch Calculated: $testPitch | Margin: $lateralMargin")
+                val debugMessage = "[ScaffoldDebug] Unclamped Pitch Calculated: $testPitch | Margin: $lateralMargin"
+
+                ClientUtils.LOGGER.info(debugMessage)
+                chat(debugMessage)
             }
             // --- END DYNAMIC PITCH ---
 
