@@ -1,0 +1,3 @@
+[submodule "MCP-919"]
+	path = MCP-919
+	url = https://github.com/Marcelektro/MCP-919
