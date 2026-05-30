@@ -256,6 +256,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private var godBridgeTargetRotation: Rotation? = null
 
+    private var godBridgeAlignmentTicks = 0
+    private var godBridgeInjectedStrafe = false
+    private var godBridgeUserMoveForward = 0f
+    private var godBridgeUserMoveStrafe = 0f
+
     private val isLookingDiagonally: Boolean
         get() {
             val player = mc.thePlayer ?: return false
@@ -531,12 +536,29 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     val onMovementInput = handler<MovementInputEvent> { event ->
         val player = mc.thePlayer ?: return@handler
 
-        if (!isGodBridgeEnabled || !player.onGround) return@handler
+        godBridgeUserMoveForward = event.originalInput.moveForward
+        godBridgeUserMoveStrafe = event.originalInput.moveStrafe
+        godBridgeInjectedStrafe = false
 
-        if (waitForRots) {
-            godBridgeTargetRotation?.run {
-                event.originalInput.sneak =
-                    event.originalInput.sneak || rotationDifference(this, currRotation) > getFixedAngleDelta()
+        if (!isGodBridgeEnabled || !player.onGround) {
+            resetGodBridgeAlignment()
+            return@handler
+        }
+
+        if (!waitForRots) {
+            resetGodBridgeAlignment()
+        } else {
+            val alignmentPending = applyGodBridgeAlignmentInput(event.originalInput)
+            val rotationPending = godBridgeTargetRotation?.let {
+                rotationDifference(it, currRotation) > getFixedAngleDelta()
+            } ?: false
+
+            val waitPending = alignmentPending || rotationPending
+
+            event.originalInput.sneak = event.originalInput.sneak || waitPending
+
+            if (waitPending) {
+                return@handler
             }
         }
 
@@ -1185,17 +1207,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun generateGodBridgeRotations(ticks: Int) {
         val player = mc.thePlayer ?: return
 
-        val direction = if (options.applyServerSide) {
-            MovementUtils.direction.toDegreesF() + 180f
-        } else MathHelper.wrapAngleTo180_float(player.rotationYaw)
-
-        val movingYaw = round(direction / 45) * 45
-
-        val steps45 = arrayListOf(-135f, -45f, 45f, 135f)
-
-        val isMovingStraight = if (options.applyServerSide) {
-            movingYaw % 90 == 0f
-        } else movingYaw in steps45 && player.movementInput.isSideways
+        val movingYaw = getGodBridgeMovingYaw()
+        val isMovingStraight = isGodBridgeMovingStraight(movingYaw)
 
         if (!player.isNearEdge(2.5f)) return
 
@@ -1215,19 +1228,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val rotation = if (isMovingStraight) {
             if (player.onGround) {
-                isOnRightSide = floor(player.posX + cos(movingYaw.toRadians()) * 0.5) != floor(player.posX) || floor(
-                    player.posZ + sin(movingYaw.toRadians()) * 0.5
-                ) != floor(player.posZ)
-
-                val posInDirection =
-                    BlockPos(player.positionVector.offset(EnumFacing.fromAngle(movingYaw.toDouble()), 0.6))
-
-                val isLeaningOffBlock = player.position.down().block == air
-                val nextBlockIsAir = posInDirection.down().block == air
-
-                if (isLeaningOffBlock && nextBlockIsAir) {
-                    isOnRightSide = !isOnRightSide
-                }
+                updateGodBridgeSide(movingYaw)
             }
 
             val side = if (options.applyServerSide) {
@@ -1244,8 +1245,163 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         setRotation(rotation, ticks)
     }
 
+    private fun getGodBridgeMovingYaw(): Float {
+        val player = mc.thePlayer ?: return 0f
+
+        val direction = if (options.applyServerSide) {
+            MovementUtils.direction.toDegreesF() + 180f
+        } else {
+            MathHelper.wrapAngleTo180_float(player.rotationYaw)
+        }
+
+        return round(direction / 45f) * 45f
+    }
+
+    private fun isGodBridgeMovingStraight(movingYaw: Float): Boolean {
+        if (options.applyServerSide) {
+            return movingYaw % 90f == 0f
+        }
+
+        val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else mc.thePlayer.movementInput.moveForward
+        val moveStrafe = if (godBridgeInjectedStrafe) godBridgeUserMoveStrafe else mc.thePlayer.movementInput.moveStrafe
+
+        return movingYaw in GOD_BRIDGE_DIAGONAL_YAWS && moveForward != 0f && moveStrafe != 0f
+    }
+
+    private fun updateGodBridgeSide(movingYaw: Float) {
+        val player = mc.thePlayer ?: return
+
+        isOnRightSide = floor(player.posX + cos(movingYaw.toRadians()) * 0.5) != floor(player.posX) || floor(
+            player.posZ + sin(movingYaw.toRadians()) * 0.5
+        ) != floor(player.posZ)
+
+        val posInDirection = BlockPos(player.positionVector.offset(EnumFacing.fromAngle(movingYaw.toDouble()), 0.6))
+
+        val isLeaningOffBlock = player.position.down().block == air
+        val nextBlockIsAir = posInDirection.down().block == air
+
+        if (isLeaningOffBlock && nextBlockIsAir) {
+            isOnRightSide = !isOnRightSide
+        }
+    }
+
+    private fun applyGodBridgeAlignmentInput(input: MovementInput): Boolean {
+        if (!waitForRots || Tower.isTowering) {
+            resetGodBridgeAlignment()
+            return false
+        }
+
+        val target = getGodBridgeAlignmentTarget() ?: run {
+            resetGodBridgeAlignment()
+            return false
+        }
+
+        val error = target.error()
+
+        if (abs(error) <= GOD_BRIDGE_ALIGNMENT_TOLERANCE) {
+            godBridgeAlignmentTicks++
+            return godBridgeAlignmentTicks < GOD_BRIDGE_ALIGNMENT_STABLE_TICKS
+        }
+
+        godBridgeAlignmentTicks = 0
+
+        input.moveStrafe = chooseGodBridgeAlignmentStrafe(input, target)
+        godBridgeInjectedStrafe = true
+
+        return true
+    }
+
+    private fun getGodBridgeAlignmentTarget(): GodBridgeAlignmentTarget? {
+        val player = mc.thePlayer ?: return null
+        val movingYaw = getGodBridgeMovingYaw()
+
+        updateGodBridgeSide(movingYaw)
+
+        val xWeight = abs(cos(movingYaw.toRadians()))
+        val zWeight = abs(sin(movingYaw.toRadians()))
+
+        return if (xWeight >= zWeight) {
+            val target = if (isOnRightSide == cos(movingYaw.toRadians()).signIsPositive()) 0.85 else 0.15
+
+            GodBridgeAlignmentTarget(
+                player.posX - floor(player.posX),
+                target,
+                EnumFacing.Axis.X
+            )
+        } else {
+            val target = if (isOnRightSide == sin(movingYaw.toRadians()).signIsPositive()) 0.85 else 0.15
+
+            GodBridgeAlignmentTarget(
+                player.posZ - floor(player.posZ),
+                target,
+                EnumFacing.Axis.Z
+            )
+        }
+    }
+
+    private fun chooseGodBridgeAlignmentStrafe(input: MovementInput, target: GodBridgeAlignmentTarget): Float {
+        val forward = input.moveForward
+
+        return listOf(-1f, 1f).minByOrNull {
+            abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, forward, target.axis)))
+        } ?: input.moveStrafe
+    }
+
+    private fun predictGodBridgeAlignmentDelta(strafe: Float, forward: Float, axis: EnumFacing.Axis): Double {
+        val player = mc.thePlayer ?: return 0.0
+        val activeSettings = RotationUtils.activeSettings
+        val rotation = RotationUtils.currentRotation
+
+        val (calcStrafe, calcForward, yaw) = if (activeSettings?.strafe == true && rotation != null) {
+            val diff = (player.rotationYaw - rotation.yaw).toRadians()
+
+            if (activeSettings.strict) {
+                Triple(strafe, forward, rotation.yaw)
+            } else {
+                val modifiedForward = ceil(abs(forward)) * forward.sign
+                val modifiedStrafe = ceil(abs(strafe)) * strafe.sign
+
+                Triple(
+                    round(modifiedStrafe * cos(diff) - modifiedForward * sin(diff)),
+                    round(modifiedForward * cos(diff) + modifiedStrafe * sin(diff)),
+                    rotation.yaw
+                )
+            }
+        } else {
+            Triple(strafe, forward, player.rotationYaw)
+        }
+
+        val yawRad = yaw.toRadians()
+
+        val deltaX = calcStrafe * cos(yawRad) - calcForward * sin(yawRad)
+        val deltaZ = calcForward * cos(yawRad) + calcStrafe * sin(yawRad)
+
+        return if (axis == EnumFacing.Axis.X) deltaX.toDouble() else deltaZ.toDouble()
+    }
+
+    private fun resetGodBridgeAlignment() {
+        godBridgeAlignmentTicks = 0
+        godBridgeInjectedStrafe = false
+    }
+
+    private fun Float.signIsPositive() = this >= 0f
+
     override val tag
         get() = if (towerMode != "None") ("$scaffoldMode | $towerMode") else scaffoldMode
 
     data class ExtraClickInfo(val delay: Int, val lastClick: Long, var clicks: Int)
+
+    private data class GodBridgeAlignmentTarget(
+        val current: Double,
+        val target: Double,
+        val axis: EnumFacing.Axis
+    ) {
+        fun error() = target - current
+
+        fun errorAfter(delta: Double) = target - (current + delta)
+    }
+
+    private const val GOD_BRIDGE_ALIGNMENT_TOLERANCE = 0.03
+    private const val GOD_BRIDGE_ALIGNMENT_STABLE_TICKS = 2
+    private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
 }
