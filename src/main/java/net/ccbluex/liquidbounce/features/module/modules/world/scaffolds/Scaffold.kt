@@ -11,7 +11,9 @@ import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.attack.CPSCounter
 import net.ccbluex.liquidbounce.utils.block.*
+import net.ccbluex.liquidbounce.utils.client.ClientUtils
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils.blocksAmount
@@ -43,6 +45,7 @@ import net.minecraft.util.*
 import net.minecraft.world.WorldSettings
 import net.minecraftforge.event.ForgeEventFactory
 import org.lwjgl.input.Keyboard
+import org.lwjgl.opengl.GL11.*
 import java.awt.Color
 import kotlin.math.*
 
@@ -117,6 +120,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     val jumpAutomatically by boolean("JumpAutomatically", true) { scaffoldMode == "GodBridge" }
     private val blocksToJumpRange by intRange("BlocksToJumpRange", 4..4, 1..8) {  scaffoldMode == "GodBridge" && !jumpAutomatically }
+    private val godBridgeDebug by boolean("GodBridgeDebug", false) { isGodBridgeEnabled }
+    private val godBridgeRaytraceTracer by boolean("GodBridgeRaytraceTracer", true) { isGodBridgeEnabled }
 
     // Telly mode sub-values
     private val startHorizontally by boolean("StartHorizontally", true) { scaffoldMode == "Telly" }
@@ -260,6 +265,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeInjectedStrafe = false
     private var godBridgeUserMoveForward = 0f
     private var godBridgeUserMoveStrafe = 0f
+    private var godBridgeDebugUntilTick = 0
+    private var godBridgeWasWaiting = false
+    private var raytraceTracerStart: Vec3? = null
+    private var raytraceTracerEnd: Vec3? = null
+    private var raytraceTracerHit = false
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -294,6 +304,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
+        resetGodBridgeAlignment()
+        godBridgeWasWaiting = false
+        godBridgeDebugUntilTick = if (godBridgeDebug) ClientUtils.runTimeTicks + 120 else 0
+
+        debugGodBridge("ENABLE pos=${formatVec(player.posX, player.posY, player.posZ)} yaw=${player.rotationYaw.format()} mode=$scaffoldMode")
     }
 
     // Events
@@ -484,6 +499,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
          * @see net.minecraft.client.Minecraft.runTick Line 1345
          */
         val raycast = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+        captureGodBridgeRaytraceTracer(currRotation, raycast)
+
+        debugGodBridge(
+            "TICK target=${target?.blockPos?.format()}/${target?.enumFacing} ray=${raycast?.blockPos?.format()}/${raycast?.sideHit} proper=$raycastProperly"
+        )
 
         var alreadyPlaced = false
 
@@ -503,11 +523,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             if (placeDelayValue.isActive()) {
                 delayTimer.reset()
             }
+            debugGodBridge("TICK_NO_TARGET ray=${raycast?.blockPos?.format()}/${raycast?.sideHit}")
             return@handler
         }
 
         // Change/Schedule slot once per tick according to vanilla-logic
         if (alreadyPlaced || SilentHotbar.modifiedThisTick) {
+            debugGodBridge("TICK_SKIP alreadyPlaced=$alreadyPlaced hotbarModified=${SilentHotbar.modifiedThisTick}")
             return@handler
         }
 
@@ -520,6 +542,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 }
 
                 place(result)
+            } else {
+                debugGodBridge("TICK_MISMATCH target=${target.blockPos.format()}/${target.enumFacing} ray=${it?.blockPos?.format()}/${it?.sideHit}")
             }
         }
     }
@@ -547,15 +571,31 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (!waitForRots) {
             resetGodBridgeAlignment()
+            godBridgeWasWaiting = false
         } else {
             val alignmentPending = applyGodBridgeAlignmentInput(event.originalInput)
-            val rotationPending = godBridgeTargetRotation?.let {
-                rotationDifference(it, currRotation) > getFixedAngleDelta()
-            } ?: false
+            val rotationDiff = godBridgeTargetRotation?.let { rotationDifference(it, currRotation) }
+            val rotationPending = rotationDiff?.let { it > getFixedAngleDelta() } ?: false
 
             val waitPending = alignmentPending || rotationPending
 
             event.originalInput.sneak = event.originalInput.sneak || waitPending
+
+            debugGodBridgeInput(
+                "MI",
+                event.originalInput,
+                waitPending,
+                alignmentPending,
+                rotationPending,
+                rotationDiff
+            )
+
+            if (godBridgeWasWaiting && !waitPending) {
+                godBridgeDebugUntilTick = ClientUtils.runTimeTicks + 40
+                debugGodBridge("WAIT_RELEASE place=${placeRotation != null} ray=${debugRaytraceSummary()}")
+            }
+
+            godBridgeWasWaiting = waitPending
 
             if (waitPending) {
                 return@handler
@@ -570,6 +610,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (!simPlayer.onGround && !isManualJumpOptionActive || blocksPlacedUntilJump > blocksToJump) {
             event.originalInput.jump = true
+            debugGodBridge(
+                "JUMP simGround=${simPlayer.onGround} manual=$isManualJumpOptionActive placedUntilJump=$blocksPlacedUntilJump/$blocksToJump"
+            )
 
             blocksPlacedUntilJump = 0
 
@@ -779,6 +822,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         placeRotation = null
+        raytraceTracerStart = null
+        raytraceTracerEnd = null
         mc.timer.timerSpeed = 1f
 
         SilentHotbar.resetSlot(this)
@@ -833,7 +878,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         if (!mark) {
+            if (godBridgeRaytraceTracer && isGodBridgeEnabled) {
+                drawGodBridgeRaytraceTracer()
+            }
+
             return@handler
+        }
+
+        if (godBridgeRaytraceTracer && isGodBridgeEnabled) {
+            drawGodBridgeRaytraceTracer()
         }
 
         repeat(if (scaffoldMode == "Expand") expandLength + 1 else 2) {
@@ -1038,6 +1091,56 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return world.rayTraceBlocks(eyes, reach, false, false, true)
     }
 
+    private fun captureGodBridgeRaytraceTracer(rotation: Rotation, raytrace: MovingObjectPosition?) {
+        if (!godBridgeRaytraceTracer || !isGodBridgeEnabled) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+        val eyes = player.eyes
+        val reach = eyes + (getVectorForRotation(rotation) * mc.playerController.blockReachDistance.toDouble())
+
+        raytraceTracerStart = eyes
+        raytraceTracerEnd = raytrace?.hitVec ?: reach
+        raytraceTracerHit = raytrace?.hitVec != null
+    }
+
+    private fun drawGodBridgeRaytraceTracer() {
+        val start = raytraceTracerStart ?: return
+        val end = raytraceTracerEnd ?: return
+        val renderPos = mc.renderManager.renderPos
+        val startRender = start - renderPos
+        val endRender = end - renderPos
+
+        glPushMatrix()
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glEnable(GL_BLEND)
+        glEnable(GL_LINE_SMOOTH)
+        glLineWidth(2.5f)
+        glDisable(GL_TEXTURE_2D)
+        glDisable(GL_DEPTH_TEST)
+        glDepthMask(false)
+
+        if (raytraceTracerHit) {
+            glColor4f(0.1f, 1.0f, 0.2f, 0.9f)
+        } else {
+            glColor4f(1.0f, 0.1f, 0.1f, 0.9f)
+        }
+
+        glBegin(GL_LINES)
+        glVertex3d(startRender.xCoord, startRender.yCoord, startRender.zCoord)
+        glVertex3d(endRender.xCoord, endRender.yCoord, endRender.zCoord)
+        glEnd()
+
+        glDepthMask(true)
+        glEnable(GL_DEPTH_TEST)
+        glEnable(GL_TEXTURE_2D)
+        glDisable(GL_LINE_SMOOTH)
+        glDisable(GL_BLEND)
+        glColor4f(1f, 1f, 1f, 1f)
+        glPopMatrix()
+    }
+
     private fun compareDifferences(
         new: PlaceRotation, old: PlaceRotation?, rotation: Rotation = currRotation,
     ): PlaceRotation {
@@ -1087,6 +1190,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val clickedSuccessfully = thePlayer.onPlayerRightClick(clickPos, side, hitVec, stack)
 
+        debugGodBridge(
+            "PLACE_TRY pos=${clickPos.format()} side=$side hit=${formatVec(hitVec.xCoord, hitVec.yCoord, hitVec.zCoord)} attempt=$attempt stack=${stack.displayName}"
+        )
+
         if (clickedSuccessfully) {
             if (!attempt) {
                 delayTimer.reset()
@@ -1114,7 +1221,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             placedBlocksWithoutEagle++
 
             onSuccess()
+            debugGodBridge("PLACE_OK pos=${clickPos.format()} side=$side size=$prevSize->${stack.stackSize}")
         } else {
+            debugGodBridge("PLACE_FAIL pos=${clickPos.format()} side=$side stackSize=${stack.stackSize}")
             if (thePlayer.sendUseItem(stack)) mc.entityRenderer.itemRenderer.resetEquippedProgress2()
         }
 
@@ -1242,6 +1351,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         godBridgeTargetRotation = rotation
 
+        debugGodBridge(
+            "ROT movingYaw=${movingYaw.format()} straight=$isMovingStraight right=$isOnRightSide rot=${rotation.yaw.format()}/${rotation.pitch.format()} keep=${options.keepRotation} applyServer=${options.applyServerSide} strafe=${options.strafe}"
+        )
+
         setRotation(rotation, ticks)
     }
 
@@ -1293,6 +1406,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val target = getGodBridgeAlignmentTarget() ?: run {
             resetGodBridgeAlignment()
+            debugGodBridge("ALIGN_NO_TARGET")
             return false
         }
 
@@ -1300,6 +1414,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (abs(error) <= GOD_BRIDGE_ALIGNMENT_TOLERANCE) {
             godBridgeAlignmentTicks++
+            debugGodBridge(
+                "ALIGN_OK axis=${target.axis} curr=${target.current.format()} target=${target.target.format()} stable=$godBridgeAlignmentTicks"
+            )
             return godBridgeAlignmentTicks < GOD_BRIDGE_ALIGNMENT_STABLE_TICKS
         }
 
@@ -1307,6 +1424,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         input.moveStrafe = chooseGodBridgeAlignmentStrafe(input, target)
         godBridgeInjectedStrafe = true
+
+        debugGodBridge(
+            "ALIGN_MOVE axis=${target.axis} curr=${target.current.format()} target=${target.target.format()} err=${error.format()} strafe=${input.moveStrafe.format()} f=${input.moveForward.format()}"
+        )
 
         return true
     }
@@ -1385,6 +1506,50 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun Float.signIsPositive() = this >= 0f
+
+    private fun debugGodBridgeInput(
+        stage: String,
+        input: MovementInput,
+        waitPending: Boolean,
+        alignmentPending: Boolean,
+        rotationPending: Boolean,
+        rotationDiff: Float?
+    ) {
+        val player = mc.thePlayer ?: return
+
+        debugGodBridge(
+            "$stage wait=$waitPending align=$alignmentPending rot=$rotationPending diff=${rotationDiff?.format()} " +
+                "in=${input.moveForward.format()}/${input.moveStrafe.format()}/s${input.sneak} " +
+                "pos=${player.posX.frac().format()}/${player.posZ.frac().format()} place=${placeRotation != null} ray=${debugRaytraceSummary()}"
+        )
+    }
+
+    private fun debugGodBridge(message: String) {
+        if (!godBridgeDebug || !isGodBridgeEnabled || ClientUtils.runTimeTicks > godBridgeDebugUntilTick) {
+            return
+        }
+
+        val text = "[GBDBG ${ClientUtils.runTimeTicks}] $message"
+
+        chat("§7$text")
+        ClientUtils.LOGGER.info(text)
+    }
+
+    private fun debugRaytraceSummary(): String {
+        val raycast = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+
+        return "${raycast?.blockPos?.format()}/${raycast?.sideHit}"
+    }
+
+    private fun BlockPos.format() = "$x,$y,$z"
+
+    private fun Double.frac() = this - floor(this)
+
+    private fun Float.format() = "%.3f".format(this)
+
+    private fun Double.format() = "%.3f".format(this)
+
+    private fun formatVec(x: Double, y: Double, z: Double) = "${x.format()},${y.format()},${z.format()}"
 
     override val tag
         get() = if (towerMode != "None") ("$scaffoldMode | $towerMode") else scaffoldMode
