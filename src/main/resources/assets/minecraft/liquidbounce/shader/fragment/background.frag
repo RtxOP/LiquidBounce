@@ -44,21 +44,23 @@ void main() {
 
     float ribbonA = sin((p.x * 1.35 + warp * 1.65 + t) * 3.14159);
     float ribbonB = sin((p.x * -1.05 + p.y * 0.55 + warp * 1.35 - t * 0.8) * 3.14159);
-    float aurora = smoothstep(0.55, 1.0, ribbonA * 0.5 + 0.5);
-    aurora += smoothstep(0.62, 1.0, ribbonB * 0.5 + 0.5) * 0.65;
+    float aurora = smoothstep(0.48, 1.0, ribbonA * 0.5 + 0.5);
+    aurora += smoothstep(0.56, 1.0, ribbonB * 0.5 + 0.5) * 0.72;
 
     float verticalMask = smoothstep(-0.85, 0.25, p.y) * (1.0 - smoothstep(0.1, 1.25, p.y));
     aurora *= verticalMask;
     aurora *= 0.45 + fbm(p * 2.2 + vec2(-t, t * 0.7)) * 0.55;
 
-    vec3 base = vec3(0.018, 0.023, 0.031);
-    vec3 teal = vec3(0.02, 0.36, 0.40);
-    vec3 violet = vec3(0.22, 0.12, 0.34);
-    vec3 blue = vec3(0.04, 0.10, 0.18);
+    vec3 base = vec3(0.012, 0.026, 0.071);
+    vec3 indigo = vec3(0.063, 0.165, 0.420);
+    vec3 violet = vec3(0.259, 0.071, 0.478);
+    vec3 cobalt = vec3(0.024, 0.275, 0.659);
 
     float depth = 1.0 - smoothstep(0.0, 1.25, length(p));
-    vec3 color = base + blue * depth * 0.42;
-    color += mix(teal, violet, smoothstep(-0.2, 0.75, p.x + warp * 0.35)) * aurora * 0.55;
+    vec3 color = base + indigo * depth * 0.34;
+    vec3 auroraColor = mix(violet, cobalt, smoothstep(-0.25, 0.8, p.x + warp * 0.35));
+    color += auroraColor * aurora * 0.48;
+    color += cobalt * smoothstep(0.55, -0.35, p.y + warp * 0.18) * 0.045;
 
     float vignette = 1.0 - smoothstep(0.28, 1.45, length(p * vec2(0.82, 1.08)));
     color *= 0.54 + vignette * 0.62;
