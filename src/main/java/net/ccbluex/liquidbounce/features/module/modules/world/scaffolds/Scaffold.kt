@@ -33,6 +33,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.*
 import net.minecraft.block.BlockBush
+import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.client.settings.GameSettings
 import net.minecraft.init.Blocks.air
 import net.minecraft.item.ItemBlock
@@ -110,6 +111,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     // GodBridge mode sub-values
     private val waitForRots by boolean("WaitForRotations", false) { isGodBridgeEnabled }
+    private val waitForRotsSideMove by boolean("WaitForRotationsSideMove", true) {
+        isGodBridgeEnabled && waitForRots
+    }
+    private val waitForRotsSideOffset by float("WaitForRotationsSideOffset", 0.3f, 0f..0.5f) {
+        waitForRotsSideMove
+    }
+    private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.03f, 0f..0.1f) {
+        waitForRotsSideMove
+    }
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -535,8 +545,17 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (waitForRots) {
             godBridgeTargetRotation?.run {
+                val waitingForRotation = rotationDifference(this, currRotation) > getFixedAngleDelta()
+                val sideMove = if (waitingForRotation) 0f else getWaitForRotationsSideMove(player)
+
                 event.originalInput.sneak =
-                    event.originalInput.sneak || rotationDifference(this, currRotation) > getFixedAngleDelta()
+                    event.originalInput.sneak ||
+                        waitingForRotation ||
+                        sideMove != 0f
+
+                if (sideMove != 0f) {
+                    event.originalInput.moveStrafe = sideMove
+                }
             }
         }
 
@@ -1177,6 +1196,47 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private var isOnRightSide = false
 
+    private fun getGodBridgeMovingYaw(): Float {
+        val player = mc.thePlayer ?: return 0f
+        val direction = if (options.applyServerSide) {
+            MovementUtils.direction.toDegreesF() + 180f
+        } else MathHelper.wrapAngleTo180_float(player.rotationYaw)
+
+        return round(direction / 45) * 45
+    }
+
+    private fun getWaitForRotationsSideMove(player: EntityPlayerSP): Float {
+        if (!waitForRotsSideMove) {
+            return 0f
+        }
+
+        val currentPosition = getGodBridgeSidePosition(player) ?: return 0f
+        val targetPosition = if (isOnRightSide) 1f - waitForRotsSideOffset else waitForRotsSideOffset
+        val difference = targetPosition - currentPosition
+
+        if (abs(difference) <= waitForRotsSideTolerance) {
+            return 0f
+        }
+
+        return if (difference > 0f) 1f else -1f
+    }
+
+    private fun getGodBridgeSidePosition(player: EntityPlayerSP): Float? {
+        val movingYaw = getGodBridgeMovingYaw()
+        val sideX = cos(movingYaw.toRadians())
+        val sideZ = sin(movingYaw.toRadians())
+        val absSideX = abs(sideX)
+        val absSideZ = abs(sideZ)
+        val fractionX = player.posX - floor(player.posX)
+        val fractionZ = player.posZ - floor(player.posZ)
+
+        return when {
+            absSideX > absSideZ -> if (sideX > 0.0) fractionX else 1.0 - fractionX
+            absSideZ > absSideX -> if (sideZ > 0.0) fractionZ else 1.0 - fractionZ
+            else -> return null
+        }.toFloat().coerceIn(0f, 1f)
+    }
+
     /**
      * God-bridge rotation generation method from Nextgen
      *
@@ -1185,11 +1245,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun generateGodBridgeRotations(ticks: Int) {
         val player = mc.thePlayer ?: return
 
-        val direction = if (options.applyServerSide) {
-            MovementUtils.direction.toDegreesF() + 180f
-        } else MathHelper.wrapAngleTo180_float(player.rotationYaw)
-
-        val movingYaw = round(direction / 45) * 45
+        val movingYaw = getGodBridgeMovingYaw()
 
         val steps45 = arrayListOf(-135f, -45f, 45f, 135f)
 
