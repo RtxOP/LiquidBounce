@@ -117,7 +117,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideOffset by float("WaitForRotationsSideOffset", 0.3f, 0f..0.5f) {
         waitForRotsSideMove
     }
-    private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.03f, 0f..0.1f) {
+    private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.03f, 0f..0.4f) {
         waitForRotsSideMove
     }
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
@@ -541,22 +541,36 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     val onMovementInput = handler<MovementInputEvent> { event ->
         val player = mc.thePlayer ?: return@handler
 
-        if (!isGodBridgeEnabled || !player.onGround) return@handler
+        if (!isGodBridgeEnabled || !player.onGround) {
+            resetWaitForRotationsSideCorrection()
+            return@handler
+        }
 
         if (waitForRots) {
-            godBridgeTargetRotation?.run {
-                val waitingForRotation = rotationDifference(this, currRotation) > getFixedAngleDelta()
-                val sideMove = if (waitingForRotation) 0f else getWaitForRotationsSideMove(player)
+            val targetRotation = godBridgeTargetRotation
+
+            if (targetRotation == null) {
+                resetWaitForRotationsSideCorrection()
+            } else {
+                val waitingForRotation = rotationDifference(targetRotation, currRotation) > getFixedAngleDelta()
+                val sideCorrection = if (waitingForRotation) {
+                    resetWaitForRotationsSideCorrection()
+                    WaitForRotationsSideCorrection(false, 0f)
+                } else {
+                    getWaitForRotationsSideCorrection(player)
+                }
 
                 event.originalInput.sneak =
                     event.originalInput.sneak ||
                         waitingForRotation ||
-                        sideMove != 0f
+                        sideCorrection.correcting
 
-                if (sideMove != 0f) {
-                    event.originalInput.moveStrafe = sideMove
+                if (sideCorrection.moveStrafe != 0f) {
+                    event.originalInput.moveStrafe = sideCorrection.moveStrafe
                 }
             }
+        } else {
+            resetWaitForRotationsSideCorrection()
         }
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
@@ -1195,6 +1209,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private var isOnRightSide = false
+    private var waitForRotsSideTarget: Float? = null
+    private var waitForRotsSideYaw = 0f
+    private var waitForRotsSideLastMove = 0f
+    private var waitForRotsSideReverseDelay = 0
+    private var waitForRotsSidePulse = false
 
     private fun getGodBridgeMovingYaw(): Float {
         val player = mc.thePlayer ?: return 0f
@@ -1205,24 +1224,58 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return round(direction / 45) * 45
     }
 
-    private fun getWaitForRotationsSideMove(player: EntityPlayerSP): Float {
+    private fun getWaitForRotationsSideCorrection(player: EntityPlayerSP): WaitForRotationsSideCorrection {
         if (!waitForRotsSideMove) {
-            return 0f
+            resetWaitForRotationsSideCorrection()
+            return WaitForRotationsSideCorrection(false, 0f)
         }
 
-        val currentPosition = getGodBridgeSidePosition(player) ?: return 0f
-        val targetPosition = if (isOnRightSide) 1f - waitForRotsSideOffset else waitForRotsSideOffset
+        val targetPosition = waitForRotsSideTarget ?: run {
+            waitForRotsSideYaw = getGodBridgeMovingYaw()
+            (if (isOnRightSide) 1f - waitForRotsSideOffset else waitForRotsSideOffset).also {
+                waitForRotsSideTarget = it
+            }
+        }
+
+        val currentPosition = getGodBridgeSidePosition(player, waitForRotsSideYaw)
+            ?: return WaitForRotationsSideCorrection(false, 0f)
         val difference = targetPosition - currentPosition
 
         if (abs(difference) <= waitForRotsSideTolerance) {
-            return 0f
+            resetWaitForRotationsSideCorrection()
+            return WaitForRotationsSideCorrection(false, 0f)
         }
 
-        return if (difference > 0f) 1f else -1f
+        val desiredMove = if (difference > 0f) 1f else -1f
+
+        if (waitForRotsSideLastMove != 0f && desiredMove != waitForRotsSideLastMove) {
+            waitForRotsSideLastMove = desiredMove
+            waitForRotsSideReverseDelay = 2
+            waitForRotsSidePulse = false
+            return WaitForRotationsSideCorrection(true, 0f)
+        }
+
+        waitForRotsSideLastMove = desiredMove
+
+        if (waitForRotsSideReverseDelay > 0) {
+            waitForRotsSideReverseDelay--
+            return WaitForRotationsSideCorrection(true, 0f)
+        }
+
+        waitForRotsSidePulse = !waitForRotsSidePulse
+
+        return WaitForRotationsSideCorrection(true, if (waitForRotsSidePulse) desiredMove else 0f)
     }
 
-    private fun getGodBridgeSidePosition(player: EntityPlayerSP): Float? {
-        val movingYaw = getGodBridgeMovingYaw()
+    private fun resetWaitForRotationsSideCorrection() {
+        waitForRotsSideTarget = null
+        waitForRotsSideYaw = 0f
+        waitForRotsSideLastMove = 0f
+        waitForRotsSideReverseDelay = 0
+        waitForRotsSidePulse = false
+    }
+
+    private fun getGodBridgeSidePosition(player: EntityPlayerSP, movingYaw: Float): Float? {
         val sideX = cos(movingYaw.toRadians())
         val sideZ = sin(movingYaw.toRadians())
         val absSideX = abs(sideX)
@@ -1304,4 +1357,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         get() = if (towerMode != "None") ("$scaffoldMode | $towerMode") else scaffoldMode
 
     data class ExtraClickInfo(val delay: Int, val lastClick: Long, var clicks: Int)
+
+    private data class WaitForRotationsSideCorrection(val correcting: Boolean, val moveStrafe: Float)
 }
