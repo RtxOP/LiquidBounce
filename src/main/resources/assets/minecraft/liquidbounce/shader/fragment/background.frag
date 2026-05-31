@@ -38,32 +38,49 @@ void main() {
     vec2 uv = gl_FragCoord.xy / resolution;
     vec2 p = (gl_FragCoord.xy * 2.0 - resolution) / resolution.y;
 
-    float t = iTime * 0.18;
-    vec2 drift = vec2(t * 0.32, -t * 0.18);
-    float warp = fbm(p * 1.15 + drift);
+    float t = iTime * 0.115;
+    vec2 drift = vec2(t * 0.24, -t * 0.15);
+    float warp = fbm(p * 0.95 + drift);
+    float detailWarp = fbm(p * 1.75 + vec2(-t * 0.72, t * 0.48));
 
-    float ribbonA = sin((p.x * 1.35 + warp * 1.65 + t) * 3.14159);
-    float ribbonB = sin((p.x * -1.05 + p.y * 0.55 + warp * 1.35 - t * 0.8) * 3.14159);
-    float aurora = smoothstep(0.48, 1.0, ribbonA * 0.5 + 0.5);
-    aurora += smoothstep(0.56, 1.0, ribbonB * 0.5 + 0.5) * 0.72;
+    float broadCloud = fbm(p * 0.72 + drift + warp * 0.34);
+    float fineCloud = fbm(p * 1.85 - drift * 0.65 + detailWarp * 0.24);
+    float cloud = smoothstep(0.24, 0.88, broadCloud * 0.72 + fineCloud * 0.42);
 
-    float verticalMask = smoothstep(-0.85, 0.25, p.y) * (1.0 - smoothstep(0.1, 1.25, p.y));
-    aurora *= verticalMask;
-    aurora *= 0.45 + fbm(p * 2.2 + vec2(-t, t * 0.7)) * 0.55;
+    float ribbonA = sin((p.x * 1.12 + p.y * 0.28 + warp * 1.95 + t * 0.72) * 3.14159);
+    float ribbonB = sin((p.x * -0.88 + p.y * 0.48 + detailWarp * 1.55 - t * 0.58) * 3.14159);
+    float aurora = smoothstep(0.36, 1.0, ribbonA * 0.5 + 0.5);
+    aurora += smoothstep(0.42, 1.0, ribbonB * 0.5 + 0.5) * 0.58;
 
-    vec3 base = vec3(0.012, 0.026, 0.071);
-    vec3 indigo = vec3(0.063, 0.165, 0.420);
-    vec3 violet = vec3(0.259, 0.071, 0.478);
-    vec3 cobalt = vec3(0.024, 0.275, 0.659);
+    float verticalMask = smoothstep(-1.05, 0.12, p.y) * (1.0 - smoothstep(0.36, 1.34, p.y));
+    float centerGuard = smoothstep(0.08, 0.72, length(p * vec2(0.86, 1.18)));
+    aurora *= verticalMask * (0.58 + centerGuard * 0.42);
+    aurora *= 0.45 + fineCloud * 0.55;
 
-    float depth = 1.0 - smoothstep(0.0, 1.25, length(p));
-    vec3 color = base + indigo * depth * 0.34;
-    vec3 auroraColor = mix(violet, cobalt, smoothstep(-0.25, 0.8, p.x + warp * 0.35));
-    color += auroraColor * aurora * 0.48;
-    color += cobalt * smoothstep(0.55, -0.35, p.y + warp * 0.18) * 0.045;
+    vec3 top = vec3(0.035, 0.086, 0.145);
+    vec3 bottom = vec3(0.021, 0.045, 0.100);
+    vec3 teal = vec3(0.045, 0.360, 0.410);
+    vec3 cobalt = vec3(0.055, 0.245, 0.620);
+    vec3 violet = vec3(0.300, 0.090, 0.470);
+    vec3 rose = vec3(0.520, 0.145, 0.330);
 
-    float vignette = 1.0 - smoothstep(0.28, 1.45, length(p * vec2(0.82, 1.08)));
-    color *= 0.54 + vignette * 0.62;
+    float skyMix = smoothstep(-0.92, 1.0, uv.y + warp * 0.08);
+    vec3 color = mix(bottom, top, skyMix);
+
+    float lowerGlow = 1.0 - smoothstep(-0.42, 0.78, p.y + warp * 0.15);
+    color += mix(teal, cobalt, smoothstep(-0.5, 0.95, p.x + detailWarp * 0.25)) * lowerGlow * 0.105;
+
+    vec3 cloudColor = mix(cobalt, teal, smoothstep(-0.25, 0.82, p.y + warp * 0.24));
+    cloudColor = mix(cloudColor, violet, smoothstep(0.42, 0.95, detailWarp));
+    color += cloudColor * cloud * 0.22;
+
+    vec3 auroraColor = mix(violet, cobalt, smoothstep(-0.35, 0.85, p.x + warp * 0.34));
+    auroraColor = mix(auroraColor, rose, smoothstep(0.68, 1.0, detailWarp));
+    color += auroraColor * aurora * 0.36;
+
+    float vignette = 1.0 - smoothstep(0.28, 1.55, length(p * vec2(0.78, 1.06)));
+    color *= 0.68 + vignette * 0.42;
+    color += vec3(0.010, 0.018, 0.028);
 
     float grain = hash(gl_FragCoord.xy + iTime * 23.0) - 0.5;
     color += grain / 255.0;
