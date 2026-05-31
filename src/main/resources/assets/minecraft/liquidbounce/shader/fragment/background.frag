@@ -57,30 +57,30 @@ void main() {
     aurora *= verticalMask * (0.58 + centerGuard * 0.42);
     aurora *= 0.45 + fineCloud * 0.55;
 
-    vec3 top = vec3(0.035, 0.086, 0.145);
-    vec3 bottom = vec3(0.021, 0.045, 0.100);
-    vec3 teal = vec3(0.045, 0.360, 0.410);
-    vec3 cobalt = vec3(0.055, 0.245, 0.620);
-    vec3 violet = vec3(0.300, 0.090, 0.470);
-    vec3 rose = vec3(0.520, 0.145, 0.330);
+    vec3 top = vec3(0.050, 0.125, 0.225);
+    vec3 bottom = vec3(0.028, 0.060, 0.150);
+    vec3 teal = vec3(0.020, 0.610, 0.690);
+    vec3 cobalt = vec3(0.045, 0.340, 0.900);
+    vec3 violet = vec3(0.470, 0.105, 0.780);
+    vec3 rose = vec3(0.760, 0.160, 0.500);
 
     float skyMix = smoothstep(-0.92, 1.0, uv.y + warp * 0.08);
     vec3 color = mix(bottom, top, skyMix);
 
     float lowerGlow = 1.0 - smoothstep(-0.42, 0.78, p.y + warp * 0.15);
-    color += mix(teal, cobalt, smoothstep(-0.5, 0.95, p.x + detailWarp * 0.25)) * lowerGlow * 0.105;
+    color += mix(teal, cobalt, smoothstep(-0.5, 0.95, p.x + detailWarp * 0.25)) * lowerGlow * 0.155;
 
     vec3 cloudColor = mix(cobalt, teal, smoothstep(-0.25, 0.82, p.y + warp * 0.24));
     cloudColor = mix(cloudColor, violet, smoothstep(0.42, 0.95, detailWarp));
-    color += cloudColor * cloud * 0.22;
+    color += cloudColor * cloud * 0.33;
 
     vec3 auroraColor = mix(violet, cobalt, smoothstep(-0.35, 0.85, p.x + warp * 0.34));
     auroraColor = mix(auroraColor, rose, smoothstep(0.68, 1.0, detailWarp));
-    color += auroraColor * aurora * 0.36;
+    color += auroraColor * aurora * 0.50;
 
     float vignette = 1.0 - smoothstep(0.28, 1.55, length(p * vec2(0.78, 1.06)));
-    color *= 0.68 + vignette * 0.42;
-    color += vec3(0.010, 0.018, 0.028);
+    color *= 0.76 + vignette * 0.36;
+    color += vec3(0.016, 0.030, 0.052);
 
     float grain = hash(gl_FragCoord.xy + iTime * 23.0) - 0.5;
     color += grain / 255.0;
