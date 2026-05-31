@@ -33,7 +33,6 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.*
 import net.minecraft.block.BlockBush
-import net.minecraft.client.entity.EntityPlayerSP
 import net.minecraft.client.settings.GameSettings
 import net.minecraft.init.Blocks.air
 import net.minecraft.item.ItemBlock
@@ -265,6 +264,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         get() = scaffoldMode == "GodBridge" || scaffoldMode == "Normal" && options.rotationMode == "GodBridge"
 
     private var godBridgeTargetRotation: Rotation? = null
+    private var godBridgeAlignmentTicks = 0
+    private var godBridgeInjectedStrafe = false
+    private var godBridgeUserMoveForward = 0f
+    private var godBridgeUserMoveStrafe = 0f
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -541,8 +544,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     val onMovementInput = handler<MovementInputEvent> { event ->
         val player = mc.thePlayer ?: return@handler
 
+        godBridgeUserMoveForward = event.originalInput.moveForward
+        godBridgeUserMoveStrafe = event.originalInput.moveStrafe
+        godBridgeInjectedStrafe = false
+
         if (!isGodBridgeEnabled || !player.onGround) {
-            resetWaitForRotationsSideCorrection()
+            resetGodBridgeAlignment()
             return@handler
         }
 
@@ -550,27 +557,27 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             val targetRotation = godBridgeTargetRotation
 
             if (targetRotation == null) {
-                resetWaitForRotationsSideCorrection()
+                resetGodBridgeAlignment()
             } else {
                 val waitingForRotation = rotationDifference(targetRotation, currRotation) > getFixedAngleDelta()
-                val sideCorrection = if (waitingForRotation) {
-                    resetWaitForRotationsSideCorrection()
-                    WaitForRotationsSideCorrection(false, 0f)
+                val alignmentPending = if (waitingForRotation) {
+                    resetGodBridgeAlignment()
+                    false
                 } else {
-                    getWaitForRotationsSideCorrection(player)
+                    applyGodBridgeAlignmentInput(event.originalInput)
                 }
 
                 event.originalInput.sneak =
                     event.originalInput.sneak ||
                         waitingForRotation ||
-                        sideCorrection.correcting
+                        alignmentPending
 
-                if (sideCorrection.moveStrafe != 0f) {
-                    event.originalInput.moveStrafe = sideCorrection.moveStrafe
+                if (waitingForRotation || alignmentPending) {
+                    return@handler
                 }
             }
         } else {
-            resetWaitForRotationsSideCorrection()
+            resetGodBridgeAlignment()
         }
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
@@ -1209,11 +1216,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private var isOnRightSide = false
-    private var waitForRotsSideTarget: Float? = null
-    private var waitForRotsSideYaw = 0f
-    private var waitForRotsSideLastMove = 0f
-    private var waitForRotsSideReverseDelay = 0
-    private var waitForRotsSidePulse = false
 
     private fun getGodBridgeMovingYaw(): Float {
         val player = mc.thePlayer ?: return 0f
@@ -1224,71 +1226,144 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return round(direction / 45) * 45
     }
 
-    private fun getWaitForRotationsSideCorrection(player: EntityPlayerSP): WaitForRotationsSideCorrection {
-        if (!waitForRotsSideMove) {
-            resetWaitForRotationsSideCorrection()
-            return WaitForRotationsSideCorrection(false, 0f)
+    private fun isGodBridgeMovingStraight(movingYaw: Float): Boolean {
+        if (options.applyServerSide) {
+            return movingYaw % 90f == 0f
         }
 
-        val targetPosition = waitForRotsSideTarget ?: run {
-            waitForRotsSideYaw = getGodBridgeMovingYaw()
-            (if (isOnRightSide) 1f - waitForRotsSideOffset else waitForRotsSideOffset).also {
-                waitForRotsSideTarget = it
+        val player = mc.thePlayer ?: return false
+        val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else player.movementInput.moveForward
+        val moveStrafe = if (godBridgeInjectedStrafe) godBridgeUserMoveStrafe else player.movementInput.moveStrafe
+
+        return movingYaw in GOD_BRIDGE_DIAGONAL_YAWS && moveForward != 0f && moveStrafe != 0f
+    }
+
+    private fun updateGodBridgeSide(movingYaw: Float) {
+        val player = mc.thePlayer ?: return
+
+        isOnRightSide = floor(player.posX + cos(movingYaw.toRadians()) * 0.5) != floor(player.posX) || floor(
+            player.posZ + sin(movingYaw.toRadians()) * 0.5
+        ) != floor(player.posZ)
+
+        val posInDirection = BlockPos(player.positionVector.offset(EnumFacing.fromAngle(movingYaw.toDouble()), 0.6))
+
+        val isLeaningOffBlock = player.position.down().block == air
+        val nextBlockIsAir = posInDirection.down().block == air
+
+        if (isLeaningOffBlock && nextBlockIsAir) {
+            isOnRightSide = !isOnRightSide
+        }
+    }
+
+    private fun applyGodBridgeAlignmentInput(input: MovementInput): Boolean {
+        if (!waitForRotsSideMove || Tower.isTowering) {
+            resetGodBridgeAlignment()
+            return false
+        }
+
+        val target = getGodBridgeAlignmentTarget() ?: run {
+            resetGodBridgeAlignment()
+            return false
+        }
+
+        val error = target.error()
+
+        if (abs(error) <= waitForRotsSideTolerance) {
+            godBridgeAlignmentTicks++
+            return godBridgeAlignmentTicks < GOD_BRIDGE_ALIGNMENT_STABLE_TICKS
+        }
+
+        godBridgeAlignmentTicks = 0
+        input.moveStrafe = chooseGodBridgeAlignmentStrafe(input, target)
+        godBridgeInjectedStrafe = true
+
+        return true
+    }
+
+    private fun getGodBridgeAlignmentTarget(): GodBridgeAlignmentTarget? {
+        val player = mc.thePlayer ?: return null
+        val movingYaw = getGodBridgeMovingYaw()
+
+        updateGodBridgeSide(movingYaw)
+
+        val xWeight = abs(cos(movingYaw.toRadians()))
+        val zWeight = abs(sin(movingYaw.toRadians()))
+        val offset = waitForRotsSideOffset.toDouble()
+        val mirroredOffset = 1.0 - offset
+
+        return if (xWeight >= zWeight) {
+            val target = if (isOnRightSide == cos(movingYaw.toRadians()).signIsPositive()) {
+                mirroredOffset
+            } else {
+                offset
             }
+
+            GodBridgeAlignmentTarget(
+                player.posX - floor(player.posX),
+                target,
+                EnumFacing.Axis.X
+            )
+        } else {
+            val target = if (isOnRightSide == sin(movingYaw.toRadians()).signIsPositive()) {
+                mirroredOffset
+            } else {
+                offset
+            }
+
+            GodBridgeAlignmentTarget(
+                player.posZ - floor(player.posZ),
+                target,
+                EnumFacing.Axis.Z
+            )
         }
-
-        val currentPosition = getGodBridgeSidePosition(player, waitForRotsSideYaw)
-            ?: return WaitForRotationsSideCorrection(false, 0f)
-        val difference = targetPosition - currentPosition
-
-        if (abs(difference) <= waitForRotsSideTolerance) {
-            resetWaitForRotationsSideCorrection()
-            return WaitForRotationsSideCorrection(false, 0f)
-        }
-
-        val desiredMove = if (difference > 0f) 1f else -1f
-
-        if (waitForRotsSideLastMove != 0f && desiredMove != waitForRotsSideLastMove) {
-            waitForRotsSideLastMove = desiredMove
-            waitForRotsSideReverseDelay = 2
-            waitForRotsSidePulse = false
-            return WaitForRotationsSideCorrection(true, 0f)
-        }
-
-        waitForRotsSideLastMove = desiredMove
-
-        if (waitForRotsSideReverseDelay > 0) {
-            waitForRotsSideReverseDelay--
-            return WaitForRotationsSideCorrection(true, 0f)
-        }
-
-        waitForRotsSidePulse = !waitForRotsSidePulse
-
-        return WaitForRotationsSideCorrection(true, if (waitForRotsSidePulse) desiredMove else 0f)
     }
 
-    private fun resetWaitForRotationsSideCorrection() {
-        waitForRotsSideTarget = null
-        waitForRotsSideYaw = 0f
-        waitForRotsSideLastMove = 0f
-        waitForRotsSideReverseDelay = 0
-        waitForRotsSidePulse = false
+    private fun chooseGodBridgeAlignmentStrafe(input: MovementInput, target: GodBridgeAlignmentTarget): Float {
+        val forward = input.moveForward
+
+        return listOf(-1f, 1f).minByOrNull {
+            abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, forward, target.axis)))
+        } ?: input.moveStrafe
     }
 
-    private fun getGodBridgeSidePosition(player: EntityPlayerSP, movingYaw: Float): Float? {
-        val sideX = cos(movingYaw.toRadians())
-        val sideZ = sin(movingYaw.toRadians())
-        val absSideX = abs(sideX)
-        val absSideZ = abs(sideZ)
-        val fractionX = player.posX - floor(player.posX)
-        val fractionZ = player.posZ - floor(player.posZ)
+    private fun predictGodBridgeAlignmentDelta(strafe: Float, forward: Float, axis: EnumFacing.Axis): Double {
+        val player = mc.thePlayer ?: return 0.0
+        val activeSettings = RotationUtils.activeSettings
+        val rotation = RotationUtils.currentRotation
 
-        return when {
-            absSideX > absSideZ -> if (sideX > 0.0) fractionX else 1.0 - fractionX
-            absSideZ > absSideX -> if (sideZ > 0.0) fractionZ else 1.0 - fractionZ
-            else -> return null
-        }.toFloat().coerceIn(0f, 1f)
+        val (calcStrafe, calcForward, yaw) = if (activeSettings?.strafe == true && rotation != null) {
+            val diff = (player.rotationYaw - rotation.yaw).toRadians()
+
+            if (activeSettings.strict) {
+                Triple(strafe, forward, rotation.yaw)
+            } else {
+                val modifiedForward = ceil(abs(forward)) * forward.sign
+                val modifiedStrafe = ceil(abs(strafe)) * strafe.sign
+
+                Triple(
+                    round(modifiedStrafe * cos(diff) - modifiedForward * sin(diff)),
+                    round(modifiedForward * cos(diff) + modifiedStrafe * sin(diff)),
+                    rotation.yaw
+                )
+            }
+        } else {
+            Triple(strafe, forward, player.rotationYaw)
+        }
+
+        val yawRad = yaw.toRadians()
+
+        val deltaX = calcStrafe * cos(yawRad) - calcForward * sin(yawRad)
+        val deltaZ = calcForward * cos(yawRad) + calcStrafe * sin(yawRad)
+
+        return if (axis == EnumFacing.Axis.X) deltaX.toDouble() else deltaZ.toDouble()
     }
+
+    private fun resetGodBridgeAlignment() {
+        godBridgeAlignmentTicks = 0
+        godBridgeInjectedStrafe = false
+    }
+
+    private fun Float.signIsPositive() = this >= 0f
 
     /**
      * God-bridge rotation generation method from Nextgen
@@ -1299,12 +1374,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val player = mc.thePlayer ?: return
 
         val movingYaw = getGodBridgeMovingYaw()
-
-        val steps45 = arrayListOf(-135f, -45f, 45f, 135f)
-
-        val isMovingStraight = if (options.applyServerSide) {
-            movingYaw % 90 == 0f
-        } else movingYaw in steps45 && player.movementInput.isSideways
+        val isMovingStraight = isGodBridgeMovingStraight(movingYaw)
 
         if (!player.isNearEdge(2.5f)) return
 
@@ -1324,19 +1394,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val rotation = if (isMovingStraight) {
             if (player.onGround) {
-                isOnRightSide = floor(player.posX + cos(movingYaw.toRadians()) * 0.5) != floor(player.posX) || floor(
-                    player.posZ + sin(movingYaw.toRadians()) * 0.5
-                ) != floor(player.posZ)
-
-                val posInDirection =
-                    BlockPos(player.positionVector.offset(EnumFacing.fromAngle(movingYaw.toDouble()), 0.6))
-
-                val isLeaningOffBlock = player.position.down().block == air
-                val nextBlockIsAir = posInDirection.down().block == air
-
-                if (isLeaningOffBlock && nextBlockIsAir) {
-                    isOnRightSide = !isOnRightSide
-                }
+                updateGodBridgeSide(movingYaw)
             }
 
             val side = if (options.applyServerSide) {
@@ -1358,5 +1416,16 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     data class ExtraClickInfo(val delay: Int, val lastClick: Long, var clicks: Int)
 
-    private data class WaitForRotationsSideCorrection(val correcting: Boolean, val moveStrafe: Float)
+    private data class GodBridgeAlignmentTarget(
+        val current: Double,
+        val target: Double,
+        val axis: EnumFacing.Axis
+    ) {
+        fun error() = target - current
+
+        fun errorAfter(delta: Double) = target - (current + delta)
+    }
+
+    private const val GOD_BRIDGE_ALIGNMENT_STABLE_TICKS = 2
+    private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
 }
