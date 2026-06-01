@@ -271,12 +271,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeAlignmentTicks = 0
     private var godBridgeInjectedStrafe = false
     private var godBridgeUserMoveForward = 0f
-    private var godBridgeUserMoveStrafe = 0f
     private var godBridgeAlignmentDebug = ""
     private var godBridgeLastWaitDebug = ""
     private var godBridgeLastWaitDebugTick = 0
-    private var godBridgeDiagonalState = GodBridgeDiagonalState.Idle
     private var godBridgeDiagonalYaw: Float? = null
+    private var godBridgeDiagonalNudgeTicks = 0
+    private var godBridgeDiagonalReleased = false
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -554,7 +554,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val player = mc.thePlayer ?: return@handler
 
         godBridgeUserMoveForward = event.originalInput.moveForward
-        godBridgeUserMoveStrafe = event.originalInput.moveStrafe
         godBridgeInjectedStrafe = false
 
         if (!isGodBridgeEnabled || !player.onGround) {
@@ -576,14 +575,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 )
             } else {
                 val movingYaw = getGodBridgeMovingYaw()
-                val diagonalContext = if (waitForRotsSideMove) {
-                    getGodBridgeDiagonalContext(movingYaw, event.originalInput)
-                } else null
+                val facingYaw = getGodBridgeFacingYaw()
+                val diagonalYaw = getGodBridgeDiagonalFacingYaw(facingYaw, event.originalInput)
                 val rotationDelta = rotationDifference(targetRotation, currRotation)
                 val waitingForRotation = rotationDelta > getFixedAngleDelta()
 
-                val alignmentPending = if (diagonalContext != null) {
-                    applyGodBridgeDiagonalInput(event.originalInput, diagonalContext, waitingForRotation)
+                val alignmentPending = if (diagonalYaw != null) {
+                    applyGodBridgeDiagonalInput(event.originalInput, diagonalYaw, waitingForRotation)
                 } else {
                     resetGodBridgeDiagonalAlignment()
 
@@ -597,18 +595,19 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
                 event.originalInput.sneak =
                     event.originalInput.sneak ||
-                        (waitingForRotation && diagonalContext == null) ||
+                        (waitingForRotation && diagonalYaw == null) ||
                         alignmentPending
 
                 debugGodBridgeWait(
                     "sneak=${event.originalInput.sneak} rotPending=$waitingForRotation " +
                         "rotDiff=${formatGodBridgeDebug(rotationDelta.toDouble())} " +
                         "alignPending=$alignmentPending $godBridgeAlignmentDebug " +
+                        "facingYaw=$facingYaw " +
                         "moveF=${event.originalInput.moveForward} moveS=${event.originalInput.moveStrafe} " +
                         "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
                 )
 
-                if (waitingForRotation && diagonalContext == null || alignmentPending) {
+                if (waitingForRotation && diagonalYaw == null || alignmentPending) {
                     return@handler
                 }
             }
@@ -1262,15 +1261,17 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return round(direction / 45) * 45
     }
 
+    private fun getGodBridgeFacingYaw(): Float {
+        val player = mc.thePlayer ?: return 0f
+        return round(MathHelper.wrapAngleTo180_float(player.rotationYaw) / 45f) * 45f
+    }
+
     private fun isGodBridgeMovingStraight(movingYaw: Float): Boolean {
         if (options.applyServerSide) {
             return movingYaw % 90f == 0f
         }
 
-        val player = mc.thePlayer ?: return false
-        val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else player.movementInput.moveForward
-
-        return getGodBridgeDiagonalContext(movingYaw, moveForward) != null
+        return movingYaw in GOD_BRIDGE_DIAGONAL_YAWS && mc.thePlayer?.movementInput?.isSideways == true
     }
 
     private fun updateGodBridgeSide(movingYaw: Float) {
@@ -1290,131 +1291,54 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
     }
 
-    private fun getGodBridgeDiagonalContext(movingYaw: Float, input: MovementInput) =
-        getGodBridgeDiagonalContext(movingYaw, input.moveForward)
-
-    private fun getGodBridgeDiagonalContext(movingYaw: Float, moveForward: Float): GodBridgeDiagonalContext? {
-        if (moveForward <= 0f || movingYaw !in GOD_BRIDGE_DIAGONAL_YAWS) {
-            return null
-        }
-
-        return when (movingYaw) {
-            -135f -> GodBridgeDiagonalContext(
-                movingYaw, 180f, highXCorner = true, highZCorner = false,
-                targetX = 1.0 - waitForRotsSideOffset.toDouble(), worldXMove = -1, rightSide = true
-            )
-
-            135f -> GodBridgeDiagonalContext(
-                movingYaw, 180f, highXCorner = false, highZCorner = false,
-                targetX = waitForRotsSideOffset.toDouble(), worldXMove = 1, rightSide = false
-            )
-
-            -45f -> GodBridgeDiagonalContext(
-                movingYaw, 0f, highXCorner = true, highZCorner = true,
-                targetX = 1.0 - waitForRotsSideOffset.toDouble(), worldXMove = -1, rightSide = false
-            )
-
-            45f -> GodBridgeDiagonalContext(
-                movingYaw, 0f, highXCorner = false, highZCorner = true,
-                targetX = waitForRotsSideOffset.toDouble(), worldXMove = 1, rightSide = true
-            )
-
-            else -> null
-        }
-    }
+    private fun getGodBridgeDiagonalFacingYaw(facingYaw: Float, input: MovementInput) =
+        facingYaw.takeIf { waitForRotsSideMove && input.moveForward > 0f && it in GOD_BRIDGE_DIAGONAL_YAWS }
 
     private fun applyGodBridgeDiagonalInput(
-        input: MovementInput, context: GodBridgeDiagonalContext, waitingForRotation: Boolean
+        input: MovementInput, diagonalYaw: Float, waitingForRotation: Boolean
     ): Boolean {
-        val player = mc.thePlayer ?: return false
-
-        if (!waitForRotsSideMove || Tower.isTowering) {
+        if (Tower.isTowering) {
             resetGodBridgeDiagonalAlignment()
             godBridgeAlignmentDebug = "diag=disabledOrTower"
             return false
         }
 
-        if (godBridgeDiagonalYaw != context.yaw) {
-            godBridgeDiagonalYaw = context.yaw
-            godBridgeDiagonalState = GodBridgeDiagonalState.WaitingForCorner
+        if (godBridgeDiagonalYaw != diagonalYaw) {
+            godBridgeDiagonalYaw = diagonalYaw
+            godBridgeDiagonalNudgeTicks = GOD_BRIDGE_DIAGONAL_NUDGE_TICKS
+            godBridgeDiagonalReleased = false
         }
 
-        if (godBridgeDiagonalState == GodBridgeDiagonalState.Released) {
-            godBridgeAlignmentDebug = "diag=released yaw=${context.yaw}"
+        if (godBridgeDiagonalReleased) {
+            godBridgeAlignmentDebug = "diag=released yaw=$diagonalYaw"
             return false
         }
 
         if (waitingForRotation) {
-            godBridgeDiagonalState = GodBridgeDiagonalState.WaitingForCorner
-            godBridgeAlignmentDebug = "diag=corner rotPending yaw=${context.yaw}"
-            return true
-        }
-
-        val xFraction = player.posX - floor(player.posX)
-        val zFraction = player.posZ - floor(player.posZ)
-
-        if (!isAtGodBridgeDiagonalCorner(context, xFraction, zFraction)) {
-            godBridgeDiagonalState = GodBridgeDiagonalState.WaitingForCorner
-            godBridgeAlignmentDebug =
-                "diag=corner yaw=${context.yaw} x=${formatGodBridgeDebug(xFraction)} " +
-                    "z=${formatGodBridgeDebug(zFraction)}"
+            godBridgeAlignmentDebug = "diag=waitRot yaw=$diagonalYaw"
             return true
         }
 
         if (MovementUtils.speed > GOD_BRIDGE_DIAGONAL_STOP_SPEED) {
-            godBridgeDiagonalState = GodBridgeDiagonalState.WaitingForCorner
             godBridgeAlignmentDebug =
-                "diag=stopping speed=${formatGodBridgeDebug(MovementUtils.speed.toDouble())} " +
-                    "x=${formatGodBridgeDebug(xFraction)} z=${formatGodBridgeDebug(zFraction)}"
+                "diag=waitStop yaw=$diagonalYaw speed=${formatGodBridgeDebug(MovementUtils.speed.toDouble())}"
             return true
         }
 
-        godBridgeDiagonalState = GodBridgeDiagonalState.NudgingSide
-
-        val target = GodBridgeAlignmentTarget(xFraction, context.targetX, EnumFacing.Axis.X)
-        val error = target.error()
-
-        if (abs(error) <= getGodBridgeDiagonalSideTolerance()) {
-            godBridgeDiagonalState = GodBridgeDiagonalState.Released
-            godBridgeAlignmentDebug =
-                "diag=released axis=X cur=${formatGodBridgeDebug(target.current)} " +
-                    "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)}"
+        if (godBridgeDiagonalNudgeTicks <= 0) {
+            godBridgeDiagonalReleased = true
+            godBridgeAlignmentDebug = "diag=released yaw=$diagonalYaw"
             return false
         }
 
         input.moveForward = 0f
-        input.moveStrafe = chooseGodBridgeDiagonalStrafe(context, target)
+        input.moveStrafe = 1f
         godBridgeInjectedStrafe = true
+        godBridgeDiagonalNudgeTicks--
         godBridgeAlignmentDebug =
-            "diag=nudge axis=X cur=${formatGodBridgeDebug(target.current)} " +
-                "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
-                "worldX=${context.worldXMove} strafe=${input.moveStrafe}"
+            "diag=nudgeLeft yaw=$diagonalYaw ticks=$godBridgeDiagonalNudgeTicks strafe=${input.moveStrafe}"
 
         return true
-    }
-
-    private fun isAtGodBridgeDiagonalCorner(
-        context: GodBridgeDiagonalContext, xFraction: Double, zFraction: Double
-    ): Boolean {
-        val tolerance = waitForRotsSideTolerance.coerceIn(0.03f, 0.15f)
-        val xMatches = if (context.highXCorner) xFraction >= 1.0 - tolerance else xFraction <= tolerance
-        val zMatches = if (context.highZCorner) zFraction >= 1.0 - tolerance else zFraction <= tolerance
-
-        return xMatches && zMatches
-    }
-
-    private fun getGodBridgeDiagonalSideTolerance() = waitForRotsSideTolerance.coerceIn(0.03f, 0.08f)
-
-    private fun chooseGodBridgeDiagonalStrafe(context: GodBridgeDiagonalContext, target: GodBridgeAlignmentTarget): Float {
-        val candidates = listOf(-1f, 1f).filter {
-            predictGodBridgeAlignmentDelta(it, 0f, EnumFacing.Axis.X).sign.toInt() == context.worldXMove
-        }.ifEmpty {
-            listOf(-1f, 1f)
-        }
-
-        return candidates.minByOrNull {
-            abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, 0f, target.axis)))
-        } ?: 0f
     }
 
     private fun applyGodBridgeAlignmentInput(input: MovementInput): Boolean {
@@ -1538,8 +1462,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun resetGodBridgeDiagonalAlignment() {
-        godBridgeDiagonalState = GodBridgeDiagonalState.Idle
         godBridgeDiagonalYaw = null
+        godBridgeDiagonalNudgeTicks = 0
+        godBridgeDiagonalReleased = false
     }
 
     private fun Float.signIsPositive() = this >= 0f
@@ -1576,10 +1501,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val player = mc.thePlayer ?: return
 
         val movingYaw = getGodBridgeMovingYaw()
-        val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else player.movementInput.moveForward
-        val diagonalContext = getGodBridgeDiagonalContext(movingYaw, moveForward)
-        val rotationYaw = diagonalContext?.faceYaw ?: movingYaw
-        val isMovingStraight = diagonalContext != null || isGodBridgeMovingStraight(movingYaw)
+        val isMovingStraight = isGodBridgeMovingStraight(movingYaw)
 
         if (!player.isNearEdge(2.5f)) return
 
@@ -1599,18 +1521,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val rotation = if (isMovingStraight) {
             if (player.onGround) {
-                if (diagonalContext != null) {
-                    isOnRightSide = diagonalContext.rightSide
-                } else {
-                    updateGodBridgeSide(movingYaw)
-                }
+                updateGodBridgeSide(movingYaw)
             }
 
             val side = if (options.applyServerSide) {
                 if (isOnRightSide) 45f else -45f
             } else 0f
 
-            Rotation(rotationYaw + side, if (useOptimizedPitch) 73.5f else customGodPitch)
+            Rotation(movingYaw + side, if (useOptimizedPitch) 73.5f else customGodPitch)
         } else {
             Rotation(movingYaw, 75.6f)
         }.fixedSensitivity()
@@ -1625,23 +1543,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     data class ExtraClickInfo(val delay: Int, val lastClick: Long, var clicks: Int)
 
-    private enum class GodBridgeDiagonalState {
-        Idle,
-        WaitingForCorner,
-        NudgingSide,
-        Released
-    }
-
-    private data class GodBridgeDiagonalContext(
-        val yaw: Float,
-        val faceYaw: Float,
-        val highXCorner: Boolean,
-        val highZCorner: Boolean,
-        val targetX: Double,
-        val worldXMove: Int,
-        val rightSide: Boolean
-    )
-
     private data class GodBridgeAlignmentTarget(
         val current: Double,
         val target: Double,
@@ -1653,5 +1554,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
-    private const val GOD_BRIDGE_DIAGONAL_STOP_SPEED = 0.025f
+    private const val GOD_BRIDGE_DIAGONAL_STOP_SPEED = 0.001f
+    private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 2
 }
