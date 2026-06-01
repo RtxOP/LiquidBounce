@@ -566,6 +566,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             if (targetRotation == null) {
                 resetGodBridgeAlignment()
                 debugGodBridgeWait("target=null pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}")
+            } else if (!event.originalInput.isMoving) {
+                resetGodBridgeAlignment()
+                debugGodBridgeWait(
+                    "skip=noInput moveF=${event.originalInput.moveForward} moveS=${event.originalInput.moveStrafe} " +
+                        "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
+                )
             } else {
                 val rotationDelta = rotationDifference(targetRotation, currRotation)
                 val waitingForRotation = rotationDelta > getFixedAngleDelta()
@@ -1292,8 +1298,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             godBridgeAlignmentDebug =
                 "align=inside axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
                     "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
-                    "stable=$godBridgeAlignmentTicks/$GOD_BRIDGE_ALIGNMENT_STABLE_TICKS"
-            return godBridgeAlignmentTicks < GOD_BRIDGE_ALIGNMENT_STABLE_TICKS
+                    "stable=$godBridgeAlignmentTicks"
+            return false
         }
 
         godBridgeAlignmentTicks = 0
@@ -1477,6 +1483,5 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         fun errorAfter(delta: Double) = target - (current + delta)
     }
 
-    private const val GOD_BRIDGE_ALIGNMENT_STABLE_TICKS = 2
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
 }
