@@ -12,6 +12,7 @@ import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.attack.CPSCounter
 import net.ccbluex.liquidbounce.utils.block.*
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils.blocksAmount
@@ -119,6 +120,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.03f, 0f..0.4f) {
         waitForRotsSideMove
     }
+    private val waitForRotsDebug by boolean("WaitForRotationsDebug", false) {
+        isGodBridgeEnabled && waitForRots
+    }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -268,6 +272,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeInjectedStrafe = false
     private var godBridgeUserMoveForward = 0f
     private var godBridgeUserMoveStrafe = 0f
+    private var godBridgeAlignmentDebug = ""
+    private var godBridgeLastWaitDebug = ""
+    private var godBridgeLastWaitDebugTick = 0
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -558,8 +565,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
             if (targetRotation == null) {
                 resetGodBridgeAlignment()
+                debugGodBridgeWait("target=null pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}")
             } else {
-                val waitingForRotation = rotationDifference(targetRotation, currRotation) > getFixedAngleDelta()
+                val rotationDelta = rotationDifference(targetRotation, currRotation)
+                val waitingForRotation = rotationDelta > getFixedAngleDelta()
                 val alignmentPending = if (waitingForRotation) {
                     resetGodBridgeAlignment()
                     false
@@ -571,6 +580,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                     event.originalInput.sneak ||
                         waitingForRotation ||
                         alignmentPending
+
+                debugGodBridgeWait(
+                    "sneak=${event.originalInput.sneak} rotPending=$waitingForRotation " +
+                        "rotDiff=${formatGodBridgeDebug(rotationDelta.toDouble())} " +
+                        "alignPending=$alignmentPending $godBridgeAlignmentDebug " +
+                        "moveF=${event.originalInput.moveForward} moveS=${event.originalInput.moveStrafe} " +
+                        "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
+                )
 
                 if (waitingForRotation || alignmentPending) {
                     return@handler
@@ -1258,11 +1275,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun applyGodBridgeAlignmentInput(input: MovementInput): Boolean {
         if (!waitForRotsSideMove || Tower.isTowering) {
             resetGodBridgeAlignment()
+            godBridgeAlignmentDebug = "align=disabledOrTower"
             return false
         }
 
         val target = getGodBridgeAlignmentTarget() ?: run {
             resetGodBridgeAlignment()
+            godBridgeAlignmentDebug = "align=targetNull"
             return false
         }
 
@@ -1270,12 +1289,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (abs(error) <= waitForRotsSideTolerance) {
             godBridgeAlignmentTicks++
+            godBridgeAlignmentDebug =
+                "align=inside axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                    "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
+                    "stable=$godBridgeAlignmentTicks/$GOD_BRIDGE_ALIGNMENT_STABLE_TICKS"
             return godBridgeAlignmentTicks < GOD_BRIDGE_ALIGNMENT_STABLE_TICKS
         }
 
         godBridgeAlignmentTicks = 0
         input.moveStrafe = chooseGodBridgeAlignmentStrafe(input, target)
         godBridgeInjectedStrafe = true
+        godBridgeAlignmentDebug =
+            "align=correct axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
+                "strafe=${input.moveStrafe}"
 
         return true
     }
@@ -1361,9 +1388,33 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeAlignment() {
         godBridgeAlignmentTicks = 0
         godBridgeInjectedStrafe = false
+        godBridgeAlignmentDebug = "align=reset"
     }
 
     private fun Float.signIsPositive() = this >= 0f
+
+    private fun debugGodBridgeWait(message: String) {
+        if (!waitForRotsDebug) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+        val tick = player.ticksExisted
+
+        if (message == godBridgeLastWaitDebug && tick - godBridgeLastWaitDebugTick < 10) {
+            return
+        }
+
+        godBridgeLastWaitDebug = message
+        godBridgeLastWaitDebugTick = tick
+
+        chat("§7[Scaffold GB] §f$message")
+    }
+
+    private fun formatGodBridgeDebug(value: Double) = "%.3f".format(value)
+
+    private fun formatGodBridgePositionDebug(posX: Double, posZ: Double) =
+        "x=${formatGodBridgeDebug(posX - floor(posX))} z=${formatGodBridgeDebug(posZ - floor(posZ))}"
 
     /**
      * God-bridge rotation generation method from Nextgen
