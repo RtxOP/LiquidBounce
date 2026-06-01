@@ -1269,9 +1269,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val player = mc.thePlayer ?: return false
         val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else player.movementInput.moveForward
-        val moveStrafe = if (godBridgeInjectedStrafe) godBridgeUserMoveStrafe else player.movementInput.moveStrafe
 
-        return getGodBridgeDiagonalContext(movingYaw, moveForward, moveStrafe) != null
+        return getGodBridgeDiagonalContext(movingYaw, moveForward) != null
     }
 
     private fun updateGodBridgeSide(movingYaw: Float) {
@@ -1292,10 +1291,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun getGodBridgeDiagonalContext(movingYaw: Float, input: MovementInput) =
-        getGodBridgeDiagonalContext(movingYaw, input.moveForward, input.moveStrafe)
+        getGodBridgeDiagonalContext(movingYaw, input.moveForward)
 
-    private fun getGodBridgeDiagonalContext(movingYaw: Float, moveForward: Float, moveStrafe: Float): GodBridgeDiagonalContext? {
-        if (moveForward == 0f || moveStrafe == 0f || movingYaw !in GOD_BRIDGE_DIAGONAL_YAWS) {
+    private fun getGodBridgeDiagonalContext(movingYaw: Float, moveForward: Float): GodBridgeDiagonalContext? {
+        if (moveForward <= 0f || movingYaw !in GOD_BRIDGE_DIAGONAL_YAWS) {
             return null
         }
 
@@ -1578,8 +1577,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val movingYaw = getGodBridgeMovingYaw()
         val moveForward = if (godBridgeInjectedStrafe) godBridgeUserMoveForward else player.movementInput.moveForward
-        val moveStrafe = if (godBridgeInjectedStrafe) godBridgeUserMoveStrafe else player.movementInput.moveStrafe
-        val diagonalContext = getGodBridgeDiagonalContext(movingYaw, moveForward, moveStrafe)
+        val diagonalContext = getGodBridgeDiagonalContext(movingYaw, moveForward)
         val rotationYaw = diagonalContext?.faceYaw ?: movingYaw
         val isMovingStraight = diagonalContext != null || isGodBridgeMovingStraight(movingYaw)
 
