@@ -39,6 +39,7 @@ import net.minecraft.util.BlockPos
 import net.minecraft.util.EnumFacing
 import net.minecraft.util.Vec3
 import net.minecraftforge.event.ForgeEventFactory
+import kotlin.math.sqrt
 
 /**
  * Allows to get the distance between the current entity and [entity] from the nearest corner of the bounding box
@@ -132,6 +133,13 @@ val Entity.currPos: Vec3
 
 val Entity.lastTickPos: Vec3
     get() = Vec3(lastTickPosX, lastTickPosY, lastTickPosZ)
+
+val Entity.horizontalPositionDelta: Double
+    get() {
+        val x = posX - prevPosX
+        val z = posZ - prevPosZ
+        return sqrt(x * x + z * z)
+    }
 
 val EntityLivingBase?.isMoving: Boolean
     get() = this?.run { moveForward != 0F || moveStrafing != 0F } == true

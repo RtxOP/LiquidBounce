@@ -276,6 +276,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeLastWaitDebugTick = 0
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
+    private var godBridgeDiagonalStopTicks = 0
     private var godBridgeDiagonalReleased = false
 
     private val isLookingDiagonally: Boolean
@@ -1306,6 +1307,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         if (godBridgeDiagonalYaw != diagonalYaw) {
             godBridgeDiagonalYaw = diagonalYaw
             godBridgeDiagonalNudgeTicks = GOD_BRIDGE_DIAGONAL_NUDGE_TICKS
+            godBridgeDiagonalStopTicks = 0
             godBridgeDiagonalReleased = false
         }
 
@@ -1315,13 +1317,24 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         if (waitingForRotation) {
+            godBridgeDiagonalStopTicks = 0
             godBridgeAlignmentDebug = "diag=waitRot yaw=$diagonalYaw"
             return true
         }
 
-        if (MovementUtils.speed > GOD_BRIDGE_DIAGONAL_STOP_SPEED) {
+        val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
+        if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
+            godBridgeDiagonalStopTicks = 0
             godBridgeAlignmentDebug =
-                "diag=waitStop yaw=$diagonalYaw speed=${formatGodBridgeDebug(MovementUtils.speed.toDouble())}"
+                "diag=waitStop yaw=$diagonalYaw delta=${formatGodBridgeDebug(positionDelta)}"
+            return true
+        }
+
+        godBridgeDiagonalStopTicks++
+        if (godBridgeDiagonalStopTicks < GOD_BRIDGE_DIAGONAL_STOP_TICKS) {
+            godBridgeAlignmentDebug =
+                "diag=waitStop yaw=$diagonalYaw delta=${formatGodBridgeDebug(positionDelta)} " +
+                    "stable=$godBridgeDiagonalStopTicks/$GOD_BRIDGE_DIAGONAL_STOP_TICKS"
             return true
         }
 
@@ -1464,6 +1477,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeDiagonalAlignment() {
         godBridgeDiagonalYaw = null
         godBridgeDiagonalNudgeTicks = 0
+        godBridgeDiagonalStopTicks = 0
         godBridgeDiagonalReleased = false
     }
 
@@ -1554,6 +1568,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
-    private const val GOD_BRIDGE_DIAGONAL_STOP_SPEED = 0.001f
+    private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
+    private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 2
 }
