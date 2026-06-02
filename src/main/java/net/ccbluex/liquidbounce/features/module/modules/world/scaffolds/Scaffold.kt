@@ -279,11 +279,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeLastWaitDebug = ""
     private var godBridgeLastWaitDebugTick = 0
     private var godBridgeWaitPending = false
+    private var godBridgePlacementWaitPending = false
+    private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
     private var godBridgeDiagonalReleased = false
+    private var godBridgeDiagonalRotationDone = false
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -1299,6 +1302,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val rotationPending = waitingForRotation && diagonalYaw == null
         val waitSequencePending = rotationPending || alignmentPending
         val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequencePending)
+        godBridgePlacementWaitPending = waitSequencePending
+        godBridgePlacementReleased = if (waitSequencePending) false else postAlignPending || godBridgePlacementReleased
         godBridgeWaitPending = waitSequencePending || postAlignPending
 
         input.sneak = input.sneak || rotationPending || alignmentPending
@@ -1327,7 +1332,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         input.moveForward = 0f
         godBridgePostAlignmentWaitTicks--
         godBridgeAlignmentTicks = 0
-        resetGodBridgeDiagonalAlignment()
         godBridgeAlignmentDebug = "postAlign=wait ticks=$godBridgePostAlignmentWaitTicks"
 
         return true
@@ -1347,6 +1351,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             godBridgeDiagonalNudgeTicks = GOD_BRIDGE_DIAGONAL_NUDGE_TICKS
             godBridgeDiagonalStopTicks = 0
             godBridgeDiagonalReleased = false
+            godBridgeDiagonalRotationDone = false
         }
 
         if (godBridgeDiagonalReleased) {
@@ -1354,11 +1359,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        if (waitingForRotation) {
+        if (!godBridgeDiagonalRotationDone && waitingForRotation) {
             godBridgeDiagonalStopTicks = 0
             godBridgeAlignmentDebug = "diag=waitRot yaw=$diagonalYaw"
             return true
         }
+
+        godBridgeDiagonalRotationDone = true
 
         val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
         if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
@@ -1577,6 +1584,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         resetGodBridgeAlignment()
         godBridgePostAlignmentWaitTicks = 0
         godBridgeWaitPending = false
+        godBridgePlacementWaitPending = false
+        godBridgePlacementReleased = false
     }
 
     private fun resetGodBridgeAlignmentPlan() {
@@ -1589,6 +1598,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeDiagonalNudgeTicks = 0
         godBridgeDiagonalStopTicks = 0
         godBridgeDiagonalReleased = false
+        godBridgeDiagonalRotationDone = false
     }
 
     private fun shouldBlockGodBridgePlacement(): Boolean {
@@ -1596,8 +1606,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        if (godBridgeWaitPending) {
+        if (godBridgePlacementWaitPending) {
             return true
+        }
+
+        if (godBridgePlacementReleased || godBridgePostAlignmentWaitTicks > 0) {
+            return false
         }
 
         val targetRotation = godBridgeTargetRotation ?: return false
