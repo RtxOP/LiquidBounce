@@ -279,6 +279,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeLastWaitDebug = ""
     private var godBridgeLastWaitDebugTick = 0
     private var godBridgeWaitPending = false
+    private var godBridgeWaitSequenceActive = false
     private var godBridgePlacementWaitPending = false
     private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
@@ -1288,6 +1289,26 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val rotationDelta = rotationDifference(targetRotation, currRotation)
         val waitingForRotation = rotationDelta > getFixedAngleDelta()
 
+        if (godBridgePlacementReleased) {
+            val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequenceFinished = false)
+            godBridgePlacementWaitPending = false
+            godBridgeWaitPending = postAlignPending
+
+            if (!postAlignPending) {
+                godBridgeAlignmentDebug = "wait=released"
+            }
+
+            debugGodBridgeWait(
+                "sneak=${input.sneak} rotPending=$waitingForRotation " +
+                    "rotDiff=${formatGodBridgeDebug(rotationDelta.toDouble())} " +
+                    "postAlign=$postAlignPending alignPending=false $godBridgeAlignmentDebug " +
+                    "facingYaw=$facingYaw moveF=${input.moveForward} moveS=${input.moveStrafe} " +
+                    "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
+            )
+
+            return postAlignPending
+        }
+
         val alignmentPending = when {
             diagonalYaw != null -> applyGodBridgeDiagonalInput(input, diagonalYaw, waitingForRotation)
             waitingForRotation -> {
@@ -1302,9 +1323,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val rotationPending = waitingForRotation && diagonalYaw == null
         val waitSequencePending = rotationPending || alignmentPending
-        val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequencePending)
+        val waitSequenceFinished = godBridgeWaitSequenceActive && !waitSequencePending
+        godBridgeWaitSequenceActive = waitSequencePending
+
+        val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequenceFinished)
+        val diagonalReleased = diagonalYaw != null && godBridgeDiagonalReleased
         godBridgePlacementWaitPending = waitSequencePending
-        godBridgePlacementReleased = if (waitSequencePending) false else postAlignPending || godBridgePlacementReleased
+        godBridgePlacementReleased = if (waitSequencePending) false else {
+            waitSequenceFinished || diagonalReleased || postAlignPending || godBridgePlacementReleased
+        }
         godBridgeWaitPending = waitSequencePending || postAlignPending
 
         input.sneak = input.sneak || rotationPending || alignmentPending
@@ -1320,10 +1347,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return godBridgeWaitPending
     }
 
-    private fun applyGodBridgePostAlignmentWait(input: MovementInput, waitSequencePending: Boolean): Boolean {
-        if (waitSequencePending) {
+    private fun applyGodBridgePostAlignmentWait(input: MovementInput, waitSequenceFinished: Boolean): Boolean {
+        if (waitSequenceFinished) {
             godBridgePostAlignmentWaitTicks = waitForRotsPostAlignTicks.random()
-            return false
         }
 
         if (godBridgePostAlignmentWaitTicks <= 0) {
@@ -1590,6 +1616,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         resetGodBridgeAlignment()
         godBridgePostAlignmentWaitTicks = 0
         godBridgeWaitPending = false
+        godBridgeWaitSequenceActive = false
         godBridgePlacementWaitPending = false
         godBridgePlacementReleased = false
         godBridgeDiagonalReleasedYaw = null
