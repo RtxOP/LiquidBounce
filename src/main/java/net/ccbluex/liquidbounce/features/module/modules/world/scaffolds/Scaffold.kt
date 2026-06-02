@@ -286,6 +286,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
     private var godBridgeDiagonalReleased = false
+    private var godBridgeDiagonalReleasedYaw: Float? = null
     private var godBridgeDiagonalRotationDone = false
 
     private val isLookingDiagonally: Boolean
@@ -1347,10 +1348,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         if (godBridgeDiagonalYaw != diagonalYaw) {
+            if (godBridgeDiagonalReleasedYaw != diagonalYaw) {
+                godBridgeDiagonalReleasedYaw = null
+            }
+
             godBridgeDiagonalYaw = diagonalYaw
             godBridgeDiagonalNudgeTicks = GOD_BRIDGE_DIAGONAL_NUDGE_TICKS
             godBridgeDiagonalStopTicks = 0
-            godBridgeDiagonalReleased = false
+            godBridgeDiagonalReleased = godBridgeDiagonalReleasedYaw == diagonalYaw
             godBridgeDiagonalRotationDone = false
         }
 
@@ -1385,6 +1390,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (godBridgeDiagonalNudgeTicks <= 0) {
             godBridgeDiagonalReleased = true
+            godBridgeDiagonalReleasedYaw = diagonalYaw
             godBridgeAlignmentDebug = "diag=released yaw=$diagonalYaw"
             return false
         }
@@ -1586,6 +1592,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeWaitPending = false
         godBridgePlacementWaitPending = false
         godBridgePlacementReleased = false
+        godBridgeDiagonalReleasedYaw = null
     }
 
     private fun resetGodBridgeAlignmentPlan() {
@@ -1606,12 +1613,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        if (godBridgePlacementWaitPending) {
-            return true
+        if (godBridgePlacementReleased) {
+            return false
         }
 
-        if (godBridgePlacementReleased || godBridgePostAlignmentWaitTicks > 0) {
-            return false
+        if (godBridgePlacementWaitPending) {
+            return true
         }
 
         val targetRotation = godBridgeTargetRotation ?: return false
