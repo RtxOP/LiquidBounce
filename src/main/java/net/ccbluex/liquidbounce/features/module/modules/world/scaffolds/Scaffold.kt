@@ -552,11 +552,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             (!raycastProperly || raycast.sideHit == target.enumFacing)
 
         debugGodBridgeRaycast(
-                "gate=${if (raycastMatchesTarget) "pass" else "miss"} " +
-                "target=${formatGodBridgePlaceInfo(target)} ${formatGodBridgeRaytrace(raycast)} " +
+                "rhythm gate=${if (raycastMatchesTarget) "pass" else "miss"} " +
+                "target=${formatGodBridgePlaceInfo(target)} " +
+                formatGodBridgeRayWindow(target, raycast, raycastProperly) + " " +
                 "rot=${formatGodBridgeRotation(currRotation)} " +
                 "pos=${formatGodBridgeCurrentPositionDebug()} " +
-                "motion=${formatGodBridgeMotionDebug()} proper=$raycastProperly"
+                "motion=${formatGodBridgeMotionDebug()} " +
+                "jump=$blocksPlacedUntilJump/$blocksToJump proper=$raycastProperly"
         )
 
         raycast.let {
@@ -1101,6 +1103,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val world = mc.theWorld ?: return null
 
         val eyes = player.eyes
+
+        return performBlockRaytraceFromEyes(rotation, maxReach, eyes)
+    }
+
+    private fun performBlockRaytraceFromEyes(rotation: Rotation, maxReach: Float, eyes: Vec3): MovingObjectPosition? {
+        val world = mc.theWorld ?: return null
         val rotationVec = getVectorForRotation(rotation)
 
         val reach = eyes + (rotationVec * maxReach.toDouble())
@@ -1795,6 +1803,50 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private fun formatGodBridgeDebug(value: Double) = "%.3f".format(value)
 
+    private fun formatGodBridgeRayWindow(
+        target: PlaceInfo,
+        currentRaytrace: MovingObjectPosition?,
+        requireSide: Boolean,
+    ): String {
+        val player = mc.thePlayer ?: return "prev=null now=null nextSim=null"
+        val reach = mc.playerController.blockReachDistance
+        val previousEyes = Vec3(player.prevPosX, player.prevPosY + player.eyeHeight.toDouble(), player.prevPosZ)
+        val previousRaytrace = performBlockRaytraceFromEyes(currRotation, reach, previousEyes)
+
+        val nextRaytrace = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput).let { simPlayer ->
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
+            val nextEyes = Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+            performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
+        }
+
+        return "prev=${formatGodBridgeRayWindowState(target, previousRaytrace, requireSide)} " +
+            "now=${formatGodBridgeRayWindowState(target, currentRaytrace, requireSide)} " +
+            "nextSim=${formatGodBridgeRayWindowState(target, nextRaytrace, requireSide)}"
+    }
+
+    private fun formatGodBridgeRayWindowState(
+        target: PlaceInfo,
+        raytrace: MovingObjectPosition?,
+        requireSide: Boolean,
+    ): String {
+        raytrace ?: return "null"
+
+        if (!raytrace.typeOfHit.isBlock) {
+            return raytrace.typeOfHit.name.toLowerCase()
+        }
+
+        if (raytrace.blockPos != target.blockPos) {
+            return "block:${raytrace.sideHit.name}"
+        }
+
+        if (requireSide && raytrace.sideHit != target.enumFacing) {
+            return "face:${raytrace.sideHit.name}"
+        }
+
+        return "hit:${raytrace.sideHit.name}"
+    }
+
     private fun formatGodBridgePositionDebug(posX: Double, posZ: Double) =
         "x=${formatGodBridgeDebug(posX - floor(posX))} z=${formatGodBridgeDebug(posZ - floor(posZ))}"
 
@@ -1822,12 +1874,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun formatGodBridgePlaceInfo(placeInfo: PlaceInfo) =
         "${formatGodBridgeBlockPos(placeInfo.blockPos)}/${placeInfo.enumFacing.name} " +
             "hit=${formatGodBridgeVec(placeInfo.vec3 - Vec3(placeInfo.blockPos))}"
-
-    private fun formatGodBridgeRaytrace(raytrace: MovingObjectPosition?) =
-        raytrace?.let {
-            "ray=${formatGodBridgeBlockPos(it.blockPos)}/${it.sideHit.name} " +
-                "hit=${formatGodBridgeVec(it.hitVec - Vec3(it.blockPos))}"
-        } ?: "ray=null"
 
     /**
      * God-bridge rotation generation method from Nextgen
