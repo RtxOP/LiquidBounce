@@ -573,7 +573,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeUserMoveForward = event.originalInput.moveForward
         godBridgeInjectedStrafe = false
 
-        if (!isGodBridgeEnabled) {
+        if (!isGodBridgeEnabled || !player.onGround) {
             resetGodBridgeWait()
             return@handler
         }
@@ -590,14 +590,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                     "skip=noInput moveF=${event.originalInput.moveForward} moveS=${event.originalInput.moveStrafe} " +
                         "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
                 )
-            } else if (!player.onGround) {
-                updateGodBridgeWaitYawLock(event.originalInput)
-                debugGodBridgeWait(
-                    "skip=airborne moveF=${event.originalInput.moveForward} moveS=${event.originalInput.moveStrafe} " +
-                        "lockYaw=$godBridgeRotationYawLock moving=${player.isMoving} " +
-                        "pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
-                )
-                return@handler
             } else {
                 if (applyGodBridgeWaitForRotations(event.originalInput, targetRotation)) {
                     return@handler
@@ -1258,32 +1250,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return round(direction / 45) * 45
     }
 
-    private fun getGodBridgeMovingYaw(input: MovementInput): Float {
-        val player = mc.thePlayer ?: return 0f
-
-        if (!options.applyServerSide) {
-            return round(MathHelper.wrapAngleTo180_float(player.rotationYaw) / 45) * 45
-        }
-
-        var yaw = player.rotationYaw
-        var forward = 1f
-
-        if (input.moveForward < 0f) {
-            yaw += 180f
-            forward = -0.5f
-        } else if (input.moveForward > 0f) {
-            forward = 0.5f
-        }
-
-        if (input.moveStrafe < 0f) {
-            yaw += 90f * forward
-        } else if (input.moveStrafe > 0f) {
-            yaw -= 90f * forward
-        }
-
-        return round((yaw + 180f) / 45) * 45
-    }
-
     private fun getGodBridgeRotationMovingYaw(): Float {
         val shouldUseLock = waitForRots && (
             godBridgeWaitSequenceActive || godBridgeWaitPending ||
@@ -1330,25 +1296,16 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun getGodBridgeDiagonalFacingYaw(facingYaw: Float, input: MovementInput) =
         facingYaw.takeIf { waitForRotsSideMove && input.moveForward > 0f && it in GOD_BRIDGE_DIAGONAL_YAWS }
 
-    private fun updateGodBridgeWaitYawLock(input: MovementInput): Pair<Float, Float?> {
-        val facingYaw = getGodBridgeFacingYaw()
-        val diagonalYaw = getGodBridgeDiagonalFacingYaw(facingYaw, input)
-        val userMovingYaw = getGodBridgeMovingYaw(input)
-        val desiredYaw = diagonalYaw ?: userMovingYaw
-
-        if (godBridgeRotationYawLock != desiredYaw) {
-            godBridgeRotationYawLock = desiredYaw
-        }
-
-        return userMovingYaw to diagonalYaw
-    }
-
     private fun applyGodBridgeWaitForRotations(input: MovementInput, targetRotation: Rotation): Boolean {
         val player = mc.thePlayer ?: return false
         val facingYaw = getGodBridgeFacingYaw()
+        val diagonalYaw = getGodBridgeDiagonalFacingYaw(facingYaw, input)
         val rotationDelta = rotationDifference(targetRotation, currRotation)
         val waitingForRotation = rotationDelta > getFixedAngleDelta()
-        val (userMovingYaw, diagonalYaw) = updateGodBridgeWaitYawLock(input)
+
+        if (godBridgeRotationYawLock == null || diagonalYaw != null && godBridgeRotationYawLock != diagonalYaw) {
+            godBridgeRotationYawLock = diagonalYaw ?: getGodBridgeMovingYaw()
+        }
 
         if (godBridgePlacementReleased) {
             val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequenceFinished = false)
@@ -1363,7 +1320,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 "sneak=${input.sneak} rotPending=$waitingForRotation " +
                     "rotDiff=${formatGodBridgeDebug(rotationDelta.toDouble())} " +
                     "postAlign=$postAlignPending alignPending=false $godBridgeAlignmentDebug " +
-                    "facingYaw=$facingYaw userYaw=$userMovingYaw lockYaw=$godBridgeRotationYawLock " +
+                    "facingYaw=$facingYaw lockYaw=$godBridgeRotationYawLock " +
                     "moveF=${input.moveForward} moveS=${input.moveStrafe} " +
                     "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
             )
@@ -1402,7 +1359,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             "sneak=${input.sneak} rotPending=$waitingForRotation " +
                 "rotDiff=${formatGodBridgeDebug(rotationDelta.toDouble())} " +
                 "postAlign=$postAlignPending alignPending=$alignmentPending $godBridgeAlignmentDebug " +
-                "facingYaw=$facingYaw userYaw=$userMovingYaw lockYaw=$godBridgeRotationYawLock " +
+                "facingYaw=$facingYaw lockYaw=$godBridgeRotationYawLock " +
                 "moveF=${input.moveForward} moveS=${input.moveStrafe} " +
                 "moving=${player.isMoving} pos=${formatGodBridgePositionDebug(player.posX, player.posZ)}"
         )
@@ -1564,7 +1521,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private fun getGodBridgeAlignmentTarget(): GodBridgeAlignmentTarget? {
         val player = mc.thePlayer ?: return null
-        val movingYaw = getGodBridgeRotationMovingYaw()
+        val movingYaw = getGodBridgeMovingYaw()
 
         updateGodBridgeSide(movingYaw)
 
