@@ -120,12 +120,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.15f, 0f..0.4f) {
         waitForRotsSideMove
     }
-    private val waitForRotsPostAlignTicks by intRange("WaitForRotationsPostAlignTicks", 2..6, 0..10) {
+    private val waitForRotsPostAlignTicks by intRange("WaitForRotationsPostAlignTicks", 2..6, 0..50) {
         waitForRotsSideMove
     }
     private val waitForRotsDebug by boolean("WaitForRotationsDebug", false) {
         isGodBridgeEnabled && waitForRots
     }.subjective()
+    private val godBridgeRaycastDebug by boolean("GodBridgeRaycastDebug", false) { isGodBridgeEnabled }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -546,8 +547,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return@handler
         }
 
+        val raycastMatchesTarget = raycast != null &&
+            raycast.blockPos == target.blockPos &&
+            (!raycastProperly || raycast.sideHit == target.enumFacing)
+
+        debugGodBridgeRaycast(
+                "gate=${if (raycastMatchesTarget) "pass" else "miss"} " +
+                "target=${formatGodBridgePlaceInfo(target)} ${formatGodBridgeRaytrace(raycast)} " +
+                "rot=${formatGodBridgeRotation(currRotation)} " +
+                "pos=${formatGodBridgeCurrentPositionDebug()} " +
+                "motion=${formatGodBridgeMotionDebug()} proper=$raycastProperly"
+        )
+
         raycast.let {
-            if (!options.rotationsActive || it != null && it.blockPos == target.blockPos && (!raycastProperly || it.sideHit == target.enumFacing)) {
+            if (!options.rotationsActive || raycastMatchesTarget) {
                 val result = if (raycastProperly && it != null) {
                     PlaceInfo(it.blockPos, it.sideHit, it.hitVec)
                 } else {
@@ -1148,6 +1161,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val clickedSuccessfully = thePlayer.onPlayerRightClick(clickPos, side, hitVec, stack)
 
+        debugGodBridgeRaycast(
+            "place=${if (clickedSuccessfully) "success" else "fail"} " +
+                "attempt=$attempt click=${formatGodBridgeBlockPos(clickPos)}/${side.name} " +
+                "hit=${formatGodBridgeVec(hitVec - Vec3(clickPos))} " +
+                "rot=${formatGodBridgeRotation(currRotation)} " +
+                "pos=${formatGodBridgePositionDebug(thePlayer.posX, thePlayer.posZ)} " +
+                "motion=${formatGodBridgeMotionDebug()}"
+        )
+
         if (clickedSuccessfully) {
             if (!attempt) {
                 delayTimer.reset()
@@ -1440,6 +1462,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         input.moveForward = 0f
+        input.moveStrafe = 0f
+        godBridgeInjectedStrafe = false
         godBridgePostAlignmentWaitTicks--
         godBridgeAlignmentTicks = 0
         godBridgeAlignmentDebug = "postAlign=wait ticks=$godBridgePostAlignmentWaitTicks"
@@ -1761,10 +1785,49 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         chat("§7[Scaffold GB] §f$message")
     }
 
+    private fun debugGodBridgeRaycast(message: String) {
+        if (!godBridgeRaycastDebug) {
+            return
+        }
+
+        chat("§7[Scaffold GB Ray] §f$message")
+    }
+
     private fun formatGodBridgeDebug(value: Double) = "%.3f".format(value)
 
     private fun formatGodBridgePositionDebug(posX: Double, posZ: Double) =
         "x=${formatGodBridgeDebug(posX - floor(posX))} z=${formatGodBridgeDebug(posZ - floor(posZ))}"
+
+    private fun formatGodBridgeCurrentPositionDebug(): String {
+        val player = mc.thePlayer ?: return "x=0.000 z=0.000"
+
+        return formatGodBridgePositionDebug(player.posX, player.posZ)
+    }
+
+    private fun formatGodBridgeMotionDebug(): String {
+        val player = mc.thePlayer ?: return "x=0.000 z=0.000"
+
+        return "x=${formatGodBridgeDebug(player.motionX)} z=${formatGodBridgeDebug(player.motionZ)}"
+    }
+
+    private fun formatGodBridgeRotation(rotation: Rotation) =
+        "yaw=${formatGodBridgeDebug(rotation.yaw.toDouble())} pitch=${formatGodBridgeDebug(rotation.pitch.toDouble())}"
+
+    private fun formatGodBridgeBlockPos(pos: BlockPos) =
+        "x=${pos.x} y=${pos.y} z=${pos.z}"
+
+    private fun formatGodBridgeVec(vec: Vec3) =
+        "x=${formatGodBridgeDebug(vec.xCoord)} y=${formatGodBridgeDebug(vec.yCoord)} z=${formatGodBridgeDebug(vec.zCoord)}"
+
+    private fun formatGodBridgePlaceInfo(placeInfo: PlaceInfo) =
+        "${formatGodBridgeBlockPos(placeInfo.blockPos)}/${placeInfo.enumFacing.name} " +
+            "hit=${formatGodBridgeVec(placeInfo.vec3 - Vec3(placeInfo.blockPos))}"
+
+    private fun formatGodBridgeRaytrace(raytrace: MovingObjectPosition?) =
+        raytrace?.let {
+            "ray=${formatGodBridgeBlockPos(it.blockPos)}/${it.sideHit.name} " +
+                "hit=${formatGodBridgeVec(it.hitVec - Vec3(it.blockPos))}"
+        } ?: "ray=null"
 
     /**
      * God-bridge rotation generation method from Nextgen
@@ -1843,7 +1906,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
-    private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 2
+    private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
     private const val GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP = 0.05
     private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
 }
