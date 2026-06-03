@@ -126,6 +126,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsDebug by boolean("WaitForRotationsDebug", false) {
         isGodBridgeEnabled && waitForRots
     }.subjective()
+    private val godBridgePlacementLead by boolean("PlacementLead", true) {
+        isGodBridgeEnabled && waitForRots
+    }
     private val godBridgeRaycastDebug by boolean("GodBridgeRaycastDebug", false) { isGodBridgeEnabled }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
@@ -1437,6 +1440,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequenceFinished)
         val diagonalReleased = diagonalYaw != null && godBridgeDiagonalReleased
+        val placementReleaseStarted = !godBridgePlacementReleased &&
+            !waitSequencePending &&
+            (waitSequenceFinished || diagonalReleased || postAlignPending)
+
         godBridgePlacementWaitPending = waitSequencePending
         godBridgePlacementReleased = if (waitSequencePending) false else {
             waitSequenceFinished || diagonalReleased || postAlignPending || godBridgePlacementReleased
@@ -1448,6 +1455,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         input.sneak = input.sneak || rotationPending || alignmentPending
+
+        if (godBridgePlacementLead && placementReleaseStarted && !postAlignPending) {
+            input.moveForward = 0f
+            input.moveStrafe = 0f
+            godBridgeInjectedStrafe = false
+            godBridgeAlignmentDebug = "$godBridgeAlignmentDebug lead=hold"
+        }
 
         debugGodBridgeWait(
             "sneak=${input.sneak} rotPending=$waitingForRotation " +
