@@ -1914,29 +1914,52 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         val player = mc.thePlayer ?: return
-        val sample = godBridgeMouseOverSample ?: return
-        val sampleState = formatGodBridgeRayWindowState(target, sample.mouseOver, requireSide)
         val scaffoldState = formatGodBridgeRayWindowState(target, scaffoldRaytrace, requireSide)
+        val nextRaytrace = simulateGodBridgeNextRaytrace()
+        val nextState = formatGodBridgeRayWindowState(target, nextRaytrace, requireSide)
+        val fallRiskMiss = requireSide && !scaffoldMatchesTarget && (
+            scaffoldState == "miss" ||
+                scaffoldState == "null" ||
+                scaffoldState == "face:UP" && nextState != "hit:${target.enumFacing.name}"
+            )
+        val sample = godBridgeMouseOverSample
+
+        if (sample == null) {
+            if (fallRiskMiss) {
+                debugGodBridgeRaycast(
+                    "order heartbeat target=${formatGodBridgePlaceInfo(target)} " +
+                        "sample=missing scaffold=$scaffoldState next=$nextState " +
+                        "scaffoldRay=${formatGodBridgeRaytraceDetail(scaffoldRaytrace)} " +
+                        "nextRay=${formatGodBridgeRaytraceDetail(nextRaytrace)} " +
+                        "scaffoldPos=${formatGodBridgePositionDebug(player.posX, player.posZ)} " +
+                        "scaffoldRot=${formatGodBridgeRotation(currRotation)} tick=${player.ticksExisted}"
+                )
+            }
+
+            return
+        }
+
+        val sampleState = formatGodBridgeRayWindowState(target, sample.mouseOver, requireSide)
         val sameTick = sample.ticksExisted == player.ticksExisted
         val sameState = sampleState == scaffoldState
         val moved = abs(sample.posX - player.posX) > GOD_BRIDGE_ORDER_EPSILON ||
             abs(sample.posY - player.posY) > GOD_BRIDGE_ORDER_EPSILON ||
             abs(sample.posZ - player.posZ) > GOD_BRIDGE_ORDER_EPSILON
         val rotationChanged = sample.currentRotation != currRotation
+        val mismatch = !sameTick || !sameState || moved || rotationChanged
 
-        if (scaffoldMatchesTarget && sameTick && sameState && !moved && !rotationChanged) {
+        if (!mismatch && !fallRiskMiss) {
             return
         }
 
-        if (sameTick && sameState && !moved && !rotationChanged) {
-            return
-        }
+        val eventName = if (mismatch) "order" else "order heartbeat"
 
         debugGodBridgeRaycast(
-            "order target=${formatGodBridgePlaceInfo(target)} " +
-                "sample=$sampleState scaffold=$scaffoldState same=$sameState " +
+            "$eventName target=${formatGodBridgePlaceInfo(target)} " +
+                "sample=$sampleState scaffold=$scaffoldState next=$nextState same=$sameState sameTick=$sameTick " +
                 "sampleRay=${formatGodBridgeRaytraceDetail(sample.mouseOver)} " +
                 "scaffoldRay=${formatGodBridgeRaytraceDetail(scaffoldRaytrace)} " +
+                "nextRay=${formatGodBridgeRaytraceDetail(nextRaytrace)} " +
                 "samplePos=${formatGodBridgePositionDebug(sample.posX, sample.posZ)} " +
                 "scaffoldPos=${formatGodBridgePositionDebug(player.posX, player.posZ)} moved=$moved " +
                 "playerRot=${formatGodBridgeRotation(sample.playerRotation)} " +
@@ -1945,6 +1968,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 "scaffoldRot=${formatGodBridgeRotation(currRotation)} rotChanged=$rotationChanged " +
                 "tick=${sample.ticksExisted}/${player.ticksExisted}"
         )
+    }
+
+    private fun simulateGodBridgeNextRaytrace(): MovingObjectPosition? {
+        val player = mc.thePlayer ?: return null
+        val reach = mc.playerController.blockReachDistance
+
+        val nextEyes = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput).let { simPlayer ->
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
+
+            Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+        }
+
+        return performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
     }
 
     private fun shouldWaitForGodBridgeReleasePhase(target: PlaceInfo?): Boolean {
