@@ -129,6 +129,15 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val godBridgePlacementLead by boolean("PlacementLead", true) {
         isGodBridgeEnabled && waitForRots
     }
+    private val godBridgeReleasePhaseAlign by boolean("ReleasePhaseAlign", true) {
+        isGodBridgeEnabled && waitForRots
+    }
+    private val godBridgeReleasePhaseValue by float("ReleasePhase", 0.3f, 0f..0.5f) {
+        godBridgeReleasePhaseAlign
+    }
+    private val godBridgeReleasePhaseMaxWaitTicks by int("ReleasePhaseMaxWaitTicks", 2, 0..5) {
+        godBridgeReleasePhaseAlign
+    }
     private val godBridgeRaycastDebug by boolean("GodBridgeRaycastDebug", false) { isGodBridgeEnabled }.subjective()
     private val godBridgeWindowScanDebug by boolean("WindowScanDebug", true) {
         isGodBridgeEnabled && godBridgeRaycastDebug
@@ -303,6 +312,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeDiagonalRotationDone = false
     private var godBridgeReleasePhase: GodBridgePhaseSnapshot? = null
     private var godBridgeFirstPlacePhaseLogged = false
+    private var godBridgeReleasePhaseGateArmed = false
+    private var godBridgeReleasePhaseGateTicks = 0
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -1453,21 +1464,39 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val postAlignPending = applyGodBridgePostAlignmentWait(input, waitSequenceFinished)
         val diagonalReleased = diagonalYaw != null && godBridgeDiagonalReleased
-        val placementReleaseStarted = !godBridgePlacementReleased &&
+        val releaseCandidateStarted = !godBridgePlacementReleased &&
             !waitSequencePending &&
-            (waitSequenceFinished || diagonalReleased || postAlignPending)
-
-        godBridgePlacementWaitPending = waitSequencePending
-        godBridgePlacementReleased = if (waitSequencePending) false else {
-            waitSequenceFinished || diagonalReleased || postAlignPending || godBridgePlacementReleased
+            (waitSequenceFinished || diagonalReleased || godBridgeReleasePhaseGateArmed)
+        if (releaseCandidateStarted) {
+            godBridgeReleasePhaseGateArmed = true
         }
-        godBridgeWaitPending = waitSequencePending || postAlignPending
+        val releasePhasePending = releaseCandidateStarted &&
+            !postAlignPending &&
+            shouldWaitForGodBridgeReleasePhase(placeRotation?.placeInfo)
+        val placementReleaseStarted = releaseCandidateStarted && !postAlignPending && !releasePhasePending
+
+        godBridgePlacementWaitPending = waitSequencePending || postAlignPending || releasePhasePending
+        godBridgePlacementReleased = if (waitSequencePending || postAlignPending || releasePhasePending) false else {
+            placementReleaseStarted || godBridgePlacementReleased
+        }
+        godBridgeWaitPending = waitSequencePending || postAlignPending || releasePhasePending
 
         if (godBridgePlacementReleased && !godBridgeWaitPending) {
             godBridgeReleasedInputKey = inputKey
         }
 
-        input.sneak = input.sneak || rotationPending || alignmentPending
+        input.sneak = input.sneak || rotationPending || alignmentPending || releasePhasePending
+
+        if (waitSequencePending) {
+            resetGodBridgeReleasePhaseGate()
+        }
+
+        if (releasePhasePending) {
+            input.moveForward = 0f
+            input.moveStrafe = 0f
+            godBridgeInjectedStrafe = false
+            godBridgeAlignmentDebug = "$godBridgeAlignmentDebug releasePhase=wait"
+        }
 
         if (godBridgePlacementLead && placementReleaseStarted && !postAlignPending) {
             input.moveForward = 0f
@@ -1477,6 +1506,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         if (placementReleaseStarted) {
+            resetGodBridgeReleasePhaseGate()
             debugGodBridgeReleasePhase(placeRotation?.placeInfo, input, godBridgePlacementLead && !postAlignPending)
         }
 
@@ -1780,6 +1810,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgePhaseDebug() {
         godBridgeReleasePhase = null
         godBridgeFirstPlacePhaseLogged = false
+        resetGodBridgeReleasePhaseGate()
+    }
+
+    private fun resetGodBridgeReleasePhaseGate() {
+        godBridgeReleasePhaseGateArmed = false
+        godBridgeReleasePhaseGateTicks = 0
     }
 
     private fun resetGodBridgeAlignmentPlan() {
@@ -1841,6 +1877,82 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         chat("§7[Scaffold GB Ray] §f$message")
+    }
+
+    private fun shouldWaitForGodBridgeReleasePhase(target: PlaceInfo?): Boolean {
+        if (!godBridgeReleasePhaseAlign || godBridgeReleasePhaseMaxWaitTicks <= 0 || target == null) {
+            return false
+        }
+
+        val player = mc.thePlayer ?: return false
+        val side = target.enumFacing
+        val axis = side.axis
+
+        if (axis == EnumFacing.Axis.Y) {
+            return false
+        }
+
+        val targetPhase = getGodBridgeReleaseTargetPhase(side)
+        val currentPhase = getGodBridgeAxisPhase(axis, player.posX, player.posZ)
+        val distance = getGodBridgeReleasePhaseDistance(side, currentPhase, targetPhase)
+
+        if (distance <= GOD_BRIDGE_RELEASE_PHASE_EPSILON) {
+            return false
+        }
+
+        if (godBridgeReleasePhaseGateTicks >= godBridgeReleasePhaseMaxWaitTicks) {
+            debugGodBridgeReleasePhaseWait(target, axis, currentPhase, targetPhase, distance, timedOut = true)
+            return false
+        }
+
+        godBridgeReleasePhaseGateTicks++
+        debugGodBridgeReleasePhaseWait(target, axis, currentPhase, targetPhase, distance, timedOut = false)
+
+        return true
+    }
+
+    private fun getGodBridgeReleaseTargetPhase(side: EnumFacing): Double {
+        val phase = godBridgeReleasePhaseValue.toDouble()
+
+        return when (side) {
+            EnumFacing.SOUTH, EnumFacing.EAST -> phase
+            EnumFacing.NORTH, EnumFacing.WEST -> 1.0 - phase
+            else -> phase
+        }
+    }
+
+    private fun getGodBridgeReleasePhaseDistance(side: EnumFacing, currentPhase: Double, targetPhase: Double) =
+        when (side) {
+            EnumFacing.SOUTH, EnumFacing.EAST -> if (currentPhase < targetPhase) targetPhase - currentPhase else 0.0
+            EnumFacing.NORTH, EnumFacing.WEST -> if (currentPhase > targetPhase) currentPhase - targetPhase else 0.0
+            else -> 0.0
+        }
+
+    private fun debugGodBridgeReleasePhaseWait(
+        target: PlaceInfo,
+        axis: EnumFacing.Axis,
+        currentPhase: Double,
+        targetPhase: Double,
+        distance: Double,
+        timedOut: Boolean
+    ) {
+        if (!godBridgePhaseDebug) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+
+        debugGodBridgeRaycast(
+            "phase event=releaseWait target=${formatGodBridgePlaceInfo(target)} " +
+                "axis=${axis.name} side=${target.enumFacing.name} " +
+                "phase=${formatGodBridgeDebug(currentPhase)} targetPhase=${formatGodBridgeDebug(targetPhase)} " +
+                "dist=${formatGodBridgeDebug(distance)} ticks=$godBridgeReleasePhaseGateTicks/" +
+                "$godBridgeReleasePhaseMaxWaitTicks timeout=$timedOut " +
+                "pos=${formatGodBridgePositionDebug(player.posX, player.posZ)} " +
+                "axisMotion=${formatGodBridgeDebug(if (axis == EnumFacing.Axis.X) player.motionX else player.motionZ)} " +
+                "y=${formatGodBridgeDebug(player.posY)} motionY=${formatGodBridgeDebug(player.motionY)} " +
+                "ground=${player.onGround}"
+        )
     }
 
     private fun debugGodBridgeReleasePhase(target: PlaceInfo?, input: MovementInput, leadHeld: Boolean) {
@@ -2294,4 +2406,5 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP = 0.05
     private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
+    private const val GOD_BRIDGE_RELEASE_PHASE_EPSILON = 0.003
 }
