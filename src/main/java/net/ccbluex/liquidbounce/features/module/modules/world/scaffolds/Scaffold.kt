@@ -130,6 +130,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         isGodBridgeEnabled && waitForRots
     }
     private val godBridgeRaycastDebug by boolean("GodBridgeRaycastDebug", false) { isGodBridgeEnabled }.subjective()
+    private val godBridgeWindowScanDebug by boolean("WindowScanDebug", true) {
+        isGodBridgeEnabled && godBridgeRaycastDebug
+    }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -564,6 +567,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 "motion=${formatGodBridgeMotionDebug()} " +
                 "jump=$blocksPlacedUntilJump/$blocksToJump proper=$raycastProperly"
         )
+        debugGodBridgeWindowScan(target, raycast, raycastProperly)
 
         raycast.let {
             if (!options.rotationsActive || raycastMatchesTarget) {
@@ -1844,6 +1848,103 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             "nextSim=${formatGodBridgeRayWindowState(target, nextRaytrace, requireSide)}"
     }
 
+    private fun debugGodBridgeWindowScan(
+        target: PlaceInfo,
+        currentRaytrace: MovingObjectPosition?,
+        requireSide: Boolean,
+    ) {
+        if (!godBridgeWindowScanDebug || !requireSide || target.enumFacing.axis == EnumFacing.Axis.Y) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+        val reach = mc.playerController.blockReachDistance
+
+        if (currentRaytrace == null ||
+            !currentRaytrace.typeOfHit.isBlock ||
+            currentRaytrace.blockPos != target.blockPos ||
+            currentRaytrace.sideHit != EnumFacing.UP
+        ) {
+            return
+        }
+
+        val currentEyes = Vec3(player.posX, player.posY + player.eyeHeight.toDouble(), player.posZ)
+        val nextEyes = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput).let { simPlayer ->
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
+
+            Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+        }
+        val nextRaytrace = performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
+
+        if (nextRaytrace != null && nextRaytrace.blockPos == target.blockPos && nextRaytrace.sideHit == target.enumFacing) {
+            return
+        }
+
+        var hitStart: Double? = null
+        var hitEnd: Double? = null
+        val samples = StringBuilder(GOD_BRIDGE_WINDOW_SCAN_STEPS + 1)
+
+        for (step in 0..GOD_BRIDGE_WINDOW_SCAN_STEPS) {
+            val fraction = step.toDouble() / GOD_BRIDGE_WINDOW_SCAN_STEPS
+            val eyes = Vec3(
+                currentEyes.xCoord + (nextEyes.xCoord - currentEyes.xCoord) * fraction,
+                currentEyes.yCoord + (nextEyes.yCoord - currentEyes.yCoord) * fraction,
+                currentEyes.zCoord + (nextEyes.zCoord - currentEyes.zCoord) * fraction
+            )
+            val raytrace = performBlockRaytraceFromEyes(currRotation, reach, eyes)
+            val hitTargetSide = raytrace != null && raytrace.blockPos == target.blockPos &&
+                raytrace.sideHit == target.enumFacing
+
+            samples.append(formatGodBridgeWindowScanSample(target, raytrace))
+
+            if (hitTargetSide) {
+                if (hitStart == null) {
+                    hitStart = fraction
+                }
+
+                hitEnd = fraction
+            }
+        }
+
+        val hitRange = if (hitStart == null) {
+            "none"
+        } else {
+            "${formatGodBridgeDebug(hitStart!!)}..${formatGodBridgeDebug(hitEnd!!)}"
+        }
+
+        debugGodBridgeRaycast(
+            "window scan target=${formatGodBridgePlaceInfo(target)} " +
+                "now=${formatGodBridgeRayWindowState(target, currentRaytrace, requireSide = true)} " +
+                "next=${formatGodBridgeRayWindowState(target, nextRaytrace, requireSide = true)} " +
+                "hitRange=$hitRange samples=$samples " +
+                "from=${formatGodBridgePositionDebug(player.posX, player.posZ)} " +
+                "to=${formatGodBridgePositionDebug(nextEyes.xCoord, nextEyes.zCoord)} " +
+                "motion=${formatGodBridgeMotionDebug()} jump=$blocksPlacedUntilJump/$blocksToJump"
+        )
+    }
+
+    private fun formatGodBridgeWindowScanSample(
+        target: PlaceInfo,
+        raytrace: MovingObjectPosition?,
+    ): Char {
+        raytrace ?: return 'N'
+
+        if (!raytrace.typeOfHit.isBlock) {
+            return 'M'
+        }
+
+        if (raytrace.blockPos != target.blockPos) {
+            return 'B'
+        }
+
+        return when (raytrace.sideHit) {
+            target.enumFacing -> 'H'
+            EnumFacing.UP -> 'U'
+            else -> 'F'
+        }
+    }
+
     private fun formatGodBridgeRayWindowState(
         target: PlaceInfo,
         raytrace: MovingObjectPosition?,
@@ -1974,4 +2075,5 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
     private const val GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP = 0.05
     private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
+    private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
 }
