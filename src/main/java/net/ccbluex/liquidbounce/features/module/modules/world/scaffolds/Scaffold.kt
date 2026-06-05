@@ -1192,6 +1192,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         )
 
         if (clickedSuccessfully) {
+            debugGodBridgePlacementPhase(clickPos, side, attempt)
             debugGodBridgeFirstPlacePhase(clickPos, side, attempt)
 
             if (!attempt) {
@@ -1879,6 +1880,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         )
     }
 
+    private fun debugGodBridgePlacementPhase(clickPos: BlockPos, side: EnumFacing, attempt: Boolean) {
+        if (!godBridgePhaseDebug) {
+            return
+        }
+
+        val snapshot = createGodBridgePhaseSnapshot(side, getGodBridgeFallbackPhaseAxis()) ?: return
+
+        debugGodBridgeRaycast(
+            "phase event=place click=${formatGodBridgeBlockPos(clickPos)}/${side.name} " +
+                "${formatGodBridgePhaseSnapshot(snapshot)} " +
+                "rot=${formatGodBridgeRotation(currRotation)} attempt=$attempt"
+        )
+    }
+
     private fun createGodBridgePhaseSnapshot(
         side: EnumFacing,
         fallbackAxis: EnumFacing.Axis? = null
@@ -1895,8 +1910,21 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             jumpCount = blocksPlacedUntilJump,
             jumpTarget = blocksToJump,
             posX = player.posX,
-            posZ = player.posZ
+            posY = player.posY,
+            posZ = player.posZ,
+            motionY = player.motionY,
+            onGround = player.onGround
         )
+    }
+
+    private fun getGodBridgeFallbackPhaseAxis(): EnumFacing.Axis? {
+        val player = mc.thePlayer ?: return godBridgeReleasePhase?.axis
+
+        return godBridgeReleasePhase?.axis ?: if (abs(player.motionX) >= abs(player.motionZ)) {
+            EnumFacing.Axis.X
+        } else {
+            EnumFacing.Axis.Z
+        }
     }
 
     private fun getGodBridgePhaseAxis(side: EnumFacing, fallbackAxis: EnumFacing.Axis?): EnumFacing.Axis? {
@@ -1908,9 +1936,32 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun getGodBridgeAxisPhase(axis: EnumFacing.Axis, posX: Double, posZ: Double): Double {
-        val value = if (axis == EnumFacing.Axis.X) posX else posZ
+        return getGodBridgeAxisPhaseCoord(getGodBridgeAxisCoord(axis, posX, posZ))
+    }
 
-        return value - floor(value)
+    private fun getGodBridgeAxisCoord(axis: EnumFacing.Axis, posX: Double, posZ: Double): Double {
+        return if (axis == EnumFacing.Axis.X) posX else posZ
+    }
+
+    private fun getGodBridgeAxisPhaseCoord(coord: Double): Double {
+        return coord - floor(coord)
+    }
+
+    private fun formatGodBridgeAxisPhaseCoord(coord: Double) =
+        formatGodBridgeDebug(getGodBridgeAxisPhaseCoord(coord))
+
+    private fun interpolateGodBridgeAxisCoord(from: Double, to: Double, fraction: Double) =
+        from + (to - from) * fraction
+
+    private fun getGodBridgeDistanceToRange(value: Double, first: Double, second: Double): Double {
+        val min = min(first, second)
+        val max = max(first, second)
+
+        return when {
+            value < min -> min - value
+            value > max -> value - max
+            else -> 0.0
+        }
     }
 
     private fun getGodBridgePhaseDelta(from: Double, to: Double): Double {
@@ -2023,6 +2074,47 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 "to=${formatGodBridgePositionDebug(nextEyes.xCoord, nextEyes.zCoord)} " +
                 "motion=${formatGodBridgeMotionDebug()} jump=$blocksPlacedUntilJump/$blocksToJump"
         )
+
+        if (hitStart != null && hitEnd != null) {
+            debugGodBridgeSkippedPhaseWindow(target, currentRaytrace, nextRaytrace, currentEyes, nextEyes, hitStart, hitEnd)
+        }
+    }
+
+    private fun debugGodBridgeSkippedPhaseWindow(
+        target: PlaceInfo,
+        currentRaytrace: MovingObjectPosition,
+        nextRaytrace: MovingObjectPosition?,
+        currentEyes: Vec3,
+        nextEyes: Vec3,
+        hitStart: Double,
+        hitEnd: Double
+    ) {
+        if (!godBridgePhaseDebug) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+        val axis = target.enumFacing.axis
+        val currentCoord = getGodBridgeAxisCoord(axis, currentEyes.xCoord, currentEyes.zCoord)
+        val nextCoord = getGodBridgeAxisCoord(axis, nextEyes.xCoord, nextEyes.zCoord)
+        val hitStartCoord = interpolateGodBridgeAxisCoord(currentCoord, nextCoord, hitStart)
+        val hitEndCoord = interpolateGodBridgeAxisCoord(currentCoord, nextCoord, hitEnd)
+
+        debugGodBridgeRaycast(
+            "phase event=skip target=${formatGodBridgePlaceInfo(target)} " +
+                "axis=${axis.name} side=${target.enumFacing.name} " +
+                "phaseNow=${formatGodBridgeAxisPhaseCoord(currentCoord)} " +
+                "phaseNext=${formatGodBridgeAxisPhaseCoord(nextCoord)} " +
+                "hitPhase=${formatGodBridgeAxisPhaseCoord(hitStartCoord)}.." +
+                formatGodBridgeAxisPhaseCoord(hitEndCoord) + " " +
+                "distNow=${formatGodBridgeDebug(getGodBridgeDistanceToRange(currentCoord, hitStartCoord, hitEndCoord))} " +
+                "distNext=${formatGodBridgeDebug(getGodBridgeDistanceToRange(nextCoord, hitStartCoord, hitEndCoord))} " +
+                "now=${formatGodBridgeRayWindowState(target, currentRaytrace, requireSide = true)} " +
+                "next=${formatGodBridgeRayWindowState(target, nextRaytrace, requireSide = true)} " +
+                "y=${formatGodBridgeDebug(player.posY)} motionY=${formatGodBridgeDebug(player.motionY)} " +
+                "ground=${player.onGround} axisMotion=${formatGodBridgeDebug(if (axis == EnumFacing.Axis.X) player.motionX else player.motionZ)} " +
+                "rot=${formatGodBridgeRotation(currRotation)} jump=$blocksPlacedUntilJump/$blocksToJump"
+        )
     }
 
     private fun formatGodBridgeWindowScanSample(
@@ -2088,6 +2180,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             "phase=${formatGodBridgeDebug(snapshot.phase)} " +
             "pos=${formatGodBridgePositionDebug(snapshot.posX, snapshot.posZ)} " +
             "axisMotion=${formatGodBridgeDebug(snapshot.axisMotion)} " +
+            "y=${formatGodBridgeDebug(snapshot.posY)} " +
+            "motionY=${formatGodBridgeDebug(snapshot.motionY)} " +
+            "ground=${snapshot.onGround} " +
             "jump=${snapshot.jumpCount}/${snapshot.jumpTarget}"
 
     private fun formatGodBridgeRotation(rotation: Rotation) =
@@ -2186,7 +2281,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val jumpCount: Int,
         val jumpTarget: Int,
         val posX: Double,
-        val posZ: Double
+        val posY: Double,
+        val posZ: Double,
+        val motionY: Double,
+        val onGround: Boolean
     )
 
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
