@@ -133,6 +133,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val godBridgeWindowScanDebug by boolean("WindowScanDebug", true) {
         isGodBridgeEnabled && godBridgeRaycastDebug
     }.subjective()
+    private val godBridgePhaseDebug by boolean("PhaseDebug", true) {
+        isGodBridgeEnabled && godBridgeRaycastDebug
+    }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -298,6 +301,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeDiagonalReleased = false
     private var godBridgeDiagonalReleasedYaw: Float? = null
     private var godBridgeDiagonalRotationDone = false
+    private var godBridgeReleasePhase: GodBridgePhaseSnapshot? = null
+    private var godBridgeFirstPlacePhaseLogged = false
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -333,6 +338,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
         resetGodBridgeJumpCounter()
+        resetGodBridgePhaseDebug()
     }
 
     // Events
@@ -1186,6 +1192,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         )
 
         if (clickedSuccessfully) {
+            debugGodBridgeFirstPlacePhase(clickPos, side, attempt)
+
             if (!attempt) {
                 delayTimer.reset()
 
@@ -1465,6 +1473,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             input.moveStrafe = 0f
             godBridgeInjectedStrafe = false
             godBridgeAlignmentDebug = "$godBridgeAlignmentDebug lead=hold"
+        }
+
+        if (placementReleaseStarted) {
+            debugGodBridgeReleasePhase(placeRotation?.placeInfo, input, godBridgePlacementLead && !postAlignPending)
         }
 
         debugGodBridgeWait(
@@ -1752,6 +1764,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeWaitSequenceActive = false
         godBridgePlacementWaitPending = false
         godBridgePlacementReleased = false
+        resetGodBridgePhaseDebug()
         if (clearReleasedInput) {
             godBridgeReleasedInputKey = null
             godBridgeDiagonalReleasedYaw = null
@@ -1761,6 +1774,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeJumpCounter() {
         blocksPlacedUntilJump = 0
         blocksToJump = blocksToJumpRange.random()
+    }
+
+    private fun resetGodBridgePhaseDebug() {
+        godBridgeReleasePhase = null
+        godBridgeFirstPlacePhaseLogged = false
     }
 
     private fun resetGodBridgeAlignmentPlan() {
@@ -1822,6 +1840,89 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         chat("§7[Scaffold GB Ray] §f$message")
+    }
+
+    private fun debugGodBridgeReleasePhase(target: PlaceInfo?, input: MovementInput, leadHeld: Boolean) {
+        if (!godBridgePhaseDebug || target == null) {
+            return
+        }
+
+        val snapshot = createGodBridgePhaseSnapshot(target.enumFacing) ?: return
+
+        godBridgeReleasePhase = snapshot
+        godBridgeFirstPlacePhaseLogged = false
+
+        debugGodBridgeRaycast(
+            "phase event=release target=${formatGodBridgePlaceInfo(target)} " +
+                "${formatGodBridgePhaseSnapshot(snapshot)} " +
+                "moveF=${formatGodBridgeDebug(input.moveForward.toDouble())} " +
+                "moveS=${formatGodBridgeDebug(input.moveStrafe.toDouble())} lead=$leadHeld"
+        )
+    }
+
+    private fun debugGodBridgeFirstPlacePhase(clickPos: BlockPos, side: EnumFacing, attempt: Boolean) {
+        if (!godBridgePhaseDebug || godBridgeFirstPlacePhaseLogged) {
+            return
+        }
+
+        val release = godBridgeReleasePhase ?: return
+        val snapshot = createGodBridgePhaseSnapshot(side, release.axis) ?: return
+
+        godBridgeFirstPlacePhaseLogged = true
+
+        debugGodBridgeRaycast(
+            "phase event=firstPlace click=${formatGodBridgeBlockPos(clickPos)}/${side.name} " +
+                "${formatGodBridgePhaseSnapshot(snapshot)} " +
+                "releasePhase=${formatGodBridgeDebug(release.phase)} " +
+                "delta=${formatGodBridgeDebug(getGodBridgePhaseDelta(release.phase, snapshot.phase))} " +
+                "ticks=${snapshot.tick - release.tick} attempt=$attempt"
+        )
+    }
+
+    private fun createGodBridgePhaseSnapshot(
+        side: EnumFacing,
+        fallbackAxis: EnumFacing.Axis? = null
+    ): GodBridgePhaseSnapshot? {
+        val player = mc.thePlayer ?: return null
+        val axis = getGodBridgePhaseAxis(side, fallbackAxis) ?: return null
+
+        return GodBridgePhaseSnapshot(
+            axis = axis,
+            side = side,
+            phase = getGodBridgeAxisPhase(axis, player.posX, player.posZ),
+            axisMotion = if (axis == EnumFacing.Axis.X) player.motionX else player.motionZ,
+            tick = player.ticksExisted,
+            jumpCount = blocksPlacedUntilJump,
+            jumpTarget = blocksToJump,
+            posX = player.posX,
+            posZ = player.posZ
+        )
+    }
+
+    private fun getGodBridgePhaseAxis(side: EnumFacing, fallbackAxis: EnumFacing.Axis?): EnumFacing.Axis? {
+        if (side.axis != EnumFacing.Axis.Y) {
+            return side.axis
+        }
+
+        return fallbackAxis?.takeIf { it != EnumFacing.Axis.Y }
+    }
+
+    private fun getGodBridgeAxisPhase(axis: EnumFacing.Axis, posX: Double, posZ: Double): Double {
+        val value = if (axis == EnumFacing.Axis.X) posX else posZ
+
+        return value - floor(value)
+    }
+
+    private fun getGodBridgePhaseDelta(from: Double, to: Double): Double {
+        var delta = to - from
+
+        if (delta > 0.5) {
+            delta -= 1.0
+        } else if (delta < -0.5) {
+            delta += 1.0
+        }
+
+        return delta
     }
 
     private fun formatGodBridgeDebug(value: Double) = "%.3f".format(value)
@@ -1982,6 +2083,13 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return "x=${formatGodBridgeDebug(player.motionX)} z=${formatGodBridgeDebug(player.motionZ)}"
     }
 
+    private fun formatGodBridgePhaseSnapshot(snapshot: GodBridgePhaseSnapshot) =
+        "axis=${snapshot.axis.name} side=${snapshot.side.name} " +
+            "phase=${formatGodBridgeDebug(snapshot.phase)} " +
+            "pos=${formatGodBridgePositionDebug(snapshot.posX, snapshot.posZ)} " +
+            "axisMotion=${formatGodBridgeDebug(snapshot.axisMotion)} " +
+            "jump=${snapshot.jumpCount}/${snapshot.jumpTarget}"
+
     private fun formatGodBridgeRotation(rotation: Rotation) =
         "yaw=${formatGodBridgeDebug(rotation.yaw.toDouble())} pitch=${formatGodBridgeDebug(rotation.pitch.toDouble())}"
 
@@ -2067,6 +2175,18 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val moveForward: Float,
         val moveStrafe: Float,
         val movingYaw: Float
+    )
+
+    private data class GodBridgePhaseSnapshot(
+        val axis: EnumFacing.Axis,
+        val side: EnumFacing,
+        val phase: Double,
+        val axisMotion: Double,
+        val tick: Int,
+        val jumpCount: Int,
+        val jumpTarget: Int,
+        val posX: Double,
+        val posZ: Double
     )
 
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
