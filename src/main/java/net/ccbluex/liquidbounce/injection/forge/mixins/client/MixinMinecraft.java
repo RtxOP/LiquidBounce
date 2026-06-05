@@ -11,6 +11,7 @@ import net.ccbluex.liquidbounce.features.module.modules.combat.AutoClicker;
 import net.ccbluex.liquidbounce.features.module.modules.combat.TickBase;
 import net.ccbluex.liquidbounce.features.module.modules.exploit.AbortBreaking;
 import net.ccbluex.liquidbounce.features.module.modules.exploit.MultiActions;
+import net.ccbluex.liquidbounce.features.module.modules.misc.OverrideRaycast;
 import net.ccbluex.liquidbounce.features.module.modules.world.FastPlace;
 import net.ccbluex.liquidbounce.file.configs.models.ClientConfiguration;
 import net.ccbluex.liquidbounce.injection.forge.SplashProgressLock;
@@ -22,6 +23,8 @@ import net.ccbluex.liquidbounce.utils.io.MiscUtils;
 import net.ccbluex.liquidbounce.utils.render.IconUtils;
 import net.ccbluex.liquidbounce.utils.render.MiniMapRegister;
 import net.ccbluex.liquidbounce.utils.render.RenderUtils;
+import net.ccbluex.liquidbounce.utils.rotation.Rotation;
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils;
 import net.minecraft.block.material.Material;
 import net.minecraft.block.state.IBlockState;
 import net.minecraft.client.Minecraft;
@@ -185,6 +188,30 @@ public abstract class MixinMinecraft {
     @Inject(method = "runTick", at = @At(value = "FIELD", target = "Lnet/minecraft/client/Minecraft;joinPlayerCounter:I", ordinal = 0))
     private void onTick(final CallbackInfo callbackInfo) {
         EventManager.INSTANCE.call(GameTickEvent.INSTANCE);
+    }
+
+    @Inject(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/EntityRenderer;getMouseOver(F)V", shift = At.Shift.AFTER))
+    private void injectMouseOverSampleEvent(final CallbackInfo callbackInfo) {
+        if (thePlayer == null) {
+            return;
+        }
+
+        final Rotation currentRotation = RotationUtils.INSTANCE.getCurrentRotation();
+        final boolean usesCurrentRotation = currentRotation != null && OverrideRaycast.INSTANCE.shouldOverride();
+        final Rotation sampledCurrentRotation = currentRotation == null
+                ? null
+                : new Rotation(currentRotation.getYaw(), currentRotation.getPitch());
+
+        EventManager.INSTANCE.call(new MouseOverSampleEvent(
+                objectMouseOver,
+                thePlayer.posX,
+                thePlayer.posY,
+                thePlayer.posZ,
+                new Rotation(thePlayer.rotationYaw, thePlayer.rotationPitch),
+                sampledCurrentRotation,
+                usesCurrentRotation,
+                thePlayer.ticksExisted
+        ));
     }
 
     @Inject(method = "runTick", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/Minecraft;dispatchKeypresses()V", shift = At.Shift.AFTER))

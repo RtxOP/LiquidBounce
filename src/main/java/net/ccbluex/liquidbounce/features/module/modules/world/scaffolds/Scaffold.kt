@@ -145,6 +145,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val godBridgePhaseDebug by boolean("PhaseDebug", true) {
         isGodBridgeEnabled && godBridgeRaycastDebug
     }.subjective()
+    private val godBridgeVanillaOrderDebug by boolean("VanillaOrderDebug", true) {
+        isGodBridgeEnabled && godBridgeRaycastDebug
+    }.subjective()
     private val useOptimizedPitch by boolean("UseOptimizedPitch", false) { isGodBridgeEnabled }
     private val customGodPitch by float(
         "GodBridgePitch", 73.5f, 0f..90f
@@ -314,6 +317,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeFirstPlacePhaseLogged = false
     private var godBridgeReleasePhaseGateArmed = false
     private var godBridgeReleasePhaseGateTicks = 0
+    private var godBridgeMouseOverSample: GodBridgeMouseOverSample? = null
 
     private val isLookingDiagonally: Boolean
         get() {
@@ -350,6 +354,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         blocksUntilAxisChange = 0
         resetGodBridgeJumpCounter()
         resetGodBridgePhaseDebug()
+        godBridgeMouseOverSample = null
     }
 
     // Events
@@ -584,6 +589,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 "motion=${formatGodBridgeMotionDebug()} " +
                 "jump=$blocksPlacedUntilJump/$blocksToJump proper=$raycastProperly"
         )
+        debugGodBridgeVanillaOrder(target, raycast, raycastProperly, raycastMatchesTarget)
         debugGodBridgeWindowScan(target, raycast, raycastProperly)
 
         raycast.let {
@@ -597,6 +603,23 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 place(result)
             }
         }
+    }
+
+    val onMouseOverSample = handler<MouseOverSampleEvent> { event ->
+        if (!isGodBridgeEnabled || !godBridgeRaycastDebug) {
+            return@handler
+        }
+
+        godBridgeMouseOverSample = GodBridgeMouseOverSample(
+            event.mouseOver,
+            event.posX,
+            event.posY,
+            event.posZ,
+            event.playerRotation,
+            event.currentRotation,
+            event.usesCurrentRotation,
+            event.ticksExisted
+        )
     }
 
     val onSneakSlowDown = handler<SneakSlowDownEvent> { event ->
@@ -873,6 +896,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         placeRotation = null
+        godBridgeMouseOverSample = null
         mc.timer.timerSpeed = 1f
 
         SilentHotbar.resetSlot(this)
@@ -1879,6 +1903,50 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         chat("§7[Scaffold GB Ray] §f$message")
     }
 
+    private fun debugGodBridgeVanillaOrder(
+        target: PlaceInfo,
+        scaffoldRaytrace: MovingObjectPosition?,
+        requireSide: Boolean,
+        scaffoldMatchesTarget: Boolean
+    ) {
+        if (!godBridgeVanillaOrderDebug) {
+            return
+        }
+
+        val player = mc.thePlayer ?: return
+        val sample = godBridgeMouseOverSample ?: return
+        val sampleState = formatGodBridgeRayWindowState(target, sample.mouseOver, requireSide)
+        val scaffoldState = formatGodBridgeRayWindowState(target, scaffoldRaytrace, requireSide)
+        val sameTick = sample.ticksExisted == player.ticksExisted
+        val sameState = sampleState == scaffoldState
+        val moved = abs(sample.posX - player.posX) > GOD_BRIDGE_ORDER_EPSILON ||
+            abs(sample.posY - player.posY) > GOD_BRIDGE_ORDER_EPSILON ||
+            abs(sample.posZ - player.posZ) > GOD_BRIDGE_ORDER_EPSILON
+        val rotationChanged = sample.currentRotation != currRotation
+
+        if (scaffoldMatchesTarget && sameTick && sameState && !moved && !rotationChanged) {
+            return
+        }
+
+        if (sameTick && sameState && !moved && !rotationChanged) {
+            return
+        }
+
+        debugGodBridgeRaycast(
+            "order target=${formatGodBridgePlaceInfo(target)} " +
+                "sample=$sampleState scaffold=$scaffoldState same=$sameState " +
+                "sampleRay=${formatGodBridgeRaytraceDetail(sample.mouseOver)} " +
+                "scaffoldRay=${formatGodBridgeRaytraceDetail(scaffoldRaytrace)} " +
+                "samplePos=${formatGodBridgePositionDebug(sample.posX, sample.posZ)} " +
+                "scaffoldPos=${formatGodBridgePositionDebug(player.posX, player.posZ)} moved=$moved " +
+                "playerRot=${formatGodBridgeRotation(sample.playerRotation)} " +
+                "sampleCurrentRot=${sample.currentRotation?.let(::formatGodBridgeRotation) ?: "null"} " +
+                "usesCurrent=${sample.usesCurrentRotation} " +
+                "scaffoldRot=${formatGodBridgeRotation(currRotation)} rotChanged=$rotationChanged " +
+                "tick=${sample.ticksExisted}/${player.ticksExisted}"
+        )
+    }
+
     private fun shouldWaitForGodBridgeReleasePhase(target: PlaceInfo?): Boolean {
         if (!godBridgeReleasePhaseAlign || godBridgeReleasePhaseMaxWaitTicks <= 0 || target == null) {
             return false
@@ -2272,6 +2340,17 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return "hit:${raytrace.sideHit.name}"
     }
 
+    private fun formatGodBridgeRaytraceDetail(raytrace: MovingObjectPosition?): String {
+        raytrace ?: return "null"
+
+        if (!raytrace.typeOfHit.isBlock || raytrace.blockPos == null) {
+            return raytrace.typeOfHit.name.toLowerCase()
+        }
+
+        return "${formatGodBridgeBlockPos(raytrace.blockPos)}/${raytrace.sideHit?.name ?: "null"} " +
+            "hit=${formatGodBridgeVec(raytrace.hitVec - Vec3(raytrace.blockPos))}"
+    }
+
     private fun formatGodBridgePositionDebug(posX: Double, posZ: Double) =
         "x=${formatGodBridgeDebug(posX - floor(posX))} z=${formatGodBridgeDebug(posZ - floor(posZ))}"
 
@@ -2399,6 +2478,17 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val onGround: Boolean
     )
 
+    private data class GodBridgeMouseOverSample(
+        val mouseOver: MovingObjectPosition?,
+        val posX: Double,
+        val posY: Double,
+        val posZ: Double,
+        val playerRotation: Rotation,
+        val currentRotation: Rotation?,
+        val usesCurrentRotation: Boolean,
+        val ticksExisted: Int
+    )
+
     private val GOD_BRIDGE_DIAGONAL_YAWS = arrayListOf(-135f, -45f, 45f, 135f)
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
@@ -2407,4 +2497,5 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
     private const val GOD_BRIDGE_RELEASE_PHASE_EPSILON = 0.003
+    private const val GOD_BRIDGE_ORDER_EPSILON = 1.0E-6
 }

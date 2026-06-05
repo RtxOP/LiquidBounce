@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.event
 
 import net.ccbluex.liquidbounce.features.module.modules.render.FreeCam
 import net.ccbluex.liquidbounce.utils.extensions.withY
+import net.ccbluex.liquidbounce.utils.rotation.Rotation
 import net.minecraft.block.Block
 import net.minecraft.client.gui.GuiScreen
 import net.minecraft.client.multiplayer.WorldClient
@@ -176,6 +177,17 @@ object StepConfirmEvent : Event()
  */
 object GameTickEvent : Event()
 
+class MouseOverSampleEvent(
+    val mouseOver: MovingObjectPosition?,
+    val posX: Double,
+    val posY: Double,
+    val posZ: Double,
+    val playerRotation: Rotation,
+    val currentRotation: Rotation?,
+    val usesCurrentRotation: Boolean,
+    val ticksExisted: Int
+) : Event()
+
 object TickEndEvent : Event()
 
 /**
@@ -239,6 +251,7 @@ internal val ALL_EVENT_CLASSES = arrayOf(
     MoveEvent::class.java,
     ClientShutdownEvent::class.java,
     GameTickEvent::class.java,
+    MouseOverSampleEvent::class.java,
     StepEvent::class.java,
     BlockBBEvent::class.java,
     ClickBlockEvent::class.java,
