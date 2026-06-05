@@ -329,6 +329,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
+        resetGodBridgeJumpCounter()
     }
 
     // Events
@@ -642,12 +643,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         simPlayer.tick()
 
-        if (!simPlayer.onGround && !isManualJumpOptionActive || blocksPlacedUntilJump > blocksToJump) {
+        if (!simPlayer.onGround && !isManualJumpOptionActive || blocksPlacedUntilJump >= blocksToJump) {
             event.originalInput.jump = true
 
-            blocksPlacedUntilJump = 0
-
-            blocksToJump = blocksToJumpRange.random()
+            resetGodBridgeJumpCounter()
         }
     }
 
@@ -859,6 +858,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         options.instant = false
         resetGodBridgeWait()
+        resetGodBridgeJumpCounter()
     }
 
     // Entity movement event
@@ -1752,6 +1752,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             godBridgeReleasedInputKey = null
             godBridgeDiagonalReleasedYaw = null
         }
+    }
+
+    private fun resetGodBridgeJumpCounter() {
+        blocksPlacedUntilJump = 0
+        blocksToJump = blocksToJumpRange.random()
     }
 
     private fun resetGodBridgeAlignmentPlan() {
