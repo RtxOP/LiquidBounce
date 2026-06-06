@@ -307,6 +307,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgePlacementWaitPending = false
     private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
+    private var godBridgeCornerTicks = 0
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
@@ -1665,6 +1666,46 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
+        if (godBridgeCornerTicks >= 0) {
+            val restEndTick = GOD_BRIDGE_DIAGONAL_STOP_TICKS + 1 + GOD_BRIDGE_CORNER_REST_TICKS
+
+            if (godBridgeCornerTicks < GOD_BRIDGE_DIAGONAL_STOP_TICKS) {
+                val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
+                if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
+                    godBridgeCornerTicks = 0
+                    godBridgeAlignmentDebug = "corner=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
+                    return true
+                }
+
+                godBridgeCornerTicks++
+                if (godBridgeCornerTicks < GOD_BRIDGE_DIAGONAL_STOP_TICKS) {
+                    godBridgeAlignmentDebug =
+                        "corner=waitStop delta=${formatGodBridgeDebug(positionDelta)} " +
+                            "stable=$godBridgeCornerTicks/$GOD_BRIDGE_DIAGONAL_STOP_TICKS"
+                    return true
+                }
+            }
+
+            if (godBridgeCornerTicks == GOD_BRIDGE_DIAGONAL_STOP_TICKS) {
+                input.moveStrafe = -chooseGodBridgeAlignmentStrafe(input, target)
+                godBridgeInjectedStrafe = true
+                godBridgeCornerTicks++
+                godBridgeAlignmentDebug = "corner=nudge strafe=${input.moveStrafe}"
+                return true
+            }
+
+            if (godBridgeCornerTicks < restEndTick) {
+                input.moveForward = 0f
+                input.moveStrafe = 0f
+                godBridgeInjectedStrafe = false
+                godBridgeCornerTicks++
+                godBridgeAlignmentDebug = "corner=rest ticks=${restEndTick - godBridgeCornerTicks}"
+                return true
+            }
+
+            godBridgeCornerTicks = -1
+        }
+
         val error = target.error()
 
         if (abs(error) <= waitForRotsSideTolerance) {
@@ -1807,6 +1848,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private fun resetGodBridgeAlignment() {
         resetGodBridgeAlignmentPlan()
+        godBridgeCornerTicks = 0
         godBridgeInjectedStrafe = false
         godBridgeAlignmentDebug = "align=reset"
         resetGodBridgeDiagonalAlignment()
@@ -2530,6 +2572,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
+    private const val GOD_BRIDGE_CORNER_REST_TICKS = 2
     private const val GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP = 0.05
     private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
