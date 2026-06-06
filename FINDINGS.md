@@ -242,17 +242,288 @@ Implication:
 
 ## Confirmed Current Workspace State
 
-At the time this document was written, the working tree had an uncommitted change in:
+At the time of the 2026-06-05 source audit, `git status --short` was clean.
 
-- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt`
+Recent pushed diagnostic/experiment commits include:
 
-Known local changes from prior work:
+- `dd764938c Log GodBridge vanilla order heartbeat on risky misses`
+- `aed9a5de5 Add GodBridge vanilla raycast order diagnostics`
+- `c039ad499 Add GodBridge release phase alignment`
 
-- `WaitForRotationsPostAlignTicks` range is `0..50`.
-- `GOD_BRIDGE_DIAGONAL_NUDGE_TICKS` is `6`.
-- Post-alignment wait clears forward and strafe input and does not keep injected strafe active.
+These commits are workspace facts, not claims about correctness.
 
-These are workspace facts, not claims about correctness.
+## 2026-06-05 MCP/Codebase Source Audit
+
+### Vanilla 1.8.9 right-click placement consumes the current mouse-over result
+
+Local MCP files used:
+
+- `/tmp/MCP-Minecraft.java:1756`
+- `/tmp/MCP-Minecraft.java:1570`
+- `/tmp/MCP-Minecraft.java:1605`
+- `/tmp/MCP-PlayerControllerMP.java:390`
+- `/tmp/MCP-PlayerControllerMP.java:424`
+- `/tmp/MCP-ItemBlock.java:38`
+- `/tmp/MCP-ItemBlock.java:43`
+- `/tmp/MCP-ItemBlock.java:56`
+
+Confirmed behavior:
+
+- `Minecraft.runTick()` calls `entityRenderer.getMouseOver(1.0F)` once near the start of the tick.
+- `Minecraft.rightClickMouse()` later consumes `this.objectMouseOver`.
+- For block hits, vanilla calls `playerController.onPlayerRightClick(...)` with exactly:
+
+```text
+objectMouseOver.getBlockPos()
+objectMouseOver.sideHit
+objectMouseOver.hitVec
+```
+
+- `PlayerControllerMP.onPlayerRightClick()` sends `C08PacketPlayerBlockPlacement` with the same block, side, and in-block hit offsets, then runs item-use logic.
+- `ItemBlock.onItemUse()` places into `pos.offset(side)` when the clicked block is not replaceable, then checks `worldIn.canBlockBePlaced(...)`.
+
+Implication:
+
+- Vanilla has no separate planned placement target. The block/face/hitVec used by placement is the current tick's mouse-over result.
+- The raycast side is not cosmetic. For normal full blocks, the clicked side determines the actual replaceable cell where the new block is placed.
+
+### Vanilla raycast face selection is geometric and side-sensitive
+
+Local MCP files used:
+
+- `/tmp/MCP-World.java:888`
+- `/tmp/MCP-World.java:1012`
+- `/tmp/MCP-World.java:1030`
+- `/tmp/MCP-World.java:1041`
+- `/tmp/MCP-Block.java:681`
+- `/tmp/MCP-Block.java:761`
+- `/tmp/MCP-Block.java:793`
+
+Confirmed behavior:
+
+- `World.rayTraceBlocks(...)` walks block cells along the ray and records which grid boundary was crossed.
+- `Block.collisionRayTrace(...)` tests the six block bounding-box planes and returns the nearest intersected face.
+- The returned `MovingObjectPosition` contains the clicked block position and the selected face.
+
+Implication:
+
+- The transition from `face:UP` to horizontal side hit to `miss` is a direct geometric result of eye position, look vector, and block bounds.
+- A vanilla-valid GodBridge click must have a side hit on the tick where right-click is processed. If the tick sample is `UP` or `miss`, vanilla would not place the desired horizontal block on that tick either.
+
+### LiquidBounce renderer raycast is synthetic when OverrideRaycast is active
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/render/MixinEntityRenderer.java:139`
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/render/MixinEntityRenderer.java:151`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/misc/OverrideRaycast.kt:11`
+
+Confirmed behavior:
+
+- LiquidBounce cancels vanilla `EntityRenderer.getMouseOver`.
+- It computes the look vector from `RotationUtils.currentRotation` when `OverrideRaycast.shouldOverride()` is true.
+- `OverrideRaycast` has `AlwaysActive` defaulting true, so the rendered/object mouse-over path is normally synthetic when a current rotation exists.
+
+Implication:
+
+- Logs comparing Scaffold's own raycast to `objectMouseOver` only compare two synthetic-current-rotation paths when OverrideRaycast is active.
+- Those logs do not prove equivalence to raw player-camera vanilla raycast. They can still prove internal consistency between Scaffold's ray and the overridden mouse-over ray.
+
+### Synthetic ray vector math matches MCP ray vector math
+
+Local MCP/code:
+
+- `/tmp/MCP-Entity.java:1476`
+- `/tmp/MCP-Entity.java:1500`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt:482`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1158`
+
+Confirmed behavior:
+
+- MCP `Entity.getVectorForRotation()` and LiquidBounce `RotationUtils.getVectorForRotation()` use the same trigonometric structure.
+- MCP `Entity.rayTrace()` and Scaffold `performBlockRaytraceFromEyes()` both call `rayTraceBlocks(..., false, false, true)` for the block ray.
+
+Implication:
+
+- The basic synthetic ray formula is not currently a strong root-cause candidate.
+- Differences are more likely to come from which rotation/eye position/target is used, not from the vector formula itself.
+
+### Movement correction is not proven to be the failure
+
+Local MCP/code:
+
+- `/tmp/MCP-Entity.java:1224`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/Rotation.kt:91`
+- `src/main/java/net/ccbluex/liquidbounce/utils/simulation/SimulatedPlayer.kt:959`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationSettings.kt:32`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt:728`
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/entity/MixinEntity.java:249`
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/entity/MixinEntityPlayerSP.java:341`
+
+Confirmed behavior:
+
+- MCP `moveFlying()` normalizes diagonal input before applying yaw-based horizontal acceleration.
+- LiquidBounce has a non-strict strafe correction that can map real-player input into a corrected forward/strafe pair for `currentRotation`.
+- That correction is only applied to movement when `RotationSettings.strafe` is true. The setting defaults false.
+- `RotationUtils.onStrafe` returns immediately when `activeSettings.strafe` is false.
+- `MixinEntityPlayerSP` computes `modifiedInput`, but that alone does not move the player. The movement rewrite happens through the `moveFlying`/`StrafeEvent` path.
+
+Implication:
+
+- It is not correct to conclude "synthetic rotation is broken" from the transform alone; the transform can be mathematically reasonable when engaged.
+- It is also not correct to conclude that `Strafe=false` is a root cause from code structure alone.
+- The thing that matters is the resulting world-space motion vector and tick phase, not whether the motion was produced from real yaw or `currentRotation`.
+- A server-side rotation split can still be vanilla-equivalent if the user's real-yaw-relative input produces the same world-space movement that a vanilla player would produce while physically looking at the GodBridge angle.
+
+### Server-side currentRotation splits state, but the effect must be proven geometrically
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt:546`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt:658`
+- `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt:756`
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/render/MixinEntityRenderer.java:150`
+- `src/main/java/net/ccbluex/liquidbounce/injection/forge/mixins/render/MixinEntityRenderer.java:151`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1363`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1367`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1383`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:2461`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:2465`
+
+Confirmed behavior:
+
+- With `ApplyServerSide` true, `RotationUtils` stores the requested yaw/pitch in `currentRotation` instead of writing it into `mc.thePlayer.rotationYaw/rotationPitch`.
+- `RotationUtils.onPacket` writes `currentRotation` into outgoing `C03PacketPlayer`.
+- `MixinEntityRenderer` uses `currentRotation` for `objectMouseOver` when `OverrideRaycast` is active.
+- GodBridge rotation generation also branches on `options.applyServerSide`.
+- `getGodBridgeMovingYaw(...)` computes the movement direction from real `player.rotationYaw` and movement input.
+- Straight GodBridge then sets synthetic look yaw to `movingYaw +/- 45`.
+
+Implication:
+
+- In vanilla 1.8.9, the same rotation fields drive crosshair raycast, movement yaw, and outgoing player look packets.
+- In this client, server-side Scaffold can make raycast and packets look rotated while the local physical player still moves under the real camera yaw unless movement strafe correction is active.
+- That state split is a source-backed difference from vanilla, but it is not automatically harmful.
+- In GodBridge, the split appears intentional: real yaw/input defines the world movement direction, while synthetic yaw represents the vanilla head angle relative to that movement direction.
+- Therefore `Strafe=false` is not a standalone bug. To make this a root-cause candidate, we must show that the resulting world-space movement delta differs from a vanilla player moving in the same bridge direction while looking at the synthetic GodBridge yaw.
+- If those deltas match, this state split is not the cause. If they do not match, then it can change the fractional X/Z phase schedule that determines whether a tick samples `face:UP`, horizontal side hit, or `miss`.
+
+### Scaffold normal placement path uses a planned target gate
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:537`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:542`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:579`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:595`
+
+Confirmed behavior:
+
+- `onTick` reads `target = placeRotation?.placeInfo`.
+- It computes the current raycast separately.
+- It only places on the normal path when the current raycast matches the planned target block and, when proper raycast is required, the planned side.
+- If it places, it may use the current raycast block/side/hitVec, but only after the planned target gate passes.
+
+Implication:
+
+- This is not vanilla's "click current objectMouseOver" behavior.
+- A valid current ray hit can still be ignored if it does not match `placeRotation`.
+
+### Scaffold GodBridge target search is center-only and planner-based
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:721`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:986`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1021`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1084`
+
+Confirmed behavior:
+
+- `findBlock()` chooses a `blockPosition` based mostly on player position, commonly `BlockPos(player).down()` for normal horizontal placement.
+- `search()` scans neighboring clicked blocks around that planned replaceable block.
+- For GodBridge, `search()` uses only `Vec3(0.5, 0.5, 0.5)` rather than the non-GodBridge area scan.
+- `findTargetPlace()` validates that a ray can hit the planned neighbor and side.
+
+Implication:
+
+- GodBridge's normal path is closer to normal Scaffold planning than to human vanilla GodBridge clicking.
+- It preselects a future/expected placeable relationship, then later requires the current ray to match that relationship.
+
+### Extra-click placement is closer to current-ray placement
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:825`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:835`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:859`
+
+Confirmed behavior:
+
+- `doPlaceAttempt()` takes the current raytrace directly.
+- It places using `raytrace.blockPos`, `raytrace.sideHit`, and `raytrace.hitVec`.
+- This path still has its own `shouldPlace` filter, but it does not require `placeRotation` to match first.
+
+Implication:
+
+- The codebase already contains both architectures:
+
+```text
+normal Scaffold path: planned target -> current ray must match target -> place
+extra-click path: current ray -> shouldPlace filter -> place
+vanilla: objectMouseOver/current ray -> place
+```
+
+### The planner/gate difference is a plausible issue, not yet proven root cause
+
+Why the difference could matter:
+
+- Vanilla samples the crosshair result once per tick and clicks whatever block/face is there.
+- Scaffold GodBridge samples a planned target separately from the current ray and rejects placement if the current ray does not match the planned target.
+- User logs have shown sequences where the ray state can move from `face:UP` to side-hit to `miss` over a narrow tick window.
+- If the planner target is stale, one block behind/ahead, or based on the wrong side for the current fixed GodBridge ray, the client can wait through the only valid side-hit tick.
+
+Why this is not proven yet:
+
+- The planner/gate mismatch explains a possible failure mode, but it does not by itself prove that the observed falls are caused by stale targets.
+- A vanilla client also only samples `objectMouseOver` once per tick. If a valid side-hit window exists only between tick samples, vanilla would miss too.
+- Therefore the remaining question is whether Scaffold's planner/gate creates missed tick-sampled side hits that vanilla/current-ray placement would have accepted.
+- Several provided failure excerpts show the current sampled ray becoming `miss` before a side-hit pass on that target. Those excerpts point more strongly at phase/rotation/movement equivalence than at target-gate rejection.
+
+### Release-phase alignment is compensatory, not root-cause evidence
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1987`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:1518`
+
+Confirmed behavior:
+
+- Release-phase alignment waits for a configured fractional phase and can zero movement while waiting.
+- The user reported continued failures after this was added.
+
+Implication:
+
+- Release-phase alignment may affect initial phase and timing, but it is not strong evidence for the true root cause.
+- Further fixes should not be built around adding more compensatory waits without a concrete source-backed mismatch.
+
+### Sprint state is a vanilla-equivalence axis
+
+Local code:
+
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/world/scaffolds/Scaffold.kt:104`
+- `src/main/java/net/ccbluex/liquidbounce/features/module/modules/movement/Sprint.kt:64`
+
+Confirmed behavior:
+
+- Scaffold has a `Sprint` setting defaulting false.
+- The Sprint module explicitly disables sprint while Scaffold is active unless `Scaffold.sprint` is true.
+- User logs showing horizontal motion around `0.120` are consistent with walking-speed movement rather than sprinting.
+
+Implication:
+
+- Comparisons to vanilla GodBridge must specify walking vs sprinting.
+- This is not currently a proposed fix; it is a state-equivalence note.
 
 ## Online Evidence Status
 
@@ -285,8 +556,9 @@ The following are not established facts yet:
 
 - The exact `fracX/fracZ/yaw/pitch/eyeY` boundaries of the valid GodBridge side-face raycast window.
 - Why pitch `75.6` causes more falls in this specific client setup.
-- Whether current failures are caused by client raycast miss, stale target selection, bad hit vector, local item-use failure, server rejection, or desync.
+- Whether current failures are caused by stale planner target selection, current-ray miss, bad hit vector, local item-use failure, server rejection, or desync.
 - Which pre-8-block failure occurs first.
-- Whether the recent WaitFor changes are involved in the remaining pre-8-block falling case.
+- Whether direct current-ray placement would accept a placement on ticks where the planned-target gate currently misses.
+- Whether the remaining pre-8-block falling case appears when all compensatory wait/release-phase behavior is bypassed.
 
-These need local geometry sweep, simulation, or instrumentation rather than more web research.
+These need source-level geometry comparison or local simulation. Additional logging should not be added unless there is a concrete, narrow question that cannot be answered from code or deterministic simulation.

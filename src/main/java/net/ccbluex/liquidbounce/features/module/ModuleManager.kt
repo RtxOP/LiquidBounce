@@ -114,6 +114,7 @@ object ModuleManager : Listenable, Collection<Module> by MODULE_REGISTRY {
             GameDetector,
             Ghost,
             GhostHand,
+            GodBridgeDebugger,
             GodMode,
             HUD,
             HighJump,
