@@ -117,9 +117,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideOffset by float("WaitForRotationsSideOffset", 0.3f, 0f..0.5f) {
         waitForRotsSideMove
     }
-    private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.15f, 0f..0.4f) {
-        waitForRotsSideMove
-    }
     private val waitForRotsPreAlignTicks by int("WaitForRotationsPreAlignTicks", 2, 0..8) {
         waitForRotsSideMove
     }
@@ -299,8 +296,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         get() = scaffoldMode == "GodBridge" || scaffoldMode == "Normal" && options.rotationMode == "GodBridge"
 
     private var godBridgeTargetRotation: Rotation? = null
-    private var godBridgeAlignmentTicks = 0
-    private var godBridgeAlignmentPlan: GodBridgeAlignmentPlan? = null
     private var godBridgeInjectedStrafe = false
     private var godBridgeUserMoveForward = 0f
     private var godBridgeUserMoveStrafe = 0f
@@ -1565,7 +1560,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         input.moveStrafe = 0f
         godBridgeInjectedStrafe = false
         godBridgePostAlignmentWaitTicks--
-        godBridgeAlignmentTicks = 0
         godBridgeAlignmentDebug = "postAlign=wait ticks=$godBridgePostAlignmentWaitTicks"
 
         return true
@@ -1645,95 +1639,76 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        val activePlan = godBridgeAlignmentPlan
-
-        if (activePlan != null) {
-            val target = GodBridgeAlignmentTarget(getGodBridgeAlignmentCurrent(activePlan.axis), activePlan.target, activePlan.axis)
-            val error = target.error()
-
-            input.moveStrafe = activePlan.strafe
-            godBridgeInjectedStrafe = true
-            activePlan.ticks--
-            godBridgeAlignmentDebug =
-                "align=hold axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
-                    "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
-                    "strafe=${input.moveStrafe} ticks=${activePlan.ticks}"
-
-            if (activePlan.ticks <= 0) {
-                godBridgeAlignmentPlan = null
-            }
-
-            return true
-        }
-
         val target = getGodBridgeAlignmentTarget() ?: run {
             resetGodBridgeAlignment()
             godBridgeAlignmentDebug = "align=targetNull"
             return false
         }
 
-        if (waitForRotsPreAlignTicks > 0 && godBridgePreAlignTicks >= 0) {
-            val placeInfo = placeRotation?.placeInfo
-            val raytrace = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
-            val raycastReady = placeInfo != null && raytrace?.blockPos == placeInfo.blockPos &&
-                raytrace.sideHit == placeInfo.enumFacing
+        if (applyGodBridgePreAlignmentInput(input, target)) {
+            return true
+        }
 
-            if (godBridgePreAlignTicks < waitForRotsPreAlignTicks) {
-                if (godBridgePreAlignTicks == 0) {
-                    val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
-                    if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
-                        godBridgeAlignmentDebug = "preAlign=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
-                        return true
-                    }
-                }
+        if (!isGodBridgeInCenterBand(target)) {
+            godBridgeAlignmentDebug =
+                "align=clear axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                    "band=${formatGodBridgeDebug(waitForRotsSideOffset.toDouble())}.." +
+                    formatGodBridgeDebug(1.0 - waitForRotsSideOffset.toDouble())
+            return false
+        }
 
-                input.moveStrafe = -chooseGodBridgeAlignmentStrafe(input, target)
-                godBridgeInjectedStrafe = true
-                godBridgePreAlignTicks++
-                godBridgeAlignmentDebug =
-                    "preAlign=nudge strafe=${input.moveStrafe} ticks=$godBridgePreAlignTicks/$waitForRotsPreAlignTicks"
+        val strafe = chooseGodBridgeAlignmentStrafe(input, target) ?: run {
+            godBridgeAlignmentDebug =
+                "align=noMove axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                    "target=${formatGodBridgeDebug(target.target)}"
+            return false
+        }
+
+        input.moveStrafe = strafe
+        godBridgeInjectedStrafe = true
+        godBridgeAlignmentDebug =
+            "align=center axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                "target=${formatGodBridgeDebug(target.target)} strafe=${input.moveStrafe}"
+
+        return true
+    }
+
+    private fun applyGodBridgePreAlignmentInput(input: MovementInput, target: GodBridgeAlignmentTarget): Boolean {
+        if (waitForRotsPreAlignTicks <= 0 || godBridgePreAlignTicks < 0) {
+            return false
+        }
+
+        val placeInfo = placeRotation?.placeInfo
+        val raytrace = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+        val raycastReady = placeInfo != null && raytrace?.blockPos == placeInfo.blockPos &&
+            raytrace.sideHit == placeInfo.enumFacing
+        val ticksDone = godBridgePreAlignTicks >= waitForRotsPreAlignTicks
+
+        if ((waitForRotsPreAlignRaycast && raycastReady) || (!waitForRotsPreAlignRaycast && ticksDone)) {
+            godBridgePreAlignTicks = -1
+            return false
+        }
+
+        if (godBridgePreAlignTicks == 0) {
+            val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
+            if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
+                godBridgeAlignmentDebug = "preAlign=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
                 return true
-            } else if (waitForRotsPreAlignRaycast && !raycastReady) {
-                input.moveForward = 0f
-                input.moveStrafe = 0f
-                godBridgeInjectedStrafe = false
-                godBridgeAlignmentDebug = "preAlign=waitRaycast"
-                return true
-            } else {
-                godBridgePreAlignTicks = -1
             }
         }
 
-        val error = target.error()
-
-        if (abs(error) <= waitForRotsSideTolerance) {
-            godBridgeAlignmentTicks++
-            godBridgeAlignmentDebug =
-                "align=inside axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
-                    "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
-                    "stable=$godBridgeAlignmentTicks"
+        val strafe = chooseGodBridgeSidefaceStrafe(input) ?: run {
+            godBridgePreAlignTicks = -1
             return false
         }
 
-        godBridgeAlignmentTicks = 0
-        val plan = createGodBridgeAlignmentPlan(input, target) ?: run {
-            godBridgeAlignmentDebug =
-                "align=planNull axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
-                    "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)}"
-            return false
-        }
-
-        input.moveStrafe = plan.strafe
+        input.moveStrafe = strafe
         godBridgeInjectedStrafe = true
-        plan.ticks--
+        godBridgePreAlignTicks++
         godBridgeAlignmentDebug =
-            "align=hold axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
-                "target=${formatGodBridgeDebug(target.target)} err=${formatGodBridgeDebug(error)} " +
-                "strafe=${input.moveStrafe} ticks=${plan.ticks}"
-
-        if (plan.ticks <= 0) {
-            godBridgeAlignmentPlan = null
-        }
+            "preAlign=side axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
+                "strafe=${input.moveStrafe} ticks=$godBridgePreAlignTicks/$waitForRotsPreAlignTicks " +
+                "raycast=$raycastReady"
 
         return true
     }
@@ -1776,44 +1751,44 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
     }
 
-    private fun getGodBridgeAlignmentCurrent(axis: EnumFacing.Axis): Double {
-        val player = mc.thePlayer ?: return 0.0
+    private fun isGodBridgeInCenterBand(target: GodBridgeAlignmentTarget): Boolean {
+        val offset = waitForRotsSideOffset.toDouble()
 
-        return if (axis == EnumFacing.Axis.X) {
-            player.posX - floor(player.posX)
-        } else {
-            player.posZ - floor(player.posZ)
-        }
+        return target.current > offset && target.current < 1.0 - offset
     }
 
-    private fun createGodBridgeAlignmentPlan(input: MovementInput, target: GodBridgeAlignmentTarget): GodBridgeAlignmentPlan? {
-        val strafe = chooseGodBridgeAlignmentStrafe(input, target)
-        val predictedDelta = abs(predictGodBridgeAlignmentDelta(strafe, input.moveForward, target.axis))
-
-        if (predictedDelta <= 0.0) {
-            return null
-        }
-
-        val ticks = ceil(
-            (abs(target.error()) - waitForRotsSideTolerance) /
-                (predictedDelta * GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP)
-        ).toInt().coerceIn(1, GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS)
-
-        return GodBridgeAlignmentPlan(target.target, target.axis, strafe, ticks).also {
-            godBridgeAlignmentPlan = it
-        }
-    }
-
-    private fun chooseGodBridgeAlignmentStrafe(input: MovementInput, target: GodBridgeAlignmentTarget): Float {
+    private fun chooseGodBridgeAlignmentStrafe(input: MovementInput, target: GodBridgeAlignmentTarget): Float? {
         val forward = input.moveForward
 
-        return listOf(-1f, 1f).minByOrNull {
-            abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, forward, target.axis)))
-        } ?: input.moveStrafe
+        return listOf(-1f, 1f)
+            .filter { abs(predictGodBridgeAlignmentDelta(it, forward, target.axis)) > 0.0 }
+            .minByOrNull { abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, forward, target.axis))) }
+    }
+
+    private fun chooseGodBridgeSidefaceStrafe(input: MovementInput): Float? {
+        val forward = input.moveForward
+
+        return listOf(-1f, 1f).mapNotNull { strafe ->
+            val projected = projectGodBridgeInput(strafe, forward) ?: return@mapNotNull null
+            val sideScore = abs(projected.strafe) - abs(projected.forward)
+
+            GodBridgeStrafeCandidate(strafe, sideScore)
+        }.filter { it.sideScore > 0f }.maxByOrNull { it.sideScore }?.strafe
     }
 
     private fun predictGodBridgeAlignmentDelta(strafe: Float, forward: Float, axis: EnumFacing.Axis): Double {
-        val player = mc.thePlayer ?: return 0.0
+        val projected = projectGodBridgeInput(strafe, forward) ?: return 0.0
+
+        val yawRad = projected.yaw.toRadians()
+
+        val deltaX = projected.strafe * cos(yawRad) - projected.forward * sin(yawRad)
+        val deltaZ = projected.forward * cos(yawRad) + projected.strafe * sin(yawRad)
+
+        return if (axis == EnumFacing.Axis.X) deltaX.toDouble() else deltaZ.toDouble()
+    }
+
+    private fun projectGodBridgeInput(strafe: Float, forward: Float): GodBridgeProjectedInput? {
+        val player = mc.thePlayer ?: return null
         val activeSettings = RotationUtils.activeSettings
         val rotation = RotationUtils.currentRotation
 
@@ -1836,16 +1811,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             Triple(strafe, forward, player.rotationYaw)
         }
 
-        val yawRad = yaw.toRadians()
-
-        val deltaX = calcStrafe * cos(yawRad) - calcForward * sin(yawRad)
-        val deltaZ = calcForward * cos(yawRad) + calcStrafe * sin(yawRad)
-
-        return if (axis == EnumFacing.Axis.X) deltaX.toDouble() else deltaZ.toDouble()
+        return GodBridgeProjectedInput(calcStrafe, calcForward, yaw)
     }
 
     private fun resetGodBridgeAlignment() {
-        resetGodBridgeAlignmentPlan()
         godBridgePreAlignTicks = 0
         godBridgeInjectedStrafe = false
         godBridgeAlignmentDebug = "align=reset"
@@ -1880,11 +1849,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeReleasePhaseGate() {
         godBridgeReleasePhaseGateArmed = false
         godBridgeReleasePhaseGateTicks = 0
-    }
-
-    private fun resetGodBridgeAlignmentPlan() {
-        godBridgeAlignmentTicks = 0
-        godBridgeAlignmentPlan = null
     }
 
     private fun resetGodBridgeDiagonalAlignment() {
@@ -2522,17 +2486,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val target: Double,
         val axis: EnumFacing.Axis
     ) {
-        fun error() = target - current
-
         fun errorAfter(delta: Double) = target - (current + delta)
     }
 
-    private data class GodBridgeAlignmentPlan(
-        val target: Double,
-        val axis: EnumFacing.Axis,
-        val strafe: Float,
-        var ticks: Int
-    )
+    private data class GodBridgeProjectedInput(val strafe: Float, val forward: Float, val yaw: Float)
+
+    private data class GodBridgeStrafeCandidate(val strafe: Float, val sideScore: Float)
 
     private data class GodBridgeInputKey(
         val moveForward: Float,
@@ -2570,8 +2529,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
-    private const val GOD_BRIDGE_ALIGNMENT_PREDICTED_STEP = 0.05
-    private const val GOD_BRIDGE_ALIGNMENT_MAX_BURST_TICKS = 8
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
     private const val GOD_BRIDGE_RELEASE_PHASE_EPSILON = 0.003
     private const val GOD_BRIDGE_ORDER_EPSILON = 1.0E-6
