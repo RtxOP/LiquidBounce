@@ -76,7 +76,7 @@ object GodBridgeDebugger : Module("GodBridgeDebugger", Category.MISC, gameDetect
 
         if (shouldLogTick) {
             writeLine(
-                "tick ${baseState()} useHeld=$useHeld ${formatRay(\"mouse\", ray)} " +
+                "tick ${baseState()} useHeld=$useHeld ${formatRay("mouse", ray)} " +
                     "item=${player.heldItem?.displayName ?: "none"}"
             )
         }
@@ -101,7 +101,7 @@ object GodBridgeDebugger : Module("GodBridgeDebugger", Category.MISC, gameDetect
             append(" hit=x=${fmt(packet.placedBlockOffsetX.toDouble())}")
             append(" y=${fmt(packet.placedBlockOffsetY.toDouble())}")
             append(" z=${fmt(packet.placedBlockOffsetZ.toDouble())}")
-            append(" ${formatRay(\"mouse\", mc.objectMouseOver)}")
+            append(" ${formatRay("mouse", mc.objectMouseOver)}")
             append(" item=${mc.thePlayer?.heldItem?.displayName ?: "none"}")
             append(" cancelled=${event.isCancelled}")
         }
