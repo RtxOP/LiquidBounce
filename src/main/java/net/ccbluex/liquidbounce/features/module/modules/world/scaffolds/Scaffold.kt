@@ -117,12 +117,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideOffset by float("WaitForRotationsSideOffset", 0.3f, 0f..0.5f) {
         waitForRotsSideMove
     }
-    private val waitForRotsPreAlignTicks by int("WaitForRotationsPreAlignTicks", 2, 0..8) {
-        waitForRotsSideMove
-    }
-    private val waitForRotsPreAlignRaycast by boolean("PreAlignRaycast", false) {
-        waitForRotsSideMove && waitForRotsPreAlignTicks > 0
-    }
     private val waitForRotsPostAlignTicks by intRange("WaitForRotationsPostAlignTicks", 2..6, 0..50) {
         waitForRotsSideMove
     }
@@ -308,7 +302,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgePlacementWaitPending = false
     private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
-    private var godBridgePreAlignTicks = 0
+    private var godBridgeFallSneakTicks = 0
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
@@ -689,7 +683,30 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         simPlayer.tick()
 
-        if (!simPlayer.onGround && !isManualJumpOptionActive || blocksPlacedUntilJump >= blocksToJump) {
+        val nextTickFalls = !simPlayer.onGround
+
+        if (isManualJumpOptionActive && player.onGround) {
+            if (godBridgeFallSneakTicks == GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK) {
+                godBridgeFallSneakTicks = 0
+            } else {
+                if (nextTickFalls && godBridgeFallSneakTicks <= 0) {
+                    godBridgeFallSneakTicks = calculateGodBridgeFallSneakTicks()
+                }
+
+                if (godBridgeFallSneakTicks > 0) {
+                    event.originalInput.sneak = true
+                    godBridgeFallSneakTicks--
+
+                    if (godBridgeFallSneakTicks == 0) {
+                        godBridgeFallSneakTicks = GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK
+                    }
+                }
+            }
+        } else {
+            godBridgeFallSneakTicks = 0
+        }
+
+        if ((nextTickFalls && !isManualJumpOptionActive) || blocksPlacedUntilJump >= blocksToJump) {
             event.originalInput.jump = true
 
             resetGodBridgeJumpCounter()
@@ -1645,10 +1662,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        if (applyGodBridgePreAlignmentInput(input, target)) {
-            return true
-        }
-
         if (!isGodBridgeInCenterBand(target)) {
             godBridgeAlignmentDebug =
                 "align=clear axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
@@ -1669,46 +1682,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeAlignmentDebug =
             "align=center axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
                 "target=${formatGodBridgeDebug(target.target)} strafe=${input.moveStrafe}"
-
-        return true
-    }
-
-    private fun applyGodBridgePreAlignmentInput(input: MovementInput, target: GodBridgeAlignmentTarget): Boolean {
-        if (waitForRotsPreAlignTicks <= 0 || godBridgePreAlignTicks < 0) {
-            return false
-        }
-
-        val placeInfo = placeRotation?.placeInfo
-        val raytrace = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
-        val raycastReady = placeInfo != null && raytrace?.blockPos == placeInfo.blockPos &&
-            raytrace.sideHit == placeInfo.enumFacing
-        val ticksDone = godBridgePreAlignTicks >= waitForRotsPreAlignTicks
-
-        if ((waitForRotsPreAlignRaycast && raycastReady) || (!waitForRotsPreAlignRaycast && ticksDone)) {
-            godBridgePreAlignTicks = -1
-            return false
-        }
-
-        if (godBridgePreAlignTicks == 0) {
-            val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
-            if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
-                godBridgeAlignmentDebug = "preAlign=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
-                return true
-            }
-        }
-
-        val strafe = chooseGodBridgeSidefaceStrafe(input) ?: run {
-            godBridgePreAlignTicks = -1
-            return false
-        }
-
-        input.moveStrafe = strafe
-        godBridgeInjectedStrafe = true
-        godBridgePreAlignTicks++
-        godBridgeAlignmentDebug =
-            "preAlign=side axis=${target.axis} cur=${formatGodBridgeDebug(target.current)} " +
-                "strafe=${input.moveStrafe} ticks=$godBridgePreAlignTicks/$waitForRotsPreAlignTicks " +
-                "raycast=$raycastReady"
 
         return true
     }
@@ -1765,17 +1738,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             .minByOrNull { abs(target.errorAfter(predictGodBridgeAlignmentDelta(it, forward, target.axis))) }
     }
 
-    private fun chooseGodBridgeSidefaceStrafe(input: MovementInput): Float? {
-        val forward = input.moveForward
-
-        return listOf(-1f, 1f).mapNotNull { strafe ->
-            val projected = projectGodBridgeInput(strafe, forward) ?: return@mapNotNull null
-            val sideScore = abs(projected.strafe) - abs(projected.forward)
-
-            GodBridgeStrafeCandidate(strafe, sideScore)
-        }.filter { it.sideScore > 0f }.maxByOrNull { it.sideScore }?.strafe
-    }
-
     private fun predictGodBridgeAlignmentDelta(strafe: Float, forward: Float, axis: EnumFacing.Axis): Double {
         val projected = projectGodBridgeInput(strafe, forward) ?: return 0.0
 
@@ -1815,7 +1777,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun resetGodBridgeAlignment() {
-        godBridgePreAlignTicks = 0
         godBridgeInjectedStrafe = false
         godBridgeAlignmentDebug = "align=reset"
         resetGodBridgeDiagonalAlignment()
@@ -1986,6 +1947,38 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         return performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
+    }
+
+    private fun calculateGodBridgeFallSneakTicks(): Int {
+        val target = placeRotation?.placeInfo ?: return GOD_BRIDGE_FALL_SNEAK_MAX_TICKS
+
+        return (1..GOD_BRIDGE_FALL_SNEAK_MAX_TICKS).firstOrNull { holdTicks ->
+            val raytrace = simulateGodBridgeFallSneakReleaseRaytrace(holdTicks)
+
+            raytrace != null && raytrace.blockPos == target.blockPos && raytrace.sideHit == target.enumFacing
+        } ?: GOD_BRIDGE_FALL_SNEAK_MAX_TICKS
+    }
+
+    private fun simulateGodBridgeFallSneakReleaseRaytrace(holdTicks: Int): MovingObjectPosition? {
+        val player = mc.thePlayer ?: return null
+        val reach = mc.playerController.blockReachDistance
+        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
+
+        repeat(holdTicks) {
+            simPlayer.movementInput.sneak = true
+            simPlayer.movementInput.jump = false
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
+        }
+
+        simPlayer.movementInput.sneak = false
+        simPlayer.movementInput.jump = false
+        simPlayer.rotationYaw = currRotation.yaw
+        simPlayer.tick()
+
+        val releaseEyes = Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+
+        return performBlockRaytraceFromEyes(currRotation, reach, releaseEyes)
     }
 
     private fun shouldWaitForGodBridgeReleasePhase(target: PlaceInfo?): Boolean {
@@ -2491,8 +2484,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private data class GodBridgeProjectedInput(val strafe: Float, val forward: Float, val yaw: Float)
 
-    private data class GodBridgeStrafeCandidate(val strafe: Float, val sideScore: Float)
-
     private data class GodBridgeInputKey(
         val moveForward: Float,
         val moveStrafe: Float,
@@ -2529,6 +2520,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
+    private const val GOD_BRIDGE_FALL_SNEAK_MAX_TICKS = 6
+    private const val GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK = -1
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
     private const val GOD_BRIDGE_RELEASE_PHASE_EPSILON = 0.003
     private const val GOD_BRIDGE_ORDER_EPSILON = 1.0E-6
