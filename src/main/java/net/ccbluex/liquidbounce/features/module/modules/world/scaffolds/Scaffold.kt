@@ -120,6 +120,12 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val waitForRotsSideTolerance by float("WaitForRotationsSideTolerance", 0.15f, 0f..0.4f) {
         waitForRotsSideMove
     }
+    private val waitForRotsPreAlignTicks by int("WaitForRotationsPreAlignTicks", 2, 0..8) {
+        waitForRotsSideMove
+    }
+    private val waitForRotsPreAlignRaycast by boolean("PreAlignRaycast", false) {
+        waitForRotsSideMove && waitForRotsPreAlignTicks > 0
+    }
     private val waitForRotsPostAlignTicks by intRange("WaitForRotationsPostAlignTicks", 2..6, 0..50) {
         waitForRotsSideMove
     }
@@ -307,7 +313,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgePlacementWaitPending = false
     private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
-    private var godBridgeCornerAdjusted = false
+    private var godBridgePreAlignTicks = 0
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
@@ -1666,23 +1672,35 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             return false
         }
 
-        if (!godBridgeCornerAdjusted) {
+        if (waitForRotsPreAlignTicks > 0 && godBridgePreAlignTicks >= 0) {
             val placeInfo = placeRotation?.placeInfo
             val raytrace = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+            val raycastReady = placeInfo != null && raytrace?.blockPos == placeInfo.blockPos &&
+                raytrace.sideHit == placeInfo.enumFacing
 
-            if (placeInfo != null && raytrace?.blockPos == placeInfo.blockPos && raytrace.sideHit == placeInfo.enumFacing) {
-                godBridgeCornerAdjusted = true
-            } else {
-                val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
-                if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
-                    godBridgeAlignmentDebug = "corner=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
-                    return true
+            if (godBridgePreAlignTicks < waitForRotsPreAlignTicks) {
+                if (godBridgePreAlignTicks == 0) {
+                    val positionDelta = mc.thePlayer?.horizontalPositionDelta ?: 0.0
+                    if (positionDelta > GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
+                        godBridgeAlignmentDebug = "preAlign=waitStop delta=${formatGodBridgeDebug(positionDelta)}"
+                        return true
+                    }
                 }
 
                 input.moveStrafe = -chooseGodBridgeAlignmentStrafe(input, target)
                 godBridgeInjectedStrafe = true
-                godBridgeAlignmentDebug = "corner=nudge strafe=${input.moveStrafe}"
+                godBridgePreAlignTicks++
+                godBridgeAlignmentDebug =
+                    "preAlign=nudge strafe=${input.moveStrafe} ticks=$godBridgePreAlignTicks/$waitForRotsPreAlignTicks"
                 return true
+            } else if (waitForRotsPreAlignRaycast && !raycastReady) {
+                input.moveForward = 0f
+                input.moveStrafe = 0f
+                godBridgeInjectedStrafe = false
+                godBridgeAlignmentDebug = "preAlign=waitRaycast"
+                return true
+            } else {
+                godBridgePreAlignTicks = -1
             }
         }
 
@@ -1828,7 +1846,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     private fun resetGodBridgeAlignment() {
         resetGodBridgeAlignmentPlan()
-        godBridgeCornerAdjusted = false
+        godBridgePreAlignTicks = 0
         godBridgeInjectedStrafe = false
         godBridgeAlignmentDebug = "align=reset"
         resetGodBridgeDiagonalAlignment()
