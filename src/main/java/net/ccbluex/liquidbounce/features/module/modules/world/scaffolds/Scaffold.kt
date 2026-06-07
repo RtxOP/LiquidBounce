@@ -336,7 +336,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
         resetGodBridgeJumpCounter()
-        resetGodBridgePhaseDebug()
         godBridgeMouseOverSample = null
     }
 
