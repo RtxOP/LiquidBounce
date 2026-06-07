@@ -126,15 +126,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private val godBridgePlacementLead by boolean("PlacementLead", true) {
         isGodBridgeEnabled && waitForRots
     }
-    private val godBridgeReleasePhaseAlign by boolean("ReleasePhaseAlign", true) {
-        isGodBridgeEnabled && waitForRots
-    }
-    private val godBridgeReleasePhaseValue by float("ReleasePhase", 0.3f, 0f..0.5f) {
-        godBridgeReleasePhaseAlign
-    }
-    private val godBridgeReleasePhaseMaxWaitTicks by int("ReleasePhaseMaxWaitTicks", 2, 0..5) {
-        godBridgeReleasePhaseAlign
-    }
     private val godBridgeRaycastDebug by boolean("GodBridgeRaycastDebug", false) { isGodBridgeEnabled }.subjective()
     private val godBridgeWindowScanDebug by boolean("WindowScanDebug", true) {
         isGodBridgeEnabled && godBridgeRaycastDebug
@@ -309,10 +300,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgeDiagonalReleased = false
     private var godBridgeDiagonalReleasedYaw: Float? = null
     private var godBridgeDiagonalRotationDone = false
-    private var godBridgeReleasePhase: GodBridgePhaseSnapshot? = null
-    private var godBridgeFirstPlacePhaseLogged = false
-    private var godBridgeReleasePhaseGateArmed = false
-    private var godBridgeReleasePhaseGateTicks = 0
     private var godBridgeMouseOverSample: GodBridgeMouseOverSample? = null
 
     private val isLookingDiagonally: Boolean
@@ -677,20 +664,21 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             resetGodBridgeWait()
         }
 
-        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
-
-        simPlayer.rotationYaw = currRotation.yaw
-
-        simPlayer.tick()
-
-        val nextTickFalls = !simPlayer.onGround
+        val fallTicksAhead = predictGodBridgeFallTicks()
+        val nextTickFalls = fallTicksAhead == 1
 
         if (isManualJumpOptionActive && player.onGround) {
             if (godBridgeFallSneakTicks == GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK) {
                 godBridgeFallSneakTicks = 0
             } else {
-                if (nextTickFalls && godBridgeFallSneakTicks <= 0) {
-                    godBridgeFallSneakTicks = calculateGodBridgeFallSneakTicks()
+                if (fallTicksAhead != null && godBridgeFallSneakTicks <= 0) {
+                    val sneakTicks = calculateGodBridgeFallSneakTicks()
+
+                    if (sneakTicks != null) {
+                        godBridgeFallSneakTicks = sneakTicks
+                    } else {
+                        event.originalInput.sneak = true
+                    }
                 }
 
                 if (godBridgeFallSneakTicks > 0) {
@@ -1247,7 +1235,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         if (clickedSuccessfully) {
             debugGodBridgePlacementPhase(clickPos, side, attempt)
-            debugGodBridgeFirstPlacePhase(clickPos, side, attempt)
 
             if (!attempt) {
                 delayTimer.reset()
@@ -1509,37 +1496,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         val diagonalReleased = diagonalYaw != null && godBridgeDiagonalReleased
         val releaseCandidateStarted = !godBridgePlacementReleased &&
             !waitSequencePending &&
-            (waitSequenceFinished || diagonalReleased || godBridgeReleasePhaseGateArmed)
-        if (releaseCandidateStarted) {
-            godBridgeReleasePhaseGateArmed = true
-        }
-        val releasePhasePending = releaseCandidateStarted &&
-            !postAlignPending &&
-            shouldWaitForGodBridgeReleasePhase(placeRotation?.placeInfo)
-        val placementReleaseStarted = releaseCandidateStarted && !postAlignPending && !releasePhasePending
+            (waitSequenceFinished || diagonalReleased || godBridgePlacementWaitPending)
+        val placementReleaseStarted = releaseCandidateStarted && !postAlignPending
 
-        godBridgePlacementWaitPending = waitSequencePending || postAlignPending || releasePhasePending
-        godBridgePlacementReleased = if (waitSequencePending || postAlignPending || releasePhasePending) false else {
+        godBridgePlacementWaitPending = waitSequencePending || postAlignPending
+        godBridgePlacementReleased = if (waitSequencePending || postAlignPending) false else {
             placementReleaseStarted || godBridgePlacementReleased
         }
-        godBridgeWaitPending = waitSequencePending || postAlignPending || releasePhasePending
+        godBridgeWaitPending = waitSequencePending || postAlignPending
 
         if (godBridgePlacementReleased && !godBridgeWaitPending) {
             godBridgeReleasedInputKey = inputKey
         }
 
-        input.sneak = input.sneak || rotationPending || alignmentPending || releasePhasePending
-
-        if (waitSequencePending) {
-            resetGodBridgeReleasePhaseGate()
-        }
-
-        if (releasePhasePending) {
-            input.moveForward = 0f
-            input.moveStrafe = 0f
-            godBridgeInjectedStrafe = false
-            godBridgeAlignmentDebug = "$godBridgeAlignmentDebug releasePhase=wait"
-        }
+        input.sneak = input.sneak || rotationPending || alignmentPending
 
         if (godBridgePlacementLead && placementReleaseStarted && !postAlignPending) {
             input.moveForward = 0f
@@ -1549,8 +1519,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         }
 
         if (placementReleaseStarted) {
-            resetGodBridgeReleasePhaseGate()
-            debugGodBridgeReleasePhase(placeRotation?.placeInfo, input, godBridgePlacementLead && !postAlignPending)
+            godBridgeAlignmentDebug = "$godBridgeAlignmentDebug release=ready"
         }
 
         debugGodBridgeWait(
@@ -1789,7 +1758,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         godBridgeWaitSequenceActive = false
         godBridgePlacementWaitPending = false
         godBridgePlacementReleased = false
-        resetGodBridgePhaseDebug()
         if (clearReleasedInput) {
             godBridgeReleasedInputKey = null
             godBridgeDiagonalReleasedYaw = null
@@ -1799,17 +1767,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeJumpCounter() {
         blocksPlacedUntilJump = 0
         blocksToJump = blocksToJumpRange.random()
-    }
-
-    private fun resetGodBridgePhaseDebug() {
-        godBridgeReleasePhase = null
-        godBridgeFirstPlacePhaseLogged = false
-        resetGodBridgeReleasePhaseGate()
-    }
-
-    private fun resetGodBridgeReleasePhaseGate() {
-        godBridgeReleasePhaseGateArmed = false
-        godBridgeReleasePhaseGateTicks = 0
     }
 
     private fun resetGodBridgeDiagonalAlignment() {
@@ -1949,18 +1906,31 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
     }
 
-    private fun calculateGodBridgeFallSneakTicks(): Int {
-        val target = placeRotation?.placeInfo ?: return GOD_BRIDGE_FALL_SNEAK_MAX_TICKS
+    private fun predictGodBridgeFallTicks(): Int? {
+        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
 
-        return (1..GOD_BRIDGE_FALL_SNEAK_MAX_TICKS).firstOrNull { holdTicks ->
-            val raytrace = simulateGodBridgeFallSneakReleaseRaytrace(holdTicks)
+        for (tick in 1..GOD_BRIDGE_FALL_LOOKAHEAD_TICKS) {
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
 
-            raytrace != null && raytrace.blockPos == target.blockPos && raytrace.sideHit == target.enumFacing
-        } ?: GOD_BRIDGE_FALL_SNEAK_MAX_TICKS
+            if (!simPlayer.onGround) {
+                return tick
+            }
+        }
+
+        return null
     }
 
-    private fun simulateGodBridgeFallSneakReleaseRaytrace(holdTicks: Int): MovingObjectPosition? {
-        val player = mc.thePlayer ?: return null
+    private fun calculateGodBridgeFallSneakTicks(): Int? {
+        val target = placeRotation?.placeInfo ?: return null
+
+        return (1..GOD_BRIDGE_FALL_SNEAK_MAX_TICKS).firstOrNull { holdTicks ->
+            isGodBridgeFallSneakReleaseSafe(holdTicks, target)
+        }
+    }
+
+    private fun isGodBridgeFallSneakReleaseSafe(holdTicks: Int, target: PlaceInfo): Boolean {
+        val player = mc.thePlayer ?: return false
         val reach = mc.playerController.blockReachDistance
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
 
@@ -1969,129 +1939,31 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             simPlayer.movementInput.jump = false
             simPlayer.rotationYaw = currRotation.yaw
             simPlayer.tick()
+
+            if (!simPlayer.onGround) {
+                return false
+            }
         }
 
-        simPlayer.movementInput.sneak = false
-        simPlayer.movementInput.jump = false
-        simPlayer.rotationYaw = currRotation.yaw
-        simPlayer.tick()
+        repeat(GOD_BRIDGE_FALL_RELEASE_LOOKAHEAD_TICKS) {
+            simPlayer.movementInput.sneak = false
+            simPlayer.movementInput.jump = false
+            simPlayer.rotationYaw = currRotation.yaw
+            simPlayer.tick()
 
-        val releaseEyes = Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+            if (!simPlayer.onGround) {
+                return false
+            }
 
-        return performBlockRaytraceFromEyes(currRotation, reach, releaseEyes)
-    }
+            val releaseEyes = Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
+            val raytrace = performBlockRaytraceFromEyes(currRotation, reach, releaseEyes)
 
-    private fun shouldWaitForGodBridgeReleasePhase(target: PlaceInfo?): Boolean {
-        if (!godBridgeReleasePhaseAlign || godBridgeReleasePhaseMaxWaitTicks <= 0 || target == null) {
-            return false
+            if (raytrace != null && raytrace.blockPos == target.blockPos && raytrace.sideHit == target.enumFacing) {
+                return true
+            }
         }
 
-        val player = mc.thePlayer ?: return false
-        val side = target.enumFacing
-        val axis = side.axis
-
-        if (axis == EnumFacing.Axis.Y) {
-            return false
-        }
-
-        val targetPhase = getGodBridgeReleaseTargetPhase(side)
-        val currentPhase = getGodBridgeAxisPhase(axis, player.posX, player.posZ)
-        val distance = getGodBridgeReleasePhaseDistance(side, currentPhase, targetPhase)
-
-        if (distance <= GOD_BRIDGE_RELEASE_PHASE_EPSILON) {
-            return false
-        }
-
-        if (godBridgeReleasePhaseGateTicks >= godBridgeReleasePhaseMaxWaitTicks) {
-            debugGodBridgeReleasePhaseWait(target, axis, currentPhase, targetPhase, distance, timedOut = true)
-            return false
-        }
-
-        godBridgeReleasePhaseGateTicks++
-        debugGodBridgeReleasePhaseWait(target, axis, currentPhase, targetPhase, distance, timedOut = false)
-
-        return true
-    }
-
-    private fun getGodBridgeReleaseTargetPhase(side: EnumFacing): Double {
-        val phase = godBridgeReleasePhaseValue.toDouble()
-
-        return when (side) {
-            EnumFacing.SOUTH, EnumFacing.EAST -> phase
-            EnumFacing.NORTH, EnumFacing.WEST -> 1.0 - phase
-            else -> phase
-        }
-    }
-
-    private fun getGodBridgeReleasePhaseDistance(side: EnumFacing, currentPhase: Double, targetPhase: Double) =
-        when (side) {
-            EnumFacing.SOUTH, EnumFacing.EAST -> if (currentPhase < targetPhase) targetPhase - currentPhase else 0.0
-            EnumFacing.NORTH, EnumFacing.WEST -> if (currentPhase > targetPhase) currentPhase - targetPhase else 0.0
-            else -> 0.0
-        }
-
-    private fun debugGodBridgeReleasePhaseWait(
-        target: PlaceInfo,
-        axis: EnumFacing.Axis,
-        currentPhase: Double,
-        targetPhase: Double,
-        distance: Double,
-        timedOut: Boolean
-    ) {
-        if (!godBridgePhaseDebug) {
-            return
-        }
-
-        val player = mc.thePlayer ?: return
-
-        debugGodBridgeRaycast(
-            "phase event=releaseWait target=${formatGodBridgePlaceInfo(target)} " +
-                "axis=${axis.name} side=${target.enumFacing.name} " +
-                "phase=${formatGodBridgeDebug(currentPhase)} targetPhase=${formatGodBridgeDebug(targetPhase)} " +
-                "dist=${formatGodBridgeDebug(distance)} ticks=$godBridgeReleasePhaseGateTicks/" +
-                "$godBridgeReleasePhaseMaxWaitTicks timeout=$timedOut " +
-                "pos=${formatGodBridgePositionDebug(player.posX, player.posZ)} " +
-                "axisMotion=${formatGodBridgeDebug(if (axis == EnumFacing.Axis.X) player.motionX else player.motionZ)} " +
-                "y=${formatGodBridgeDebug(player.posY)} motionY=${formatGodBridgeDebug(player.motionY)} " +
-                "ground=${player.onGround}"
-        )
-    }
-
-    private fun debugGodBridgeReleasePhase(target: PlaceInfo?, input: MovementInput, leadHeld: Boolean) {
-        if (!godBridgePhaseDebug || target == null) {
-            return
-        }
-
-        val snapshot = createGodBridgePhaseSnapshot(target.enumFacing) ?: return
-
-        godBridgeReleasePhase = snapshot
-        godBridgeFirstPlacePhaseLogged = false
-
-        debugGodBridgeRaycast(
-            "phase event=release target=${formatGodBridgePlaceInfo(target)} " +
-                "${formatGodBridgePhaseSnapshot(snapshot)} " +
-                "moveF=${formatGodBridgeDebug(input.moveForward.toDouble())} " +
-                "moveS=${formatGodBridgeDebug(input.moveStrafe.toDouble())} lead=$leadHeld"
-        )
-    }
-
-    private fun debugGodBridgeFirstPlacePhase(clickPos: BlockPos, side: EnumFacing, attempt: Boolean) {
-        if (!godBridgePhaseDebug || godBridgeFirstPlacePhaseLogged) {
-            return
-        }
-
-        val release = godBridgeReleasePhase ?: return
-        val snapshot = createGodBridgePhaseSnapshot(side, release.axis) ?: return
-
-        godBridgeFirstPlacePhaseLogged = true
-
-        debugGodBridgeRaycast(
-            "phase event=firstPlace click=${formatGodBridgeBlockPos(clickPos)}/${side.name} " +
-                "${formatGodBridgePhaseSnapshot(snapshot)} " +
-                "releasePhase=${formatGodBridgeDebug(release.phase)} " +
-                "delta=${formatGodBridgeDebug(getGodBridgePhaseDelta(release.phase, snapshot.phase))} " +
-                "ticks=${snapshot.tick - release.tick} attempt=$attempt"
-        )
+        return false
     }
 
     private fun debugGodBridgePlacementPhase(clickPos: BlockPos, side: EnumFacing, attempt: Boolean) {
@@ -2132,9 +2004,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     }
 
     private fun getGodBridgeFallbackPhaseAxis(): EnumFacing.Axis? {
-        val player = mc.thePlayer ?: return godBridgeReleasePhase?.axis
+        val player = mc.thePlayer ?: return null
 
-        return godBridgeReleasePhase?.axis ?: if (abs(player.motionX) >= abs(player.motionZ)) {
+        return if (abs(player.motionX) >= abs(player.motionZ)) {
             EnumFacing.Axis.X
         } else {
             EnumFacing.Axis.Z
@@ -2176,18 +2048,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             value > max -> value - max
             else -> 0.0
         }
-    }
-
-    private fun getGodBridgePhaseDelta(from: Double, to: Double): Double {
-        var delta = to - from
-
-        if (delta > 0.5) {
-            delta -= 1.0
-        } else if (delta < -0.5) {
-            delta += 1.0
-        }
-
-        return delta
     }
 
     private fun formatGodBridgeDebug(value: Double) = "%.3f".format(value)
@@ -2521,8 +2381,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
     private const val GOD_BRIDGE_FALL_SNEAK_MAX_TICKS = 6
+    private const val GOD_BRIDGE_FALL_LOOKAHEAD_TICKS = 4
+    private const val GOD_BRIDGE_FALL_RELEASE_LOOKAHEAD_TICKS = 4
     private const val GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK = -1
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
-    private const val GOD_BRIDGE_RELEASE_PHASE_EPSILON = 0.003
     private const val GOD_BRIDGE_ORDER_EPSILON = 1.0E-6
 }
