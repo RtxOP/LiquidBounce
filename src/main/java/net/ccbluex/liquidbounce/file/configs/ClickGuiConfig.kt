@@ -11,6 +11,7 @@ import net.ccbluex.liquidbounce.file.FileConfig
 import net.ccbluex.liquidbounce.file.FileManager.PRETTY_GSON
 import net.ccbluex.liquidbounce.ui.client.clickgui.ClickGui
 import net.ccbluex.liquidbounce.ui.client.clickgui.elements.ModuleElement
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.ModernClickGuiScreen
 import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.io.readJson
 import java.io.*
@@ -30,6 +31,14 @@ class ClickGuiConfig(file: File) : FileConfig(file) {
         loadDefault()
 
         val json = file.readJson() as? JsonObject ?: return
+
+        val modernObject = json[MODERN_KEY] as? JsonObject
+        if (modernObject != null) {
+            ModernClickGuiScreen.loadModernConfig(modernObject)
+        } else {
+            ModernClickGuiScreen.loadLegacyConfig(json)
+        }
+
         for (panel in clickGui.panels) {
             if (!json.has(panel.name)) continue
             try {
@@ -84,6 +93,12 @@ class ClickGuiConfig(file: File) : FileConfig(file) {
             jsonObject.add(panel.name, panelObject)
         }
 
+        jsonObject.add(MODERN_KEY, ModernClickGuiScreen.saveModernConfig())
+
         file.writeText(PRETTY_GSON.toJson(jsonObject))
+    }
+
+    companion object {
+        private const val MODERN_KEY = "Modern"
     }
 }

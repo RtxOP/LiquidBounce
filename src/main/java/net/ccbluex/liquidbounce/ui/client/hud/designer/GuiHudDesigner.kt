@@ -8,12 +8,10 @@ package net.ccbluex.liquidbounce.ui.client.hud.designer
 import net.ccbluex.liquidbounce.file.FileManager.hudConfig
 import net.ccbluex.liquidbounce.file.FileManager.saveConfig
 import net.ccbluex.liquidbounce.ui.client.hud.HUD
-import net.ccbluex.liquidbounce.ui.client.hud.designer.EditorPanel.ElementEditableText
 import net.ccbluex.liquidbounce.ui.client.hud.element.Element
 import net.minecraft.client.gui.GuiScreen
 import org.lwjgl.input.Keyboard
 import org.lwjgl.input.Mouse
-import kotlin.math.min
 
 class GuiHudDesigner : GuiScreen() {
 
@@ -21,14 +19,11 @@ class GuiHudDesigner : GuiScreen() {
 
     var selectedElement: Element? = null
         set(value) {
-            if (elementEditableText?.element != value) {
-                elementEditableText = null
+            if (field != value) {
+                editorPanel.clearFocus()
             }
             field = value
         }
-    private var buttonAction = false
-
-    var elementEditableText: ElementEditableText? = null
 
     override fun initGui() {
         Keyboard.enableRepeatEvents(true)
@@ -46,7 +41,7 @@ class GuiHudDesigner : GuiScreen() {
 
         editorPanel.drawPanel(mouseX, mouseY, wheel)
 
-        if (wheel != 0) {
+        if (wheel != 0 && !editorPanel.isMouseInside(mouseX, mouseY)) {
             for (element in HUD.elements) {
                 if (element.isInBorder(
                         mouseX / element.scale - element.renderX,
@@ -63,19 +58,14 @@ class GuiHudDesigner : GuiScreen() {
     override fun mouseClicked(mouseX: Int, mouseY: Int, mouseButton: Int) {
         super.mouseClicked(mouseX, mouseY, mouseButton)
 
-        if (buttonAction) {
-            buttonAction = false
+        if (editorPanel.isMouseInside(mouseX, mouseY)) {
             return
         }
 
         HUD.handleMouseClick(mouseX, mouseY, mouseButton)
 
-        if (!(mouseX in editorPanel.x..editorPanel.x + editorPanel.width
-                    && mouseY in editorPanel.y..editorPanel.y + min(editorPanel.realHeight, 200))
-        ) {
-            selectedElement = null
-            editorPanel.create = false
-        }
+        selectedElement = null
+        editorPanel.create = false
 
         if (mouseButton == 0) {
             for (element in HUD.elements) {
@@ -94,36 +84,36 @@ class GuiHudDesigner : GuiScreen() {
     override fun mouseReleased(mouseX: Int, mouseY: Int, state: Int) {
         super.mouseReleased(mouseX, mouseY, state)
 
+        editorPanel.mouseReleased()
         HUD.handleMouseReleased()
     }
 
     override fun onGuiClosed() {
         Keyboard.enableRepeatEvents(false)
-        elementEditableText = null
+        editorPanel.mouseReleased()
         saveConfig(hudConfig)
 
         super.onGuiClosed()
     }
 
     override fun keyTyped(typedChar: Char, keyCode: Int) {
+        if (editorPanel.keyTyped(typedChar, keyCode)) {
+            super.keyTyped(typedChar, keyCode)
+            return
+        }
+
         when (keyCode) {
             Keyboard.KEY_DELETE -> if (selectedElement != null) {
                 HUD.removeElement(this, selectedElement!!)
             }
 
             Keyboard.KEY_ESCAPE -> {
-                if (elementEditableText != null) {
-                    elementEditableText = null
-                } else {
-                    selectedElement = null
-                    editorPanel.create = false
-                }
+                selectedElement = null
+                editorPanel.create = false
             }
 
             else -> HUD.handleKey(typedChar, keyCode)
         }
-
-        elementEditableText?.chosenText?.processInput(typedChar, keyCode) { editorPanel.moveRGBAIndexBy(it) }
 
         super.keyTyped(typedChar, keyCode)
     }

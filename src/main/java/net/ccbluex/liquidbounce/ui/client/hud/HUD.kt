@@ -180,8 +180,8 @@ object HUD : MinecraftInstance {
 
     /** Remove [element] from HUD */
     fun removeElement(hudDesigner: GuiHudDesigner, element: Element): HUD {
-        if (hudDesigner.elementEditableText?.element == element) {
-            hudDesigner.elementEditableText = null
+        if (hudDesigner.selectedElement == element) {
+            hudDesigner.selectedElement = null
         }
 
         element.destroyElement()

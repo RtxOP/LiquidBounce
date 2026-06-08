@@ -11,19 +11,25 @@ import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.ui.client.clickgui.ClickGui
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.ModernClickGuiScreen
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.ModernClickGuiPreset
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.BlackStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.LiquidBounceStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.NullStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.SlowlyStyle
+import net.ccbluex.liquidbounce.ui.client.common.UiPerformanceProfile
 import net.minecraft.network.play.server.S2EPacketCloseWindow
 import org.lwjgl.input.Keyboard
 import java.awt.Color
 
 object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBeEnabled = false) {
+    private val modernStyleNames = ModernClickGuiPreset.entries.map { it.configName }.toTypedArray()
+    private val performanceProfileNames = UiPerformanceProfile.entries.map { it.configName }.toTypedArray()
+
     private val style by choices(
         "Style",
-        arrayOf("LiquidBounce", "Null", "Slowly", "Black"),
-        "LiquidBounce"
+        modernStyleNames + arrayOf("LiquidBounce", "Null", "Slowly", "Black"),
+        ModernClickGuiPreset.COLUMN_DECK.configName
     ).onChanged {
         updateStyle()
     }
@@ -33,20 +39,28 @@ object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBe
     val scrolls by boolean("Scrolls", true)
     val spacedModules by boolean("SpacedModules", false)
     val panelsForcedInBoundaries by boolean("PanelsForcedInBoundaries", false)
+    private val performance by choices("Performance", performanceProfileNames, UiPerformanceProfile.BALANCED.configName)
 
     private val color by color("Color", Color(0, 160, 255)) { style !in arrayOf("Slowly", "Black") }
 
     val guiColor
         get() = color.rgb
 
+    val modernPreset
+        get() = ModernClickGuiPreset.fromConfigName(style)
+
+    val performanceProfile
+        get() = UiPerformanceProfile.fromConfigName(performance)
+
     override fun onEnable() {
         updateStyle()
-        mc.displayGuiScreen(clickGui)
+        mc.displayGuiScreen(if (modernPreset != null) ModernClickGuiScreen else clickGui)
         Keyboard.enableRepeatEvents(true)
     }
 
     private fun updateStyle() {
         clickGui.style = when (style) {
+            in modernStyleNames -> return
             "LiquidBounce" -> LiquidBounceStyle
             "Null" -> NullStyle
             "Slowly" -> SlowlyStyle
@@ -56,7 +70,9 @@ object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBe
     }
 
     val onPacket = handler<PacketEvent>(always = true) { event ->
-        if (event.packet is S2EPacketCloseWindow && mc.currentScreen is ClickGui) {
+        if (event.packet is S2EPacketCloseWindow &&
+            (mc.currentScreen is ClickGui || mc.currentScreen is ModernClickGuiScreen)
+        ) {
             event.cancelEvent()
         }
     }
