@@ -297,6 +297,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private var godBridgePlacementReleased = false
     private var godBridgePostAlignmentWaitTicks = 0
     private var godBridgeFallSneakTicks = 0
+    private var godBridgeFallSneakWaitingForStop = false
     private var godBridgeDiagonalYaw: Float? = null
     private var godBridgeDiagonalNudgeTicks = 0
     private var godBridgeDiagonalStopTicks = 0
@@ -339,6 +340,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         launchY = player.posY.roundToInt()
         blocksUntilAxisChange = 0
         resetGodBridgeJumpCounter()
+        resetGodBridgeFallSneak()
         godBridgeMouseOverSample = null
     }
 
@@ -678,11 +680,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             if (godBridgeFallSneakTicks == GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK) {
                 godBridgeFallSneakTicks = 0
             } else {
-                if (nextTickFalls && godBridgeFallSneakTicks <= 0) {
-                    godBridgeFallSneakTicks = godBridgeFallSneakTicksRange.random()
+                if (nextTickFalls && godBridgeFallSneakTicks <= 0 && !godBridgeFallSneakWaitingForStop) {
+                    godBridgeFallSneakWaitingForStop = true
                 }
 
-                if (godBridgeFallSneakTicks > 0) {
+                if (godBridgeFallSneakWaitingForStop) {
+                    event.originalInput.sneak = true
+
+                    if (player.horizontalPositionDelta <= GOD_BRIDGE_DIAGONAL_STOP_DELTA) {
+                        godBridgeFallSneakWaitingForStop = false
+                        godBridgeFallSneakTicks = godBridgeFallSneakTicksRange.random()
+                    }
+                }
+
+                if (!godBridgeFallSneakWaitingForStop && godBridgeFallSneakTicks > 0) {
                     event.originalInput.sneak = true
                     godBridgeFallSneakTicks--
 
@@ -692,7 +703,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                 }
             }
         } else {
-            godBridgeFallSneakTicks = 0
+            resetGodBridgeFallSneak()
         }
 
         if ((nextTickFalls && !isManualJumpOptionActive) || blocksPlacedUntilJump >= blocksToJump) {
@@ -912,6 +923,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         options.instant = false
         resetGodBridgeWait()
         resetGodBridgeJumpCounter()
+        resetGodBridgeFallSneak()
     }
 
     // Entity movement event
@@ -1768,6 +1780,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private fun resetGodBridgeJumpCounter() {
         blocksPlacedUntilJump = 0
         blocksToJump = blocksToJumpRange.random()
+    }
+
+    private fun resetGodBridgeFallSneak() {
+        godBridgeFallSneakTicks = 0
+        godBridgeFallSneakWaitingForStop = false
     }
 
     private fun resetGodBridgeDiagonalAlignment() {
