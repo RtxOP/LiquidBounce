@@ -498,6 +498,8 @@ object ValueControls {
                 val lastX = track.x + track.width * sliderProgress(value.minimum, value.maximum, value.get().endInclusive)
                 value.lastChosenSlider = if (abs(mouseX - firstX) <= abs(mouseX - lastX)) RangeSlider.LEFT else RangeSlider.RIGHT
             }
+
+            else -> Unit
         }
     }
 
