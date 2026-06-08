@@ -143,6 +143,9 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
     val jumpAutomatically by boolean("JumpAutomatically", true) { scaffoldMode == "GodBridge" }
     private val blocksToJumpRange by intRange("BlocksToJumpRange", 4..4, 1..8) {  scaffoldMode == "GodBridge" && !jumpAutomatically }
+    private val godBridgeFallSneakTicksRange by intRange("GBFallSneakTicks", 1..3, 1..5) {
+        scaffoldMode == "GodBridge" && !jumpAutomatically
+    }
 
     // Telly mode sub-values
     private val startHorizontally by boolean("StartHorizontally", true) { scaffoldMode == "Telly" }
@@ -663,21 +666,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             resetGodBridgeWait()
         }
 
-        val fallTicksAhead = predictGodBridgeFallTicks()
-        val nextTickFalls = fallTicksAhead == 1
+        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
+
+        simPlayer.rotationYaw = currRotation.yaw
+
+        simPlayer.tick()
+
+        val nextTickFalls = !simPlayer.onGround
 
         if (isManualJumpOptionActive && player.onGround) {
             if (godBridgeFallSneakTicks == GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK) {
                 godBridgeFallSneakTicks = 0
             } else {
-                if (fallTicksAhead != null && godBridgeFallSneakTicks <= 0) {
-                    val sneakTicks = calculateGodBridgeFallSneakTicks()
-
-                    if (sneakTicks != null) {
-                        godBridgeFallSneakTicks = sneakTicks
-                    } else {
-                        event.originalInput.sneak = true
-                    }
+                if (nextTickFalls && godBridgeFallSneakTicks <= 0) {
+                    godBridgeFallSneakTicks = godBridgeFallSneakTicksRange.random()
                 }
 
                 if (godBridgeFallSneakTicks > 0) {
@@ -1905,66 +1907,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         return performBlockRaytraceFromEyes(currRotation, reach, nextEyes)
     }
 
-    private fun predictGodBridgeFallTicks(): Int? {
-        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
-
-        for (tick in 1..GOD_BRIDGE_FALL_LOOKAHEAD_TICKS) {
-            simPlayer.rotationYaw = currRotation.yaw
-            simPlayer.tick()
-
-            if (!simPlayer.onGround) {
-                return tick
-            }
-        }
-
-        return null
-    }
-
-    private fun calculateGodBridgeFallSneakTicks(): Int? {
-        val target = placeRotation?.placeInfo ?: return null
-
-        return (1..GOD_BRIDGE_FALL_SNEAK_MAX_TICKS).firstOrNull { holdTicks ->
-            isGodBridgeFallSneakReleaseSafe(holdTicks, target)
-        }
-    }
-
-    private fun isGodBridgeFallSneakReleaseSafe(holdTicks: Int, target: PlaceInfo): Boolean {
-        val player = mc.thePlayer ?: return false
-        val reach = mc.playerController.blockReachDistance
-        val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
-
-        repeat(holdTicks) {
-            simPlayer.movementInput.sneak = true
-            simPlayer.movementInput.jump = false
-            simPlayer.rotationYaw = currRotation.yaw
-            simPlayer.tick()
-
-            if (!simPlayer.onGround) {
-                return false
-            }
-        }
-
-        repeat(GOD_BRIDGE_FALL_RELEASE_LOOKAHEAD_TICKS) {
-            simPlayer.movementInput.sneak = false
-            simPlayer.movementInput.jump = false
-            simPlayer.rotationYaw = currRotation.yaw
-            simPlayer.tick()
-
-            if (!simPlayer.onGround) {
-                return false
-            }
-
-            val releaseEyes = Vec3(simPlayer.posX, simPlayer.posY + player.eyeHeight.toDouble(), simPlayer.posZ)
-            val raytrace = performBlockRaytraceFromEyes(currRotation, reach, releaseEyes)
-
-            if (raytrace != null && raytrace.blockPos == target.blockPos && raytrace.sideHit == target.enumFacing) {
-                return true
-            }
-        }
-
-        return false
-    }
-
     private fun debugGodBridgePlacementPhase(clickPos: BlockPos, side: EnumFacing, attempt: Boolean) {
         if (!godBridgePhaseDebug) {
             return
@@ -2379,9 +2321,6 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     private const val GOD_BRIDGE_DIAGONAL_STOP_DELTA = 0.005
     private const val GOD_BRIDGE_DIAGONAL_STOP_TICKS = 2
     private const val GOD_BRIDGE_DIAGONAL_NUDGE_TICKS = 6
-    private const val GOD_BRIDGE_FALL_SNEAK_MAX_TICKS = 6
-    private const val GOD_BRIDGE_FALL_LOOKAHEAD_TICKS = 4
-    private const val GOD_BRIDGE_FALL_RELEASE_LOOKAHEAD_TICKS = 4
     private const val GOD_BRIDGE_FALL_SNEAK_RELEASE_TICK = -1
     private const val GOD_BRIDGE_WINDOW_SCAN_STEPS = 20
     private const val GOD_BRIDGE_ORDER_EPSILON = 1.0E-6
