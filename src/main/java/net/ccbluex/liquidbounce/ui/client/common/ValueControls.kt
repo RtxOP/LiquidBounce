@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.config.TextValue
 import net.ccbluex.liquidbounce.config.Value
 import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawFilledCircle
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
 import net.ccbluex.liquidbounce.utils.ui.EditableText
@@ -26,6 +27,7 @@ import org.lwjgl.input.Keyboard
 import java.awt.Color
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 class ValueControlState {
@@ -108,6 +110,9 @@ object ValueControls {
     private const val SLIDER_ROW_HEIGHT = 24F
     private const val COLOR_CHANNEL_HEIGHT = 18F
     private const val COLOR_CHANNEL_COUNT = 4
+    private const val SLIDER_FILL_HEIGHT = 3F
+    private const val SLIDER_KNOB_RADIUS = 4F
+    private const val COLOR_KNOB_RADIUS = 3.5F
 
     private val colorLabels = arrayOf("R", "G", "B", "A")
 
@@ -121,9 +126,9 @@ object ValueControls {
         val hovered = rect.contains(mouseX, mouseY)
         val focused = state.focusedText?.value === value
         val background = when {
-            focused -> theme.rowHover.withAlpha(190)
-            hovered -> theme.rowHover.withAlpha(170)
-            else -> theme.rowBackground.withAlpha(125)
+            focused -> theme.rowHover.withAlpha(246)
+            hovered -> theme.rowHover.withAlpha(232)
+            else -> theme.rowBackground.withAlpha(218)
         }
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, background.rgb, 3F)
@@ -311,14 +316,27 @@ object ValueControls {
     private fun drawBoolean(value: BoolValue, rect: UiRect, theme: UiTheme) {
         val label = Fonts.fontRegular30.trimToWidthWithEllipsis(value.name, (rect.width - 31F).roundToInt())
         val enabled = value.get()
-        val trackX = rect.right - 24F
-        val trackY = rect.y + 5F
-        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 190)
-        val knobX = if (enabled) trackX + 11F else trackX + 2F
 
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textPrimary.rgb)
-        drawRoundedRect(trackX, trackY, trackX + 20F, trackY + 8F, trackColor.rgb, 4F)
-        drawRoundedRect(knobX, trackY + 1F, knobX + 6F, trackY + 7F, theme.textPrimary.rgb, 3F)
+        drawSwitch(enabled, rect.right - 27F, rect.y + (rect.height - 10F) / 2F, 22F, 10F, 8F, theme)
+    }
+
+    private fun drawSwitch(
+        enabled: Boolean,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        knobSize: Float,
+        theme: UiTheme
+    ) {
+        val inset = (height - knobSize) / 2F
+        val knobX = if (enabled) x + width - knobSize - inset else x + inset
+        val knobY = y + inset
+        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 210)
+
+        drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, height / 2F)
+        drawRoundedRect(knobX, knobY, knobX + knobSize, knobY + knobSize, theme.textPrimary.rgb, knobSize / 2F)
     }
 
     private fun drawChoice(name: String, valueText: String, rect: UiRect, theme: UiTheme) {
@@ -382,8 +400,8 @@ object ValueControls {
 
         Fonts.fontRegular30.drawString(label, rect.x, rect.y + 5F, theme.textMuted.withAlpha(210).rgb)
         drawRect(track.x, track.y, track.right, track.y + 1F, theme.textMuted.withAlpha(135).rgb)
-        drawRoundedRect(track.x, track.y - 1F, max(track.x + 1F, fill), track.y + 2F, fillColor.rgb, 1.5F)
-        drawRoundedRect(fill - 2F, track.y - 3F, fill + 2F, track.y + 4F, theme.textPrimary.rgb, 2F)
+        drawSliderFill(track, track.x, fill, fillColor)
+        drawSliderKnob(fill, track, theme.textPrimary, theme, COLOR_KNOB_RADIUS)
     }
 
     private fun drawLabel(text: String, rect: UiRect, theme: UiTheme, color: Color = theme.textPrimary) {
@@ -409,12 +427,11 @@ object ValueControls {
         val track = sliderTrack(rect)
         val progress = sliderProgress(minimum.toFloat(), maximum.toFloat(), current.toFloat())
         val fill = track.x + track.width * progress
-        val fillEnd = max(track.x + 1F, fill)
 
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 4F, theme.textPrimary.rgb)
         drawRect(track.x, track.y, track.right, track.y + 1F, theme.textMuted.withAlpha(155).rgb)
-        drawRoundedRect(track.x, track.y - 1.5F, fillEnd, track.y + 2.5F, theme.accent.rgb, 2F)
-        drawRoundedRect(fill - 2F, track.y - 3F, fill + 2F, track.y + 4F, theme.textPrimary.rgb, 2F)
+        drawSliderFill(track, track.x, fill, theme.accent)
+        drawSliderKnob(fill, track, theme.textPrimary, theme)
     }
 
     private fun drawRangeSlider(
@@ -441,9 +458,9 @@ object ValueControls {
 
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 4F, theme.textPrimary.rgb)
         drawRect(track.x, track.y, track.right, track.y + 1F, theme.textMuted.withAlpha(155).rgb)
-        drawRoundedRect(firstX, track.y - 1.5F, max(firstX + 1F, lastX), track.y + 2.5F, theme.accent.rgb, 2F)
-        drawRoundedRect(firstX - 2F, track.y - 3F, firstX + 2F, track.y + 4F, theme.textPrimary.rgb, 2F)
-        drawRoundedRect(lastX - 2F, track.y - 3F, lastX + 2F, track.y + 4F, theme.textPrimary.rgb, 2F)
+        drawSliderFill(track, firstX, lastX, theme.accent)
+        drawSliderKnob(firstX, track, theme.textPrimary, theme)
+        drawSliderKnob(lastX, track, theme.textPrimary, theme)
     }
 
     private fun updateSlider(value: Value<*>, rect: UiRect, mouseX: Int, state: ValueControlState): Boolean {
@@ -571,6 +588,40 @@ object ValueControls {
         UiRect(rect.x + 5F, rect.y + ROW_HEIGHT + index * COLOR_CHANNEL_HEIGHT, rect.width - 10F, COLOR_CHANNEL_HEIGHT)
 
     private fun sliderTrack(rect: UiRect) = UiRect(rect.x + 7F, rect.bottom - 7F, rect.width - 14F, 1F)
+
+    private fun drawSliderFill(track: UiRect, fromX: Float, toX: Float, color: Color) {
+        val start = min(fromX, toX).coerceIn(track.x, track.right)
+        val end = max(fromX, toX).coerceIn(track.x, track.right)
+        val visibleEnd = if (end - start < 1F) {
+            (start + 1F).coerceAtMost(track.right)
+        } else {
+            end
+        }
+
+        if (visibleEnd <= start) {
+            return
+        }
+
+        val centerY = sliderCenterY(track)
+        val halfHeight = SLIDER_FILL_HEIGHT / 2F
+
+        drawRect(start, centerY - halfHeight, visibleEnd, centerY + halfHeight, color.rgb)
+    }
+
+    private fun drawSliderKnob(
+        centerX: Float,
+        track: UiRect,
+        color: Color,
+        theme: UiTheme,
+        radius: Float = SLIDER_KNOB_RADIUS
+    ) {
+        val centerY = sliderCenterY(track)
+
+        drawFilledCircle(centerX.roundToInt(), centerY.roundToInt(), radius + 1F, theme.panelHeader.withAlpha(230))
+        drawFilledCircle(centerX.roundToInt(), centerY.roundToInt(), radius, color)
+    }
+
+    private fun sliderCenterY(track: UiRect) = track.y + track.height / 2F
 
     private fun sliderProgress(minimum: Float, maximum: Float, current: Float): Float {
         if (maximum <= minimum) {

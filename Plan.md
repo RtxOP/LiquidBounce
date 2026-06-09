@@ -32,6 +32,7 @@ Completed so far:
 - Added first-pass `SidebarList` polish: search now scans all categories, search results show their source category, search results are cached by query/category, Ctrl+F focuses search, keyboard up/down/home/end navigate sidebar categories and utility sections, and dragged `ColumnDeck` columns clamp inside the viewport.
 - Added first-pass performance profile support: `ClickGUI` exposes `Fast`, `Balanced`, and `Fancy`; the modern screen applies cheap profile-specific theme variants without blur or framebuffer effects.
 - Added a bounded `UiTextCache` and switched stable modern ClickGUI row/header labels to cached trimming/width lookups; the base ellipsis trimmer now uses binary search instead of a character-by-character loop.
+- Added a visual refinement pass after screenshot review: darker and more opaque surfaces, soft rounded-rect shadows/borders, denser `SidebarList` module rows, restrained active rows with accent strips, cleaner `ColumnDeck` title bars, more solid shared value-control rows, centered switch knob/capsule geometry, circular slider handles, and robust range-slider fill segments.
 
 Not completed yet:
 
@@ -656,6 +657,7 @@ Implementation status:
 - First pass complete: manually positioned `ColumnDeck` columns are clamped into the current viewport during draw and drag.
 - First pass complete: `Fast`, `Balanced`, and `Fancy` profile switches affect only cheap theme/background choices, with no blur or full-screen post-processing path.
 - First pass complete: stable modern ClickGUI labels use a bounded text cache, and ellipsis trimming uses binary search.
+- First pass complete: screenshot feedback addressed with stronger contrast, less background bleed-through, denser sidebar row rhythm, soft shadows/borders, slimmer active-state accents, and aligned switch controls.
 - Remaining: bounded row/expand animations, deeper performance profiling, screenshot validation, and small-viewport sidebar navigation polish.
 
 Acceptance criteria:

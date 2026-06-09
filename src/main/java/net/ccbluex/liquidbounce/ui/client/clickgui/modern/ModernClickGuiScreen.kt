@@ -71,16 +71,16 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val HEADER_HEIGHT = 20F
     private const val ROW_HEIGHT = 18F
     private const val COLUMN_RADIUS = 6F
-    private const val SIDEBAR_SHELL_WIDTH = 620F
-    private const val SIDEBAR_SHELL_HEIGHT = 420F
+    private const val SIDEBAR_SHELL_WIDTH = 646F
+    private const val SIDEBAR_SHELL_HEIGHT = 430F
     private const val SIDEBAR_WIDTH = 154F
     private const val SIDEBAR_PADDING = 14F
     private const val SIDEBAR_ROW_HEIGHT = 24F
-    private const val SIDEBAR_MODULE_HEIGHT = 55F
-    private const val SIDEBAR_MODULE_GAP = 7F
-    private const val SIDEBAR_SYNTHETIC_ROW_HEIGHT = 50F
-    private const val SIDEBAR_AUTO_SETTING_ROW_HEIGHT = 62F
-    private const val SEARCH_HEIGHT = 22F
+    private const val SIDEBAR_MODULE_HEIGHT = 46F
+    private const val SIDEBAR_MODULE_GAP = 5F
+    private const val SIDEBAR_SYNTHETIC_ROW_HEIGHT = 46F
+    private const val SIDEBAR_AUTO_SETTING_ROW_HEIGHT = 58F
+    private const val SEARCH_HEIGHT = 24F
     private const val MAX_SEARCH_QUERY_LENGTH = 64
 
     private var theme = UiTheme.MODERN
@@ -271,6 +271,43 @@ object ModernClickGuiScreen : GuiScreen() {
         Gui.drawRect(0, 0, width, height, theme.backgroundOverlay.rgb)
     }
 
+    private fun drawShadow(rect: UiRect, radius: Float, strong: Boolean = false) {
+        if (themeProfile == UiPerformanceProfile.FAST) {
+            drawRoundedRect(rect.x + 1F, rect.y + 1F, rect.right + 1F, rect.bottom + 1F, Color(0, 0, 0, 72).rgb, radius)
+            return
+        }
+
+        val alpha = if (strong) 118 else 82
+        drawRoundedRect(rect.x + 3F, rect.y + 4F, rect.right + 3F, rect.bottom + 4F, Color(0, 0, 0, alpha).rgb, radius)
+        drawRoundedRect(rect.x + 1F, rect.y + 2F, rect.right + 1F, rect.bottom + 2F, Color(0, 0, 0, alpha / 2).rgb, radius)
+    }
+
+    private fun drawSurface(rect: UiRect, color: Color, radius: Float, shadow: Boolean = false, borderAlpha: Int = 120) {
+        if (shadow) {
+            drawShadow(rect, radius)
+        }
+
+        drawRoundedRect(rect.x - 0.5F, rect.y - 0.5F, rect.right + 0.5F, rect.bottom + 0.5F, theme.border.withAlpha(borderAlpha).rgb, radius + 0.5F)
+        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, color.rgb, radius)
+    }
+
+    private fun drawAccentStrip(rect: UiRect, fullHeight: Boolean = false) {
+        val top = if (fullHeight) rect.y + 1F else rect.y + 7F
+        val bottom = if (fullHeight) rect.bottom - 1F else rect.bottom - 7F
+
+        drawRoundedRect(rect.x, top, rect.x + 3F, bottom, theme.accent.rgb, 1.5F)
+    }
+
+    private fun drawSwitch(enabled: Boolean, x: Float, y: Float, width: Float, height: Float, knobSize: Float) {
+        val inset = (height - knobSize) / 2F
+        val knobX = if (enabled) x + width - knobSize - inset else x + inset
+        val knobY = y + inset
+        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 210)
+
+        drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, height / 2F)
+        drawRoundedRect(knobX, knobY, knobX + knobSize, knobY + knobSize, theme.textPrimary.rgb, knobSize / 2F)
+    }
+
     private fun drawColumnDeck(mouseX: Int, mouseY: Int) {
         val columnWidth = columnWidth()
         val viewportHeight = max(120F, height - TOP_MARGIN - 18F)
@@ -310,14 +347,8 @@ object ModernClickGuiScreen : GuiScreen() {
             scrollMax
         )
 
-        drawRoundedRect(
-            column.x,
-            column.y,
-            column.x + column.width,
-            column.y + bodyHeight,
-            theme.panelBackground.rgb,
-            COLUMN_RADIUS
-        )
+        val columnRect = UiRect(column.x, column.y, column.width, bodyHeight)
+        drawSurface(columnRect, theme.panelBackground, COLUMN_RADIUS, shadow = true)
         drawRoundedRect(
             column.x,
             column.y,
@@ -326,6 +357,7 @@ object ModernClickGuiScreen : GuiScreen() {
             theme.panelHeader.rgb,
             COLUMN_RADIUS
         )
+        drawRect(column.x, column.y + HEADER_HEIGHT - 5F, column.x + column.width, column.y + HEADER_HEIGHT, theme.panelHeader.rgb)
 
         Fonts.fontSemibold35.drawCenteredString(
             category.displayName,
@@ -497,13 +529,13 @@ object ModernClickGuiScreen : GuiScreen() {
         val sidebar = UiRect(shell.x, shell.y, sidebarWidth, shell.height)
         val content = UiRect(sidebar.right, shell.y, shell.width - sidebarWidth, shell.height)
 
-        drawRoundedRect(shell.x, shell.y, shell.right, shell.bottom, theme.panelBackground.rgb, 9F)
-        drawRoundedRect(sidebar.x, sidebar.y, sidebar.right, sidebar.bottom, Color(17, 18, 25, 235).rgb, 9F)
-        drawRect(sidebar.right, sidebar.y + 8F, sidebar.right + 1F, sidebar.bottom - 8F, theme.border.withAlpha(115).rgb)
+        drawSurface(shell, theme.panelBackground, 8F, shadow = true, borderAlpha = 150)
+        drawRoundedRect(sidebar.x, sidebar.y, sidebar.right, sidebar.bottom, Color(8, 9, 14, 248).rgb, 8F)
+        drawRect(sidebar.right, sidebar.y + 9F, sidebar.right + 1F, sidebar.bottom - 9F, theme.border.withAlpha(125).rgb)
 
         drawSidebarHeader(sidebar)
-        drawSidebarCategories(sidebar, mouseX, mouseY)
-        drawSidebarUtilities(sidebar, mouseX, mouseY)
+        val categoryBottom = drawSidebarCategories(sidebar, mouseX, mouseY)
+        drawSidebarUtilities(sidebar, categoryBottom, mouseX, mouseY)
         drawSidebarContent(content, mouseX, mouseY)
     }
 
@@ -524,12 +556,12 @@ object ModernClickGuiScreen : GuiScreen() {
         )
         sidebarSearchRect = search
 
-        val searchColor = if (searchFocused) theme.rowHover.withAlpha(220) else theme.rowBackground.withAlpha(150)
+        val searchColor = if (searchFocused) Color(15, 23, 52, 235) else Color(12, 15, 25, 226)
         val textColor = if (searchQuery.isBlank() && !searchFocused) theme.textMuted.withAlpha(180) else theme.textPrimary
         val text = if (searchQuery.isBlank() && !searchFocused) "Search" else searchQuery
         val display = trimText(Fonts.fontRegular30, text, search.width - 14F)
 
-        drawRoundedRect(search.x, search.y, search.right, search.bottom, searchColor.rgb, 5F)
+        drawSurface(search, searchColor, 5F, borderAlpha = if (searchFocused) 135 else 65)
         Fonts.fontRegular30.drawString(display, search.x + 7F, search.y + 7F, textColor.rgb)
 
         if (searchFocused) {
@@ -538,7 +570,7 @@ object ModernClickGuiScreen : GuiScreen() {
         }
     }
 
-    private fun drawSidebarCategories(sidebar: UiRect, mouseX: Int, mouseY: Int) {
+    private fun drawSidebarCategories(sidebar: UiRect, mouseX: Int, mouseY: Int): Float {
         var y = sidebar.y + 83F
 
         for (category in Category.entries) {
@@ -546,8 +578,8 @@ object ModernClickGuiScreen : GuiScreen() {
             val selected = selectedSyntheticSection == null && category == selectedCategory
             val hovered = row.contains(mouseX, mouseY)
             val rowColor = when {
-                selected -> Color(230, 230, 235, 58)
-                hovered -> theme.rowHover.withAlpha(145)
+                selected -> Color(255, 255, 255, 46)
+                hovered -> theme.rowHover.withAlpha(135)
                 else -> Color(0, 0, 0, 0)
             }
             val textColor = if (selected) theme.textPrimary else theme.textMuted.withAlpha(225)
@@ -556,19 +588,26 @@ object ModernClickGuiScreen : GuiScreen() {
                 drawRoundedRect(row.x, row.y, row.right, row.bottom, rowColor.rgb, 5F)
             }
 
+            if (selected) {
+                drawAccentStrip(row)
+            }
+
             drawImage(category.iconResourceLocation, row.x + 8F, row.y + 6F, 11, 11, textColor)
             Fonts.fontRegular30.drawString(category.displayName, row.x + 26F, row.y + 7F, textColor.rgb)
             categoryHitTargets += CategoryHitTarget(row, category)
             y += SIDEBAR_ROW_HEIGHT + 3F
         }
+
+        return y
     }
 
-    private fun drawSidebarUtilities(sidebar: UiRect, mouseX: Int, mouseY: Int) {
+    private fun drawSidebarUtilities(sidebar: UiRect, categoryBottom: Float, mouseX: Int, mouseY: Int) {
         val utilityRows = listOf(
             SyntheticSection.TARGETS to "Target filters",
             SyntheticSection.AUTO_SETTINGS to "Cloud presets"
         )
-        var y = sidebar.bottom - 86F
+        val utilityHeight = (utilityRows.size + 1) * (SIDEBAR_ROW_HEIGHT + 3F) - 3F
+        var y = max(categoryBottom + 12F, sidebar.bottom - utilityHeight - 16F)
 
         for ((section, description) in utilityRows) {
             val row = UiRect(sidebar.x + 9F, y, sidebar.width - 18F, SIDEBAR_ROW_HEIGHT)
@@ -594,14 +633,18 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val hovered = rect.contains(mouseX, mouseY)
         val rowColor = when {
-            selected -> Color(230, 230, 235, 58)
-            hovered -> theme.rowHover.withAlpha(145)
+            selected -> Color(255, 255, 255, 42)
+            hovered -> theme.rowHover.withAlpha(135)
             else -> Color(0, 0, 0, 0)
         }
         val textColor = if (selected) theme.textPrimary else theme.textMuted.withAlpha(225)
 
         if (rowColor.alpha > 0) {
             drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F)
+        }
+
+        if (selected) {
+            drawAccentStrip(rect)
         }
 
         Fonts.fontRegular30.drawString(
@@ -772,19 +815,20 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawSidebarTargetRow(target: TargetOption, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(175) else theme.rowBackground.withAlpha(145)
+        val rowColor = if (hovered) theme.rowHover.withAlpha(245) else theme.rowBackground
         val label = trimText(Fonts.fontSemibold35, target.displayName, rect.width - 62F)
         val description = trimText(Fonts.fontRegular30, target.description, rect.width - 62F)
         val enabled = target.enabled()
         val trackX = rect.right - 42F
-        val trackY = rect.y + 18F
-        val knobX = if (enabled) trackX + 16F else trackX + 3F
+        val trackY = rect.y + (rect.height - 12F) / 2F
 
-        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F)
-        Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 11F, theme.textPrimary.rgb)
-        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 30F, theme.textMuted.withAlpha(180).rgb)
-        drawRoundedRect(trackX, trackY, trackX + 29F, trackY + 11F, (if (enabled) theme.accent else Color(70, 72, 82, 190)).rgb, 5.5F)
-        drawRoundedRect(knobX, trackY + 2F, knobX + 7F, trackY + 9F, theme.textPrimary.rgb, 3.5F)
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        if (enabled) {
+            drawAccentStrip(rect)
+        }
+        Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
+        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
+        drawSwitch(enabled, trackX, trackY, 30F, 12F, 8F)
     }
 
     private fun drawSidebarAutoSettingRow(setting: AutoSettings, rect: UiRect, mouseX: Int, mouseY: Int) {
@@ -792,8 +836,8 @@ object ModernClickGuiScreen : GuiScreen() {
         val applying = applyingAutoSettingId == setting.settingId
         val rowColor = when {
             applying -> Color(31, 25, 42, 226)
-            hovered -> theme.rowHover.withAlpha(175)
-            else -> theme.rowBackground.withAlpha(145)
+            hovered -> theme.rowHover.withAlpha(245)
+            else -> theme.rowBackground
         }
         val title = trimText(
             Fonts.fontSemibold35,
@@ -811,19 +855,22 @@ object ModernClickGuiScreen : GuiScreen() {
             rect.width - 20F
         )
 
-        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F)
-        Fonts.fontSemibold35.drawString(title, rect.x + 10F, rect.y + 10F, theme.textPrimary.rgb)
-        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 28F, theme.textMuted.withAlpha(180).rgb)
-        Fonts.fontRegular30.drawString(meta, rect.x + 10F, rect.y + 43F, theme.textMuted.withAlpha(150).rgb)
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        if (applying) {
+            drawAccentStrip(rect)
+        }
+        Fonts.fontSemibold35.drawString(title, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
+        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
+        Fonts.fontRegular30.drawString(meta, rect.x + 10F, rect.y + 40F, theme.textMuted.withAlpha(155).rgb)
     }
 
     private fun drawSidebarStatusRow(title: String, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(175) else theme.rowBackground.withAlpha(145)
+        val rowColor = if (hovered) theme.rowHover.withAlpha(245) else theme.rowBackground
         val label = trimText(Fonts.fontSemibold35, title, rect.width - 20F)
 
-        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F)
-        Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 15F, theme.textPrimary.rgb)
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
     }
 
     private fun drawSidebarModuleRow(
@@ -838,9 +885,9 @@ object ModernClickGuiScreen : GuiScreen() {
         val hovered = rect.contains(mouseX, mouseY)
         val active = module.state
         val rowColor = when {
-            active -> Color(31, 25, 42, 226)
-            hovered -> theme.rowHover.withAlpha(175)
-            else -> theme.rowBackground.withAlpha(145)
+            active -> Color(17, 19, 30, 248)
+            hovered -> theme.rowHover.withAlpha(245)
+            else -> theme.rowBackground
         }
         val nameWidth = (rect.width - if (visibleValues.isNotEmpty()) 39F else 20F).roundToInt()
         val name = trimText(Fonts.fontSemibold35, module.getName(), nameWidth)
@@ -851,20 +898,20 @@ object ModernClickGuiScreen : GuiScreen() {
         }
         val description = trimText(Fonts.fontRegular30, descriptionText, rect.width - 20F)
 
-        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F)
+        drawSurface(rect, rowColor, 5F, borderAlpha = if (active) 105 else 66)
 
         if (active) {
-            drawRoundedRect(rect.x, rect.y + 6F, rect.x + 3F, rect.bottom - 6F, theme.accent.rgb, 1.5F)
+            drawAccentStrip(rect)
         }
 
-        Fonts.fontSemibold35.drawString(name, rect.x + 10F, rect.y + 12F, theme.textPrimary.rgb)
-        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 31F, theme.textMuted.withAlpha(180).rgb)
+        Fonts.fontSemibold35.drawString(name, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
+        Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
 
         if (visibleValues.isNotEmpty()) {
             Fonts.fontRegular35.drawString(
                 if (expanded) "-" else "+",
                 rect.right - 18F,
-                rect.y + 16F,
+                rect.y + 12F,
                 theme.textMuted.withAlpha(220).rgb
             )
         }
@@ -920,14 +967,17 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val hovered = rect.contains(mouseX, mouseY)
         val rowColor = when {
-            selected -> Color(31, 25, 42, 226)
-            hovered -> theme.rowHover.withAlpha(175)
-            else -> theme.rowBackground.withAlpha(145)
+            selected -> theme.accentMuted
+            hovered -> theme.rowHover.withAlpha(242)
+            else -> theme.rowBackground.withAlpha(216)
         }
         val titleWidth = (rect.width - 18F).roundToInt()
         val titleText = trimText(Fonts.fontRegular35, title, titleWidth)
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3.5F)
+        if (selected) {
+            drawAccentStrip(rect)
+        }
         Fonts.fontRegular35.drawString(titleText, rect.x + 6F, rect.y + 5F, theme.textPrimary.rgb)
 
         if (description.isNotBlank() && rect.height > ROW_HEIGHT) {
@@ -947,22 +997,19 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawToggleActionRow(title: String, enabled: Boolean, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(165) else theme.rowBackground.withAlpha(120)
+        val rowColor = if (hovered) theme.rowHover.withAlpha(238) else theme.rowBackground.withAlpha(214)
         val label = trimText(Fonts.fontRegular30, title, rect.width - 31F)
         val trackX = rect.right - 24F
-        val trackY = rect.y + 5F
-        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 190)
-        val knobX = if (enabled) trackX + 11F else trackX + 2F
+        val trackY = rect.y + (rect.height - 10F) / 2F
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3F)
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textPrimary.rgb)
-        drawRoundedRect(trackX, trackY, trackX + 20F, trackY + 8F, trackColor.rgb, 4F)
-        drawRoundedRect(knobX, trackY + 1F, knobX + 6F, trackY + 7F, theme.textPrimary.rgb, 3F)
+        drawSwitch(enabled, trackX, trackY, 22F, 10F, 8F)
     }
 
     private fun drawActionRow(title: String, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(165) else theme.rowBackground.withAlpha(120)
+        val rowColor = if (hovered) theme.rowHover.withAlpha(238) else theme.rowBackground.withAlpha(214)
         val label = trimText(Fonts.fontRegular30, title, rect.width - 10F)
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3F)
@@ -972,7 +1019,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun drawMutedRow(title: String, rect: UiRect) {
         val label = trimText(Fonts.fontRegular30, title, rect.width - 10F)
 
-        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, theme.rowBackground.withAlpha(100).rgb, 3F)
+        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, theme.rowBackground.withAlpha(190).rgb, 3F)
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textMuted.withAlpha(170).rgb)
     }
 
@@ -987,13 +1034,16 @@ object ModernClickGuiScreen : GuiScreen() {
         val hovered = rect.contains(mouseX, mouseY)
         val active = module.state
         val rowColor = when {
-            active && module.isActive -> theme.accent
+            active && module.isActive -> theme.accent.withAlpha(246)
             active -> theme.accentMuted
-            hovered -> theme.rowHover
-            else -> theme.rowBackground
+            hovered -> theme.rowHover.withAlpha(244)
+            else -> theme.rowBackground.withAlpha(220)
         }
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3.5F)
+        if (active && !module.isActive) {
+            drawAccentStrip(rect, fullHeight = true)
+        }
 
         val name = trimText(Fonts.fontRegular35, module.getName(), rect.width - 17F)
         Fonts.fontRegular35.drawString(name, rect.x + 6F, rect.y + 5F, theme.textPrimary.rgb)
