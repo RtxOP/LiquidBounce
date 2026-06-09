@@ -28,6 +28,7 @@ data class UiTheme(
     val panelBackground: Color = Color(9, 11, 16, 246),
     val panelHeader: Color = Color(3, 4, 8, 252),
     val rowBackground: Color = Color(12, 15, 22, 236),
+    val settingsBackground: Color = Color(7, 9, 14, 232),
     val rowHover: Color = Color(24, 28, 38, 244),
     val accent: Color = Color(202, 0, 255, 245),
     val accentMuted: Color = Color(54, 34, 78, 232),
@@ -40,6 +41,7 @@ data class UiTheme(
             backgroundOverlay = Color(0, 0, 0, 76),
             panelBackground = Color(9, 11, 16, 250),
             rowBackground = Color(12, 15, 22, 242),
+            settingsBackground = Color(7, 9, 14, 238),
             rowHover = Color(22, 26, 35, 242)
         )
 
@@ -49,6 +51,7 @@ data class UiTheme(
             backgroundOverlay = Color(0, 0, 0, 94),
             panelBackground = Color(9, 11, 17, 240),
             rowBackground = Color(13, 16, 24, 226),
+            settingsBackground = Color(8, 10, 16, 224),
             rowHover = Color(27, 31, 43, 246)
         )
     }

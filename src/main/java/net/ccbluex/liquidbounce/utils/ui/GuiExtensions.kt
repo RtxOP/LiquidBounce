@@ -103,6 +103,14 @@ data class EditableText(
         }
     }
 
+    fun deleteForward(length: Int) {
+        if (selectionActive()) {
+            deleteSelectionIfActive()
+        } else if (cursorIndex < string.length) {
+            string = string.take(cursorIndex) + string.drop(cursorIndex + length)
+        }
+    }
+
     fun selectAll() {
         selectionStart = 0
         selectionEnd = string.length
@@ -130,6 +138,10 @@ data class EditableText(
         when {
             keyCode == Keyboard.KEY_BACK -> {
                 deleteAtCursor(1)
+            }
+
+            keyCode == Keyboard.KEY_DELETE -> {
+                deleteForward(1)
             }
 
             keyCode in intArrayOf(Keyboard.KEY_LEFT, Keyboard.KEY_RIGHT) -> {

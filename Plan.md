@@ -33,11 +33,13 @@ Completed so far:
 - Added first-pass performance profile support: `ClickGUI` exposes `Fast`, `Balanced`, and `Fancy`; the modern screen applies cheap profile-specific theme variants without blur or framebuffer effects.
 - Added a bounded `UiTextCache` and switched stable modern ClickGUI row/header labels to cached trimming/width lookups; the base ellipsis trimmer now uses binary search instead of a character-by-character loop.
 - Added a visual refinement pass after screenshot review: darker and more opaque surfaces, soft rounded-rect shadows/borders, denser `SidebarList` module rows, restrained active rows with accent strips, cleaner `ColumnDeck` title bars, more solid shared value-control rows, centered switch knob/capsule geometry, circular slider handles, and robust range-slider fill segments.
+- Added a second visual correction pass from in-game screenshots: restored rounded slider tracks without knob halos, fixed range-slider overlap/tie handle selection, removed ColumnDeck scrollbars, switched ColumnDeck headers to top-only rounding, made ColumnDeck module rows plain rectangles, removed module expansion symbols, removed per-setting row backgrounds, removed the `SidebarList` module/result count line, removed accent-strip rendering, tightened the `SidebarList` search field with larger text and shared `EditableText` input handling, added a distinct settings-area surface, and replaced `SidebarList` enabled bars with compact switches.
+- Added a first adaptive layout pass: `ColumnDeck` now uses legacy-style GL scaling with transformed mouse input, scaled scissor boxes, viewport-aware drag/clamp math, user `ClickGUI` scale support, and width/height fit checks for saved column layouts; `SidebarList` now keeps the main shell readable while the left navigation scrolls independently when categories/utilities overflow.
 
 Not completed yet:
 
 - The modern implementation is still a compact first pass, not the final separated controller/layout/renderer architecture.
-- `SidebarList` still needs manual visual validation, responsive small-viewport navigation polish, and deeper reference-matching polish.
+- `SidebarList` still needs manual visual validation and deeper reference-matching polish after the new scrollable-navigation pass.
 - Modern ClickGUI persistence still needs compatibility tests with old `clickgui.json` files, migration logging/backups, and final schema review before legacy removal.
 - Synthetic sections still need loading/error-state polish and manual validation against the legacy behavior.
 - HUD editor modernization still needs manual visual validation, responsive positioning polish, and follow-up work on the broader editor shell/toolbar model.
