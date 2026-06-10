@@ -76,7 +76,8 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val HEADER_HEIGHT = 20F
     private const val ROW_HEIGHT = 18F
     private const val COLUMN_RADIUS = 6F
-    private const val COLUMN_DECK_HEIGHT = 212F
+    private const val COLUMN_DECK_EXTRA_HEIGHT = 4F
+    private const val DEFAULT_COLUMN_DECK_SCALE_SETTING = 0.8F
     private const val MIN_COLUMN_DECK_SCALE = 0.35F
     private const val ABSOLUTE_MIN_COLUMN_DECK_SCALE = 0.1F
     private const val MANUAL_SCALE_MIN = 0.5F
@@ -137,11 +138,15 @@ object ModernClickGuiScreen : GuiScreen() {
     private var applyingAutoSettingId: String? = null
     private var cachedSidebarModulesKey: SidebarModuleCacheKey? = null
     private var cachedSidebarModules: List<SidebarModuleEntry> = emptyList()
+    private var columnDeckScaleManuallyControlled = false
+    private var lastObservedScaleSetting = ClickGUI.scale
 
     override fun initGui() {
         ignoreClosing = true
         Keyboard.enableRepeatEvents(true)
         ensureColumns()
+        lastObservedScaleSetting = ClickGUI.scale
+        columnDeckScaleManuallyControlled = !isDefaultColumnDeckScaleSetting(ClickGUI.scale)
         refreshPerformanceProfile()
         textCache.clear()
     }
@@ -373,12 +378,13 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val actualHeight = columnHeight(column, bodyHeight)
         val columnRect = UiRect(column.x, column.y, column.width, actualHeight)
+        val headerRect = UiRect(column.x, column.y, column.width, HEADER_HEIGHT)
         drawSurface(columnRect, theme.panelBackground, COLUMN_RADIUS)
         drawRoundedRect(
-            column.x,
-            column.y,
-            column.x + column.width,
-            column.y + HEADER_HEIGHT,
+            headerRect.x,
+            headerRect.y,
+            headerRect.right,
+            headerRect.bottom,
             theme.panelHeader.rgb,
             COLUMN_RADIUS,
             if (column.collapsed) RoundedCorners.ALL else RoundedCorners.TOP_ONLY
@@ -386,8 +392,8 @@ object ModernClickGuiScreen : GuiScreen() {
 
         Fonts.fontSemibold35.drawCenteredString(
             category.displayName,
-            column.x + column.width / 2F,
-            column.y + 6F,
+            headerRect.x + headerRect.width / 2F,
+            centeredTextY(Fonts.fontSemibold35, headerRect),
             theme.textPrimary.rgb
         )
 
@@ -696,8 +702,10 @@ object ModernClickGuiScreen : GuiScreen() {
             drawRoundedRect(row.x, row.y, row.right, row.bottom, rowColor.rgb, 5F)
         }
 
-        drawImage(category.iconResourceLocation, row.x + 8F, row.y + 6F, 11, 11, textColor)
-        Fonts.fontRegular30.drawString(category.displayName, row.x + 26F, row.y + 7F, textColor.rgb)
+        val iconSize = 11F
+        val iconY = row.y + (row.height - iconSize) / 2F
+        drawImage(category.iconResourceLocation, row.x + 8F, iconY, iconSize.toInt(), iconSize.toInt(), textColor)
+        Fonts.fontRegular30.drawString(category.displayName, row.x + 26F, centeredTextY(Fonts.fontRegular30, row), textColor.rgb)
     }
 
     private fun drawSidebarUtilityRow(
@@ -826,7 +834,7 @@ object ModernClickGuiScreen : GuiScreen() {
             y += SIDEBAR_MODULE_HEIGHT
 
             if (expanded) {
-                y = drawSidebarExpandedValues(visibleValues, viewport, y, mouseX, mouseY)
+                y = drawSidebarExpandedValues(visibleValues, viewport, row, y, mouseX, mouseY)
             }
 
             y += SIDEBAR_MODULE_GAP
@@ -1008,12 +1016,13 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun drawSidebarExpandedValues(
         values: List<Value<*>>,
         viewport: UiRect,
+        moduleRow: UiRect,
         startY: Float,
         mouseX: Int,
         mouseY: Int
     ): Float {
         val valuesHeight = values.sumOf { ValueControls.height(it).toDouble() }.toFloat()
-        val area = UiRect(viewport.x + 4F, startY, viewport.width - 13F, valuesHeight + 6F)
+        val area = UiRect(moduleRow.x, startY, moduleRow.width, valuesHeight + 6F)
         var y = startY + 3F
 
         if (area.bottom >= viewport.y && area.y <= viewport.bottom) {
@@ -1022,7 +1031,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
         for (value in values) {
             val valueHeight = ValueControls.height(value)
-            val rect = UiRect(area.x + 7F, y, area.width - 14F, valueHeight)
+            val rect = UiRect(area.x + 11F, y, area.width - 22F, valueHeight)
 
             if (rect.bottom >= viewport.y && rect.y <= viewport.bottom) {
                 ValueControls.drag(value, rect, mouseX, valueControlState) {
@@ -1179,6 +1188,8 @@ object ModernClickGuiScreen : GuiScreen() {
 
                     if (nextScale != ClickGUI.scale) {
                         ClickGUI.scale = nextScale
+                        lastObservedScaleSetting = nextScale
+                        columnDeckScaleManuallyControlled = true
                         updateColumnDeckScale()
                     }
 
@@ -1437,17 +1448,35 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun textWidth(font: FontRenderer, text: String) =
         textCache.width(font, text)
 
+    private fun centeredTextY(font: FontRenderer, rect: UiRect) =
+        rect.y + (rect.height - font.FONT_HEIGHT) / 2F + 1F
+
     private fun updateColumnDeckScale() {
+        refreshColumnDeckScaleMode()
         columnDeckScale = computeColumnDeckScale()
     }
 
+    private fun refreshColumnDeckScaleMode() {
+        if (ClickGUI.scale == lastObservedScaleSetting) {
+            return
+        }
+
+        lastObservedScaleSetting = ClickGUI.scale
+        columnDeckScaleManuallyControlled = true
+    }
+
     private fun computeColumnDeckScale(): Float {
-        val contentRight = columnDeckContentRight().coerceAtLeast(1F)
+        val contentRight = columnDeckIdealWidth().coerceAtLeast(1F)
         val availableWidth = (width - 8F).coerceAtLeast(1F)
         val availableHeight = (height - 4F).coerceAtLeast(1F)
-        val minimumDeckHeight = TOP_MARGIN + 120F + 18F
-        val userScale = ClickGUI.scale.coerceIn(MIN_COLUMN_DECK_SCALE, 1.5F)
-        val fitScale = min(availableWidth / contentRight, availableHeight / minimumDeckHeight)
+        val targetDeckHeight = TOP_MARGIN + columnDeckTargetHeight() + 18F
+        val userScale = ClickGUI.scale.coerceIn(MANUAL_SCALE_MIN, MANUAL_SCALE_MAX)
+
+        if (columnDeckScaleManuallyControlled) {
+            return userScale
+        }
+
+        val fitScale = min(availableWidth / contentRight, availableHeight / targetDeckHeight)
         val scaleFloor = if (fitScale < MIN_COLUMN_DECK_SCALE) {
             ABSOLUTE_MIN_COLUMN_DECK_SCALE
         } else {
@@ -1457,20 +1486,14 @@ object ModernClickGuiScreen : GuiScreen() {
         return min(userScale, fitScale).coerceAtLeast(scaleFloor)
     }
 
-    private fun columnDeckContentRight(): Float {
-        ensureColumns()
-
-        val idealRight = columnDeckIdealWidth()
-        val savedRight = columns.values.maxOfOrNull { it.x + DEFAULT_COLUMN_WIDTH } ?: idealRight
-
-        return max(idealRight, savedRight + SIDE_MARGIN)
-    }
-
     private fun columnDeckIdealWidth(): Float {
         val categoryCount = Category.entries.size
 
         return SIDE_MARGIN * 2F + DEFAULT_COLUMN_WIDTH * categoryCount + COLUMN_GAP * (categoryCount - 1)
     }
+
+    private fun isDefaultColumnDeckScaleSetting(scale: Float) =
+        kotlin.math.abs(scale - DEFAULT_COLUMN_DECK_SCALE_SETTING) < 0.001F
 
     private fun columnDeckViewportWidth() =
         width / columnDeckScale.coerceAtLeast(ABSOLUTE_MIN_COLUMN_DECK_SCALE)
@@ -1478,8 +1501,18 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun columnDeckViewportHeight() =
         height / columnDeckScale.coerceAtLeast(ABSOLUTE_MIN_COLUMN_DECK_SCALE)
 
-    private fun columnDeckBodyHeight() =
-        min(COLUMN_DECK_HEIGHT, max(120F, columnDeckViewportHeight() - TOP_MARGIN - 18F))
+    private fun columnDeckBodyHeight(): Float {
+        val targetHeight = columnDeckTargetHeight()
+        val viewportLimit = columnDeckViewportHeight() - TOP_MARGIN - 18F
+
+        return min(targetHeight, max(columnDeckMinimumHeight(), viewportLimit))
+    }
+
+    private fun columnDeckTargetHeight() =
+        HEADER_HEIGHT + ROW_HEIGHT * ClickGUI.maxElements.coerceAtLeast(1) + COLUMN_DECK_EXTRA_HEIGHT
+
+    private fun columnDeckMinimumHeight() =
+        HEADER_HEIGHT + ROW_HEIGHT + COLUMN_DECK_EXTRA_HEIGHT
 
     private fun columnHeight(column: ColumnState, bodyHeight: Float = columnDeckBodyHeight()) =
         if (column.collapsed) HEADER_HEIGHT else bodyHeight
