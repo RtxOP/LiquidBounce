@@ -164,7 +164,7 @@ data class EditableText(
         selectionEnd = null
     }
 
-    inline fun processInput(typedChar: Char, keyCode: Int, onIndexUpdate: (Int) -> Unit) {
+    fun processInput(typedChar: Char, keyCode: Int, onIndexUpdate: (Int) -> Unit) {
         when {
             keyCode == Keyboard.KEY_BACK -> {
                 deleteAtCursor(1)
