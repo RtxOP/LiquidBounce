@@ -37,20 +37,23 @@ class ValueControlState {
         private set
 
     private var draggingColorChannel: Int? = null
+    private var draggingRangeHandle: RangeSlider? = null
     private var dirty = false
 
-    fun startDragging(value: Value<*>, colorChannel: Int? = null) {
+    fun startDragging(value: Value<*>, colorChannel: Int? = null, rangeHandle: RangeSlider? = null) {
         if (focusedText?.value !== value) {
             focusedText = null
         }
 
         draggingValue = value
         draggingColorChannel = colorChannel
+        draggingRangeHandle = rangeHandle
     }
 
     fun focusText(value: TextValue) {
         draggingValue = null
         draggingColorChannel = null
+        draggingRangeHandle = null
         focusedText = EditableText(
             value = value,
             string = value.get(),
@@ -69,6 +72,7 @@ class ValueControlState {
     fun release(save: () -> Unit) {
         draggingValue = null
         draggingColorChannel = null
+        draggingRangeHandle = null
         flush(save)
     }
 
@@ -95,6 +99,8 @@ class ValueControlState {
     }
 
     fun colorChannelFor(value: Value<*>) = if (draggingValue === value) draggingColorChannel else null
+
+    fun rangeHandleFor(value: Value<*>) = if (draggingValue === value) draggingRangeHandle else null
 
     private fun flush(save: () -> Unit) {
         if (dirty) {
@@ -217,8 +223,7 @@ object ValueControls {
 
             is IntRangeValue, is FloatRangeValue -> {
                 if (button != 0) return false
-                state.startDragging(value)
-                selectRangeHandle(value, rect, mouseX)
+                state.startDragging(value, rangeHandle = selectRangeHandle(value, rect, mouseX))
                 updateRangeSlider(value, rect, mouseX, state)
                 UiSound.click()
             }
@@ -482,10 +487,10 @@ object ValueControls {
         return changed
     }
 
-    private fun selectRangeHandle(value: Value<*>, rect: UiRect, mouseX: Int) {
+    private fun selectRangeHandle(value: Value<*>, rect: UiRect, mouseX: Int): RangeSlider {
         val track = sliderTrack(rect)
 
-        when (value) {
+        return when (value) {
             is IntRangeValue -> {
                 val firstX = track.x + track.width * sliderProgress(
                     value.minimum.toFloat(),
@@ -497,27 +502,28 @@ object ValueControls {
                     value.maximum.toFloat(),
                     value.get().last.toFloat()
                 )
-                value.lastChosenSlider = chooseRangeHandle(mouseX, firstX, lastX, value.lastChosenSlider)
+                chooseRangeHandle(mouseX, firstX, lastX, null)
             }
 
             is FloatRangeValue -> {
                 val firstX = track.x + track.width * sliderProgress(value.minimum, value.maximum, value.get().start)
                 val lastX = track.x + track.width * sliderProgress(value.minimum, value.maximum, value.get().endInclusive)
-                value.lastChosenSlider = chooseRangeHandle(mouseX, firstX, lastX, value.lastChosenSlider)
+                chooseRangeHandle(mouseX, firstX, lastX, null)
             }
 
-            else -> Unit
+            else -> RangeSlider.LEFT
         }
     }
 
     private fun updateRangeSlider(value: Value<*>, rect: UiRect, mouseX: Int, state: ValueControlState): Boolean {
+        val handle = state.rangeHandleFor(value) ?: return false
         val track = sliderTrack(rect)
         val percent = ((mouseX - track.x) / track.width).coerceIn(0F, 1F)
         val changed = when (value) {
             is IntRangeValue -> {
                 val current = value.get()
                 val next = (value.minimum + (value.maximum - value.minimum) * percent).roundToInt()
-                when (value.lastChosenSlider ?: RangeSlider.LEFT) {
+                when (handle) {
                     RangeSlider.LEFT -> value.setFirst(next.coerceIn(value.minimum, current.last), false)
                     RangeSlider.RIGHT -> value.setLast(next.coerceIn(current.first, value.maximum), false)
                 }
@@ -526,7 +532,7 @@ object ValueControls {
             is FloatRangeValue -> {
                 val current = value.get()
                 val next = value.minimum + (value.maximum - value.minimum) * percent
-                when (value.lastChosenSlider ?: RangeSlider.LEFT) {
+                when (handle) {
                     RangeSlider.LEFT -> value.setFirst(next.coerceIn(value.minimum, current.endInclusive), false)
                     RangeSlider.RIGHT -> value.setLast(next.coerceIn(current.start, value.maximum), false)
                 }

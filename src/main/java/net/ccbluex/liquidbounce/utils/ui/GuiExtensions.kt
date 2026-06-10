@@ -8,6 +8,10 @@ import net.minecraft.client.gui.FontRenderer
 import net.minecraft.client.gui.GuiButton
 import net.minecraft.client.gui.GuiScreen
 import net.minecraft.client.gui.GuiScreen.getClipboardString
+import net.minecraft.client.gui.GuiScreen.isKeyComboCtrlA
+import net.minecraft.client.gui.GuiScreen.isKeyComboCtrlC
+import net.minecraft.client.gui.GuiScreen.isKeyComboCtrlV
+import net.minecraft.client.gui.GuiScreen.isKeyComboCtrlX
 import net.minecraft.client.gui.GuiScreen.setClipboardString
 import net.minecraft.client.gui.GuiTextField
 import org.lwjgl.input.Keyboard
@@ -48,7 +52,7 @@ abstract class AbstractScreen : GuiScreen() {
 }
 
 fun isCtrlPressed(): Boolean {
-    return Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL)
+    return GuiScreen.isCtrlKeyDown()
 }
 
 fun isValidInput(typedChar: Char, text: EditableText): Boolean {
@@ -87,10 +91,12 @@ data class EditableText(
 
     fun insertAtCursor(newText: String) {
         deleteSelectionIfActive()
-        val newString = string.take(cursorIndex) + newText + string.drop(cursorIndex)
-        if (validator(newString)) {
-            string = newString
-            cursorIndex += newText.length
+        for (character in newText) {
+            val newString = string.take(cursorIndex) + character + string.drop(cursorIndex)
+            if (validator(newString)) {
+                string = newString
+                cursorIndex++
+            }
         }
     }
 
@@ -118,6 +124,30 @@ data class EditableText(
     }
 
     fun selectionActive() = selectionStart != null && selectionEnd != null
+
+    private fun selectedText(): String? {
+        if (!selectionActive()) {
+            return null
+        }
+
+        val start = minOf(selectionStart!!, selectionEnd!!)
+        val end = maxOf(selectionStart!!, selectionEnd!!)
+
+        return string.substring(start, end)
+    }
+
+    private fun copySelectionToClipboard() {
+        selectedText()?.let { setClipboardString(it) }
+    }
+
+    private fun cutSelectionToClipboard() {
+        if (!selectionActive()) {
+            return
+        }
+
+        copySelectionToClipboard()
+        deleteSelectionIfActive()
+    }
 
     private fun deleteSelectionIfActive() {
         if (selectionActive()) {
@@ -152,19 +182,21 @@ data class EditableText(
                 onIndexUpdate(if (keyCode == Keyboard.KEY_DOWN) 1 else -1)
             }
 
-            keyCode == Keyboard.KEY_C && isCtrlPressed() && selectionActive() -> {
-                val start = minOf(selectionStart!!, selectionEnd!!)
-                val end = maxOf(selectionStart!!, selectionEnd!!)
-                setClipboardString(string.substring(start, end))
+            isKeyComboCtrlX(keyCode) -> {
+                cutSelectionToClipboard()
             }
 
-            keyCode == Keyboard.KEY_V && isCtrlPressed() -> {
+            isKeyComboCtrlC(keyCode) -> {
+                copySelectionToClipboard()
+            }
+
+            isKeyComboCtrlV(keyCode) -> {
                 getClipboardString()?.let { pastedText ->
                     insertAtCursor(pastedText)
                 }
             }
 
-            keyCode == Keyboard.KEY_A && isCtrlPressed() -> {
+            isKeyComboCtrlA(keyCode) -> {
                 selectAll()
             }
 

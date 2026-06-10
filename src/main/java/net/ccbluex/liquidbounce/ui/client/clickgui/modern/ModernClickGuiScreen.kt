@@ -76,8 +76,12 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val HEADER_HEIGHT = 20F
     private const val ROW_HEIGHT = 18F
     private const val COLUMN_RADIUS = 6F
+    private const val COLUMN_DECK_HEIGHT = 212F
     private const val MIN_COLUMN_DECK_SCALE = 0.35F
     private const val ABSOLUTE_MIN_COLUMN_DECK_SCALE = 0.1F
+    private const val MANUAL_SCALE_MIN = 0.5F
+    private const val MANUAL_SCALE_MAX = 1.5F
+    private const val MANUAL_SCALE_WHEEL_DIVISOR = 2400F
     private const val SIDEBAR_SHELL_WIDTH = 646F
     private const val SIDEBAR_SHELL_HEIGHT = 430F
     private const val SIDEBAR_WIDTH = 154F
@@ -89,6 +93,9 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val SIDEBAR_AUTO_SETTING_ROW_HEIGHT = 58F
     private const val SEARCH_HEIGHT = 18F
     private const val MAX_SEARCH_QUERY_LENGTH = 64
+    private const val SETTINGS_SWITCH_WIDTH = 22F
+    private const val SETTINGS_SWITCH_HEIGHT = 10F
+    private const val SETTINGS_SWITCH_KNOB_SIZE = 8F
 
     private var theme = UiTheme.MODERN
     private var themeProfile = UiPerformanceProfile.BALANCED
@@ -175,6 +182,7 @@ object ModernClickGuiScreen : GuiScreen() {
                 column.y = columnObject.floatOrNull("y") ?: column.y
                 column.width = columnObject.floatOrNull("width") ?: column.width
                 column.scroll = columnObject.floatOrNull("scroll") ?: column.scroll
+                column.collapsed = columnObject.booleanOrNull("collapsed") ?: column.collapsed
                 column.manualPosition = columnObject.booleanOrNull("manualPosition") ?: true
             }
         }
@@ -207,6 +215,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
             column.x = panelObject.floatOrNull("posX") ?: column.x
             column.y = panelObject.floatOrNull("posY") ?: column.y
+            panelObject.booleanOrNull("open")?.let { column.collapsed = !it }
             column.manualPosition = true
 
             for (module in moduleManager[category]) {
@@ -244,6 +253,7 @@ object ModernClickGuiScreen : GuiScreen() {
             columnObject.addProperty("y", column.y)
             columnObject.addProperty("width", column.width)
             columnObject.addProperty("scroll", column.scroll)
+            columnObject.addProperty("collapsed", column.collapsed)
             columnObject.addProperty("manualPosition", column.manualPosition)
             columnObjects.add(category.name, columnObject)
         }
@@ -333,7 +343,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawColumnDeck(mouseX: Int, mouseY: Int) {
         val columnWidth = columnWidth()
-        val viewportHeight = max(120F, columnDeckViewportHeight() - TOP_MARGIN - 18F)
+        val bodyHeight = columnDeckBodyHeight()
 
         glPushMatrix()
         glScaled(columnDeckScale.toDouble(), columnDeckScale.toDouble(), columnDeckScale.toDouble())
@@ -347,7 +357,7 @@ object ModernClickGuiScreen : GuiScreen() {
                 }
                 clampColumnIntoViewport(column, columnWidth)
 
-                drawColumn(category, column, viewportHeight, mouseX, mouseY)
+                drawColumn(category, column, bodyHeight, mouseX, mouseY)
             }
         } finally {
             glPopMatrix()
@@ -357,27 +367,13 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun drawColumn(
         category: Category,
         column: ColumnState,
-        viewportHeight: Float,
+        bodyHeight: Float,
         mouseX: Int,
         mouseY: Int
     ) {
-        val modules = moduleManager[category]
-        val contentHeight = modules.sumOf { module ->
-            ROW_HEIGHT.toDouble() + expandedHeight(module).toDouble()
-        }.toFloat() + if (category == Category.MISC) syntheticColumnHeight() else 0F
-        val bodyHeight = viewportHeight.coerceAtMost(HEADER_HEIGHT + contentHeight + 4F)
-        val scrollMax = max(0F, contentHeight - (bodyHeight - HEADER_HEIGHT - 4F))
-
-        column.scroll = column.scroll.coerceIn(0F, scrollMax)
-        columnLayouts[category] = ColumnLayout(
-            UiRect(column.x, column.y, column.width, bodyHeight),
-            contentHeight,
-            bodyHeight - HEADER_HEIGHT - 4F,
-            scrollMax
-        )
-
-        val columnRect = UiRect(column.x, column.y, column.width, bodyHeight)
-        drawSurface(columnRect, theme.panelBackground, COLUMN_RADIUS, shadow = true)
+        val actualHeight = columnHeight(column, bodyHeight)
+        val columnRect = UiRect(column.x, column.y, column.width, actualHeight)
+        drawSurface(columnRect, theme.panelBackground, COLUMN_RADIUS)
         drawRoundedRect(
             column.x,
             column.y,
@@ -385,7 +381,7 @@ object ModernClickGuiScreen : GuiScreen() {
             column.y + HEADER_HEIGHT,
             theme.panelHeader.rgb,
             COLUMN_RADIUS,
-            RoundedCorners.TOP_ONLY
+            if (column.collapsed) RoundedCorners.ALL else RoundedCorners.TOP_ONLY
         )
 
         Fonts.fontSemibold35.drawCenteredString(
@@ -395,8 +391,28 @@ object ModernClickGuiScreen : GuiScreen() {
             theme.textPrimary.rgb
         )
 
+        if (column.collapsed) {
+            columnLayouts[category] = ColumnLayout(columnRect, 0F, 0F, 0F)
+            return
+        }
+
+        val modules = moduleManager[category]
+        val contentHeight = modules.sumOf { module ->
+            ROW_HEIGHT.toDouble() + expandedHeight(module).toDouble()
+        }.toFloat() + if (category == Category.MISC) syntheticColumnHeight() else 0F
+        val viewportHeight = actualHeight - HEADER_HEIGHT - 4F
+        val scrollMax = max(0F, contentHeight - viewportHeight)
+
+        column.scroll = column.scroll.coerceIn(0F, scrollMax)
+        columnLayouts[category] = ColumnLayout(
+            columnRect,
+            contentHeight,
+            viewportHeight,
+            scrollMax
+        )
+
         glEnable(GL_SCISSOR_TEST)
-        makeColumnDeckScissorBox(column.x, column.y + HEADER_HEIGHT, column.x + column.width, column.y + bodyHeight - 2F)
+        makeColumnDeckScissorBox(column.x, column.y + HEADER_HEIGHT, column.x + column.width, column.y + actualHeight - 2F)
 
         var rowY = column.y + HEADER_HEIGHT + 2F - column.scroll
         for (module in modules) {
@@ -404,7 +420,7 @@ object ModernClickGuiScreen : GuiScreen() {
             val expanded = module.name in expandedModules
             val rowRect = UiRect(column.x + 3F, rowY, column.width - 6F, ROW_HEIGHT)
 
-            if (rowRect.bottom >= column.y + HEADER_HEIGHT && rowRect.y <= column.y + bodyHeight) {
+            if (rowRect.bottom >= column.y + HEADER_HEIGHT && rowRect.y <= column.y + actualHeight) {
                 drawModuleRow(module, rowRect, mouseX, mouseY)
                 moduleHitTargets += ModuleHitTarget(rowRect, module)
             }
@@ -412,12 +428,12 @@ object ModernClickGuiScreen : GuiScreen() {
             rowY += ROW_HEIGHT
 
             if (expanded) {
-                rowY = drawExpandedValues(visibleValues, column, rowY, bodyHeight, mouseX, mouseY)
+                rowY = drawExpandedValues(visibleValues, column, rowY, actualHeight, mouseX, mouseY)
             }
         }
 
         if (category == Category.MISC) {
-            drawColumnSyntheticSections(column, rowY, bodyHeight, mouseX, mouseY)
+            drawColumnSyntheticSections(column, rowY, actualHeight, mouseX, mouseY)
         }
 
         glDisable(GL_SCISSOR_TEST)
@@ -564,12 +580,13 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawSidebarHeader(sidebar: UiRect) {
         val titleX = sidebar.x + SIDEBAR_PADDING
-        val titleY = sidebar.y + 15F
+        val titleY = sidebar.y + 12F
         val version = clientVersionText.takeIf { it.isNotBlank() && it != "unknown" } ?: "legacy"
-        val versionX = sidebar.right - SIDEBAR_PADDING - textWidth(Fonts.fontRegular30, version)
+        val versionX = titleX + textWidth(Fonts.fontRegular45, CLIENT_NAME) + 4F
+        val versionText = trimText(Fonts.fontRegular30, version, sidebar.right - SIDEBAR_PADDING - versionX)
 
-        Fonts.fontSemibold40.drawString(CLIENT_NAME, titleX, titleY, theme.textPrimary.rgb)
-        Fonts.fontRegular30.drawString(version, versionX, titleY + 2F, theme.textMuted.withAlpha(220).rgb)
+        Fonts.fontRegular45.drawString(CLIENT_NAME, titleX, titleY, theme.textPrimary.rgb)
+        Fonts.fontRegular30.drawString(versionText, versionX, titleY + 1F, theme.textMuted.withAlpha(220).rgb)
 
         val search = UiRect(
             sidebar.x + SIDEBAR_PADDING,
@@ -903,13 +920,13 @@ object ModernClickGuiScreen : GuiScreen() {
         val label = trimText(Fonts.fontSemibold35, target.displayName, rect.width - 62F)
         val description = trimText(Fonts.fontRegular30, target.description, rect.width - 62F)
         val enabled = target.enabled()
-        val trackX = rect.right - 34F
-        val trackY = rect.y + (rect.height - 10F) / 2F
+        val trackX = rect.right - 27F
+        val trackY = rect.y + (rect.height - SETTINGS_SWITCH_HEIGHT) / 2F
 
         drawSurface(rect, rowColor, 5F, borderAlpha = 70)
         Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
         Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
-        drawSwitch(enabled, trackX, trackY, 24F, 10F, 7F)
+        drawSwitch(enabled, trackX, trackY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, SETTINGS_SWITCH_KNOB_SIZE)
     }
 
     private fun drawSidebarAutoSettingRow(setting: AutoSettings, rect: UiRect, mouseX: Int, mouseY: Int) {
@@ -966,10 +983,8 @@ object ModernClickGuiScreen : GuiScreen() {
             hovered -> theme.rowHover.withAlpha(245)
             else -> theme.rowBackground
         }
-        val switchWidth = 20F
-        val switchHeight = 9F
-        val switchX = rect.right - 31F
-        val switchY = rect.y + (rect.height - switchHeight) / 2F
+        val switchX = rect.right - 27F
+        val switchY = rect.y + (rect.height - SETTINGS_SWITCH_HEIGHT) / 2F
         val nameWidth = (rect.width - 49F).roundToInt()
         val name = trimText(Fonts.fontSemibold35, module.getName(), nameWidth)
         val descriptionText = if (contextCategory != null) {
@@ -980,14 +995,14 @@ object ModernClickGuiScreen : GuiScreen() {
         val description = trimText(Fonts.fontRegular30, descriptionText, rect.width - 49F)
 
         if (expanded) {
-            drawRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb)
+            drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F, RoundedCorners.TOP_ONLY)
         } else {
             drawSurface(rect, rowColor, 5F, borderAlpha = if (active) 105 else 66)
         }
 
         Fonts.fontSemibold35.drawString(name, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
         Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
-        drawSwitch(active, switchX, switchY, switchWidth, switchHeight, 6F)
+        drawSwitch(active, switchX, switchY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, SETTINGS_SWITCH_KNOB_SIZE)
     }
 
     private fun drawSidebarExpandedValues(
@@ -1103,7 +1118,7 @@ object ModernClickGuiScreen : GuiScreen() {
             hovered -> theme.rowHover.withAlpha(244)
             else -> theme.rowBackground.withAlpha(220)
         }
-        drawRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb)
+        drawRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb)
 
         val name = trimText(Fonts.fontRegular35, module.getName(), rect.width - 12F)
         Fonts.fontRegular35.drawString(name, rect.x + 6F, rect.y + 5F, theme.textPrimary.rgb)
@@ -1158,6 +1173,18 @@ object ModernClickGuiScreen : GuiScreen() {
 
         when (ClickGUI.modernPreset ?: ModernClickGuiPreset.COLUMN_DECK) {
             ModernClickGuiPreset.COLUMN_DECK -> {
+                if (isCtrlPressed()) {
+                    val nextScale = (ClickGUI.scale + wheel / MANUAL_SCALE_WHEEL_DIVISOR)
+                        .coerceIn(MANUAL_SCALE_MIN, MANUAL_SCALE_MAX)
+
+                    if (nextScale != ClickGUI.scale) {
+                        ClickGUI.scale = nextScale
+                        updateColumnDeckScale()
+                    }
+
+                    return
+                }
+
                 for ((category, layout) in columnLayouts) {
                     if (!layout.rect.contains(mouseX, mouseY) || layout.scrollMax <= 0F) {
                         continue
@@ -1273,6 +1300,23 @@ object ModernClickGuiScreen : GuiScreen() {
                     UiSound.click()
                     return
                 }
+            }
+        }
+
+        if (mouseButton == 1 && preset == ModernClickGuiPreset.COLUMN_DECK) {
+            for ((category, layout) in columnLayouts) {
+                val header = UiRect(layout.rect.x, layout.rect.y, layout.rect.width, HEADER_HEIGHT)
+                if (!header.contains(inputMouseX, inputMouseY)) {
+                    continue
+                }
+
+                val column = columns[category] ?: continue
+                column.collapsed = !column.collapsed
+                searchFocused = false
+                valueControlState.clearFocus()
+                markLayoutDirty()
+                UiSound.expand()
+                return
             }
         }
 
@@ -1434,6 +1478,12 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun columnDeckViewportHeight() =
         height / columnDeckScale.coerceAtLeast(ABSOLUTE_MIN_COLUMN_DECK_SCALE)
 
+    private fun columnDeckBodyHeight() =
+        min(COLUMN_DECK_HEIGHT, max(120F, columnDeckViewportHeight() - TOP_MARGIN - 18F))
+
+    private fun columnHeight(column: ColumnState, bodyHeight: Float = columnDeckBodyHeight()) =
+        if (column.collapsed) HEADER_HEIGHT else bodyHeight
+
     private fun layoutMouseX(mouseX: Int, preset: ModernClickGuiPreset) =
         if (preset == ModernClickGuiPreset.COLUMN_DECK) (mouseX / columnDeckScale).roundToInt() else mouseX
 
@@ -1468,7 +1518,7 @@ object ModernClickGuiScreen : GuiScreen() {
         val viewportWidth = columnDeckViewportWidth()
         val viewportHeight = columnDeckViewportHeight()
         val clampedX = nextX.coerceIn(4F, max(4F, viewportWidth - column.width - 4F))
-        val clampedY = nextY.coerceIn(4F, max(4F, viewportHeight - HEADER_HEIGHT - 12F))
+        val clampedY = nextY.coerceIn(4F, max(4F, viewportHeight - columnHeight(column) - 4F))
 
         if (column.x != clampedX || column.y != clampedY) {
             column.x = clampedX
@@ -1481,7 +1531,7 @@ object ModernClickGuiScreen : GuiScreen() {
         val viewportWidth = columnDeckViewportWidth()
         val viewportHeight = columnDeckViewportHeight()
         val clampedX = column.x.coerceIn(4F, max(4F, viewportWidth - columnWidth - 4F))
-        val clampedY = column.y.coerceIn(4F, max(4F, viewportHeight - HEADER_HEIGHT - 12F))
+        val clampedY = column.y.coerceIn(4F, max(4F, viewportHeight - columnHeight(column) - 4F))
 
         if (column.x == clampedX && column.y == clampedY) {
             return
@@ -1927,6 +1977,7 @@ object ModernClickGuiScreen : GuiScreen() {
         var y: Float,
         var width: Float = DEFAULT_COLUMN_WIDTH,
         var scroll: Float = 0F,
+        var collapsed: Boolean = false,
         var manualPosition: Boolean = false
     )
 
