@@ -72,7 +72,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val TOP_MARGIN = 24F
     private const val SIDE_MARGIN = 14F
     private const val COLUMN_GAP = 10F
-    private const val DEFAULT_COLUMN_WIDTH = 118F
+    private const val DEFAULT_COLUMN_WIDTH = 140F
     private const val MIN_COLUMN_WIDTH = 92F
     private const val HEADER_HEIGHT = 20F
     private const val ROW_HEIGHT = 18F
