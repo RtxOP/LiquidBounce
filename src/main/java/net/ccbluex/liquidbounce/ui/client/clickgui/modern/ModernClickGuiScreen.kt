@@ -728,9 +728,14 @@ object ModernClickGuiScreen : GuiScreen() {
         }
 
         val iconSize = 11F
+        val iconGap = 7F
+        val label = trimText(Fonts.fontRegular30, category.displayName, row.width - iconSize - iconGap - 16F)
+        val labelWidth = textWidth(Fonts.fontRegular30, label)
+        val labelX = row.x + (row.width - labelWidth) / 2F
+        val iconX = (labelX - iconGap - iconSize).coerceAtLeast(row.x + 8F)
         val iconY = row.y + (row.height - iconSize) / 2F
-        drawImage(category.iconResourceLocation, row.x + 8F, iconY, iconSize.toInt(), iconSize.toInt(), textColor)
-        Fonts.fontRegular30.drawString(category.displayName, row.x + 26F, centeredTextY(Fonts.fontRegular30, row), textColor.rgb)
+        drawImage(category.iconResourceLocation, iconX, iconY, iconSize.toInt(), iconSize.toInt(), textColor)
+        Fonts.fontRegular30.drawString(label, labelX, centeredTextY(Fonts.fontRegular30, row), textColor.rgb)
     }
 
     private fun drawSidebarUtilityRow(
