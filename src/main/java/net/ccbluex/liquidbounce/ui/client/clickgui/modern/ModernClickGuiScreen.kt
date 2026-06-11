@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.features.module.modules.render.ClickGUI
 import net.ccbluex.liquidbounce.file.FileManager.clickGuiConfig
 import net.ccbluex.liquidbounce.file.FileManager.saveConfig
 import net.ccbluex.liquidbounce.file.FileManager.valuesConfig
+import net.ccbluex.liquidbounce.ui.client.common.UiAnimationStore
 import net.ccbluex.liquidbounce.ui.client.common.UiRect
 import net.ccbluex.liquidbounce.ui.client.common.UiSound
 import net.ccbluex.liquidbounce.ui.client.common.UiPerformanceProfile
@@ -97,9 +98,15 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val SETTINGS_SWITCH_WIDTH = 22F
     private const val SETTINGS_SWITCH_HEIGHT = 10F
     private const val SETTINGS_SWITCH_KNOB_SIZE = 8F
+    private const val HOVER_ANIMATION_SPEED = 18F
+    private const val ACTIVE_ANIMATION_SPEED = 16F
+    private const val SWITCH_ANIMATION_SPEED = 18F
+    private const val EXPAND_ANIMATION_SPEED = 16F
+    private const val SCROLL_ANIMATION_SPEED = 20F
 
     private var theme = UiTheme.MODERN
     private var themeProfile = UiPerformanceProfile.BALANCED
+    private val animations = UiAnimationStore()
     private val textCache = UiTextCache()
     private val columns = linkedMapOf<Category, ColumnState>()
     private val expandedModules = linkedSetOf<String>()
@@ -280,6 +287,8 @@ object ModernClickGuiScreen : GuiScreen() {
 
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
         refreshPerformanceProfile()
+        animations.beginFrame()
+        valueControlState.beginFrame(animationsEnabled())
         val preset = ClickGUI.modernPreset ?: ModernClickGuiPreset.COLUMN_DECK
 
         if (preset == ModernClickGuiPreset.COLUMN_DECK) {
@@ -310,6 +319,8 @@ object ModernClickGuiScreen : GuiScreen() {
         }
 
         super.drawScreen(mouseX, mouseY, partialTicks)
+        animations.prune()
+        valueControlState.pruneAnimations()
     }
 
     private fun drawBackgroundOverlay() {
@@ -336,11 +347,22 @@ object ModernClickGuiScreen : GuiScreen() {
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, color.rgb, radius)
     }
 
-    private fun drawSwitch(enabled: Boolean, x: Float, y: Float, width: Float, height: Float, knobSize: Float) {
+    private fun drawSwitch(
+        enabled: Boolean,
+        x: Float,
+        y: Float,
+        width: Float,
+        height: Float,
+        knobSize: Float,
+        key: String
+    ) {
+        val progress = animatedFloat("switch:$key", if (enabled) 1F else 0F, SWITCH_ANIMATION_SPEED)
         val inset = (height - knobSize) / 2F
-        val knobX = if (enabled) x + width - knobSize - inset else x + inset
+        val offX = x + inset
+        val onX = x + width - knobSize - inset
+        val knobX = offX + (onX - offX) * progress
         val knobY = y + inset
-        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 210)
+        val trackColor = mixColor(Color(70, 72, 82, 210), theme.accent, progress)
 
         drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, height / 2F)
         drawRoundedRect(knobX, knobY, knobX + knobSize, knobY + knobSize, theme.textPrimary.rgb, knobSize / 2F)
@@ -404,12 +426,13 @@ object ModernClickGuiScreen : GuiScreen() {
 
         val modules = moduleManager[category]
         val contentHeight = modules.sumOf { module ->
-            ROW_HEIGHT.toDouble() + expandedHeight(module).toDouble()
+            ROW_HEIGHT.toDouble() + columnExpandedHeight(module).toDouble()
         }.toFloat() + if (category == Category.MISC) syntheticColumnHeight() else 0F
         val viewportHeight = actualHeight - HEADER_HEIGHT - 4F
         val scrollMax = max(0F, contentHeight - viewportHeight)
 
         column.scroll = column.scroll.coerceIn(0F, scrollMax)
+        val visibleScroll = animatedScroll("column:${category.name}", column.scroll, scrollMax)
         columnLayouts[category] = ColumnLayout(
             columnRect,
             contentHeight,
@@ -420,10 +443,9 @@ object ModernClickGuiScreen : GuiScreen() {
         glEnable(GL_SCISSOR_TEST)
         makeColumnDeckScissorBox(column.x, column.y + HEADER_HEIGHT, column.x + column.width, column.y + actualHeight - 2F)
 
-        var rowY = column.y + HEADER_HEIGHT + 2F - column.scroll
+        var rowY = column.y + HEADER_HEIGHT + 2F - visibleScroll
         for (module in modules) {
             val visibleValues = module.values.filter { it.shouldRender() }
-            val expanded = module.name in expandedModules
             val rowRect = UiRect(column.x + 3F, rowY, column.width - 6F, ROW_HEIGHT)
 
             if (rowRect.bottom >= column.y + HEADER_HEIGHT && rowRect.y <= column.y + actualHeight) {
@@ -433,8 +455,9 @@ object ModernClickGuiScreen : GuiScreen() {
 
             rowY += ROW_HEIGHT
 
-            if (expanded) {
-                rowY = drawExpandedValues(visibleValues, column, rowY, actualHeight, mouseX, mouseY)
+            val expandedHeight = columnExpandedHeight(module, visibleValues)
+            if (expandedHeight > 0.25F) {
+                rowY = drawExpandedValues(visibleValues, column, rowY, actualHeight, expandedHeight, mouseX, mouseY)
             }
         }
 
@@ -638,8 +661,9 @@ object ModernClickGuiScreen : GuiScreen() {
         val scrollMax = max(0F, contentHeight - viewport.height)
 
         sidebarNavScroll = sidebarNavScroll.coerceIn(0F, scrollMax)
+        val visibleScroll = animatedScroll("sidebar-nav", sidebarNavScroll, scrollMax)
         sidebarNavLayout = SidebarContentLayout(viewport, contentHeight, scrollMax)
-        var y = viewport.y - sidebarNavScroll
+        var y = viewport.y - visibleScroll
 
         glEnable(GL_SCISSOR_TEST)
         makeScreenScissorBox(viewport.x, viewport.y, viewport.right, viewport.bottom)
@@ -679,7 +703,7 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, sidebarNavScroll)
+            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
         }
     }
 
@@ -691,11 +715,12 @@ object ModernClickGuiScreen : GuiScreen() {
         mouseY: Int
     ) {
         val hovered = row.contains(mouseX, mouseY)
-        val rowColor = when {
-            selected -> Color(255, 255, 255, 46)
-            hovered -> theme.rowHover.withAlpha(135)
-            else -> Color(0, 0, 0, 0)
-        }
+        val key = "sidebar-category:${category.name}"
+        val rowColor = mixColor(
+            mixColor(Color(0, 0, 0, 0), theme.rowHover.withAlpha(135), hoverProgress(key, hovered)),
+            Color(255, 255, 255, 46),
+            activeProgress(key, selected)
+        )
         val textColor = if (selected) theme.textPrimary else theme.textMuted.withAlpha(225)
 
         if (rowColor.alpha > 0) {
@@ -717,11 +742,12 @@ object ModernClickGuiScreen : GuiScreen() {
         mouseY: Int
     ) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = when {
-            selected -> Color(255, 255, 255, 42)
-            hovered -> theme.rowHover.withAlpha(135)
-            else -> Color(0, 0, 0, 0)
-        }
+        val key = "sidebar-utility:$title"
+        val rowColor = mixColor(
+            mixColor(Color(0, 0, 0, 0), theme.rowHover.withAlpha(135), hoverProgress(key, hovered)),
+            Color(255, 255, 255, 42),
+            activeProgress(key, selected)
+        )
         val textColor = if (selected) theme.textPrimary else theme.textMuted.withAlpha(225)
 
         if (rowColor.alpha > 0) {
@@ -790,6 +816,7 @@ object ModernClickGuiScreen : GuiScreen() {
         val scrollMax = max(0F, contentHeight - viewport.height)
 
         sidebarContentScroll = sidebarContentScroll.coerceIn(0F, scrollMax)
+        val visibleScroll = animatedScroll("sidebar-content", sidebarContentScroll, scrollMax)
         sidebarContentLayout = SidebarContentLayout(viewport, contentHeight, scrollMax)
 
         Fonts.fontSemibold40.drawString(
@@ -802,7 +829,7 @@ object ModernClickGuiScreen : GuiScreen() {
         glEnable(GL_SCISSOR_TEST)
         makeScreenScissorBox(viewport.x, viewport.y, viewport.right, viewport.bottom)
 
-        var y = viewport.y - sidebarContentScroll
+        var y = viewport.y - visibleScroll
 
         if (modules.isEmpty()) {
             Fonts.fontRegular35.drawCenteredString(
@@ -817,13 +844,14 @@ object ModernClickGuiScreen : GuiScreen() {
             val module = entry.module
             val visibleValues = module.values.filter { it.shouldRender() }
             val expanded = module.name in expandedModules && visibleValues.isNotEmpty()
+            val expandedHeight = sidebarExpandedHeight(module, visibleValues)
             val row = UiRect(viewport.x, y, viewport.width - 5F, SIDEBAR_MODULE_HEIGHT)
 
             if (row.bottom >= viewport.y && row.y <= viewport.bottom) {
                 drawSidebarModuleRow(
                     module,
                     entry.category.takeIf { entry.searchResult },
-                    expanded,
+                    expanded || expandedHeight > 0.25F,
                     row,
                     mouseX,
                     mouseY
@@ -833,8 +861,8 @@ object ModernClickGuiScreen : GuiScreen() {
 
             y += SIDEBAR_MODULE_HEIGHT
 
-            if (expanded) {
-                y = drawSidebarExpandedValues(visibleValues, viewport, row, y, mouseX, mouseY)
+            if (expandedHeight > 0.25F) {
+                y = drawSidebarExpandedValues(visibleValues, viewport, row, y, expandedHeight, mouseX, mouseY)
             }
 
             y += SIDEBAR_MODULE_GAP
@@ -843,7 +871,7 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, sidebarContentScroll)
+            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
         }
     }
 
@@ -865,6 +893,7 @@ object ModernClickGuiScreen : GuiScreen() {
         val scrollMax = max(0F, contentHeight - viewport.height)
 
         sidebarContentScroll = sidebarContentScroll.coerceIn(0F, scrollMax)
+        val visibleScroll = animatedScroll("sidebar-synthetic:${section.name}", sidebarContentScroll, scrollMax)
         sidebarContentLayout = SidebarContentLayout(viewport, contentHeight, scrollMax)
 
         Fonts.fontSemibold40.drawString(section.displayName, headerX, headerY, theme.textPrimary.rgb)
@@ -873,7 +902,7 @@ object ModernClickGuiScreen : GuiScreen() {
         glEnable(GL_SCISSOR_TEST)
         makeScreenScissorBox(viewport.x, viewport.y, viewport.right, viewport.bottom)
 
-        var y = viewport.y - sidebarContentScroll
+        var y = viewport.y - visibleScroll
 
         when (section) {
             SyntheticSection.TARGETS -> {
@@ -918,13 +947,13 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, sidebarContentScroll)
+            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
         }
     }
 
     private fun drawSidebarTargetRow(target: TargetOption, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(245) else theme.rowBackground
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("sidebar-target:${target.name}", hovered))
         val label = trimText(Fonts.fontSemibold35, target.displayName, rect.width - 62F)
         val description = trimText(Fonts.fontRegular30, target.description, rect.width - 62F)
         val enabled = target.enabled()
@@ -934,17 +963,26 @@ object ModernClickGuiScreen : GuiScreen() {
         drawSurface(rect, rowColor, 5F, borderAlpha = 70)
         Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
         Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
-        drawSwitch(enabled, trackX, trackY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, SETTINGS_SWITCH_KNOB_SIZE)
+        drawSwitch(
+            enabled,
+            trackX,
+            trackY,
+            SETTINGS_SWITCH_WIDTH,
+            SETTINGS_SWITCH_HEIGHT,
+            SETTINGS_SWITCH_KNOB_SIZE,
+            "target:${target.name}"
+        )
     }
 
     private fun drawSidebarAutoSettingRow(setting: AutoSettings, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
         val applying = applyingAutoSettingId == setting.settingId
-        val rowColor = when {
-            applying -> Color(31, 25, 42, 226)
-            hovered -> theme.rowHover.withAlpha(245)
-            else -> theme.rowBackground
-        }
+        val key = "sidebar-auto-setting:${setting.settingId}"
+        val rowColor = mixColor(
+            mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress(key, hovered)),
+            Color(31, 25, 42, 226),
+            activeProgress(key, applying)
+        )
         val title = trimText(
             Fonts.fontSemibold35,
             if (applying) "Applying ${setting.name}" else setting.name,
@@ -969,7 +1007,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawSidebarStatusRow(title: String, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(245) else theme.rowBackground
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("sidebar-status:$title", hovered))
         val label = trimText(Fonts.fontSemibold35, title, rect.width - 20F)
 
         drawSurface(rect, rowColor, 5F, borderAlpha = 70)
@@ -986,11 +1024,12 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val hovered = rect.contains(mouseX, mouseY)
         val active = module.state
-        val rowColor = when {
-            active -> Color(17, 19, 30, 248)
-            hovered -> theme.rowHover.withAlpha(245)
-            else -> theme.rowBackground
-        }
+        val key = "sidebar-module:${module.name}"
+        val rowColor = mixColor(
+            mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress(key, hovered)),
+            Color(17, 19, 30, 248),
+            activeProgress(key, active)
+        )
         val switchX = rect.right - 27F
         val switchY = rect.y + (rect.height - SETTINGS_SWITCH_HEIGHT) / 2F
         val nameWidth = (rect.width - 49F).roundToInt()
@@ -1010,7 +1049,15 @@ object ModernClickGuiScreen : GuiScreen() {
 
         Fonts.fontSemibold35.drawString(name, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
         Fonts.fontRegular30.drawString(description, rect.x + 10F, rect.y + 25F, theme.textMuted.withAlpha(185).rgb)
-        drawSwitch(active, switchX, switchY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, SETTINGS_SWITCH_KNOB_SIZE)
+        drawSwitch(
+            active,
+            switchX,
+            switchY,
+            SETTINGS_SWITCH_WIDTH,
+            SETTINGS_SWITCH_HEIGHT,
+            SETTINGS_SWITCH_KNOB_SIZE,
+            "module:${module.name}"
+        )
     }
 
     private fun drawSidebarExpandedValues(
@@ -1018,33 +1065,51 @@ object ModernClickGuiScreen : GuiScreen() {
         viewport: UiRect,
         moduleRow: UiRect,
         startY: Float,
+        expandedHeight: Float,
         mouseX: Int,
         mouseY: Int
     ): Float {
-        val valuesHeight = values.sumOf { ValueControls.height(it).toDouble() }.toFloat()
-        val area = UiRect(moduleRow.x, startY, moduleRow.width, valuesHeight + 6F)
+        val fullHeight = values.sumOf { ValueControls.height(it).toDouble() }.toFloat() + 6F
+        val visibleHeight = min(expandedHeight, fullHeight)
+        val visibleBottom = startY + visibleHeight
+        val clipTop = max(viewport.y, startY)
+        val clipBottom = min(viewport.bottom, visibleBottom)
+        val area = UiRect(moduleRow.x, startY, moduleRow.width, visibleHeight)
         var y = startY + 3F
+
+        if (clipBottom <= clipTop) {
+            return startY + visibleHeight
+        }
+
+        makeScreenScissorBox(viewport.x, clipTop, viewport.right, clipBottom)
 
         if (area.bottom >= viewport.y && area.y <= viewport.bottom) {
             drawRect(area.x, area.y, area.right, area.bottom, theme.settingsBackground.rgb)
         }
 
+        val allowInput = visibleHeight >= fullHeight - 0.5F
         for (value in values) {
             val valueHeight = ValueControls.height(value)
             val rect = UiRect(area.x + 11F, y, area.width - 22F, valueHeight)
 
-            if (rect.bottom >= viewport.y && rect.y <= viewport.bottom) {
-                ValueControls.drag(value, rect, mouseX, valueControlState) {
-                    // Values own their change side effects. The dirty state saves on release.
+            if (rect.bottom >= viewport.y && rect.y <= viewport.bottom && rect.y <= visibleBottom) {
+                if (allowInput) {
+                    ValueControls.drag(value, rect, mouseX, valueControlState) {
+                        // Values own their change side effects. The dirty state saves on release.
+                    }
                 }
                 ValueControls.draw(value, rect, theme, mouseX, mouseY, valueControlState)
-                valueHitTargets += ValueHitTarget(rect, value)
+                if (allowInput && rect.bottom <= visibleBottom + 0.5F) {
+                    valueHitTargets += ValueHitTarget(rect, value)
+                }
             }
 
             y += valueHeight
         }
 
-        return startY + valuesHeight + 6F
+        makeScreenScissorBox(viewport.x, viewport.y, viewport.right, viewport.bottom)
+
+        return startY + visibleHeight
     }
 
     private fun drawVerticalScrollbar(viewport: UiRect, scrollMax: Float, scroll: Float) {
@@ -1068,11 +1133,12 @@ object ModernClickGuiScreen : GuiScreen() {
         mouseY: Int
     ) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = when {
-            selected -> theme.accentMuted
-            hovered -> theme.rowHover.withAlpha(242)
-            else -> theme.rowBackground.withAlpha(216)
-        }
+        val key = "synthetic:$title"
+        val rowColor = mixColor(
+            mixColor(theme.rowBackground.withAlpha(216), theme.rowHover.withAlpha(242), hoverProgress(key, hovered)),
+            theme.accentMuted,
+            activeProgress(key, selected)
+        )
         val titleWidth = (rect.width - 18F).roundToInt()
         val titleText = trimText(Fonts.fontRegular35, title, titleWidth)
 
@@ -1087,19 +1153,19 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun drawToggleActionRow(title: String, enabled: Boolean, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(238) else theme.rowBackground.withAlpha(214)
+        val rowColor = mixColor(theme.rowBackground.withAlpha(214), theme.rowHover.withAlpha(238), hoverProgress("toggle-row:$title", hovered))
         val label = trimText(Fonts.fontRegular30, title, rect.width - 31F)
         val trackX = rect.right - 25F
         val trackY = rect.y + (rect.height - 9F) / 2F
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3F)
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textPrimary.rgb)
-        drawSwitch(enabled, trackX, trackY, 20F, 9F, 6F)
+        drawSwitch(enabled, trackX, trackY, 20F, 9F, 6F, "toggle:$title")
     }
 
     private fun drawActionRow(title: String, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = if (hovered) theme.rowHover.withAlpha(238) else theme.rowBackground.withAlpha(214)
+        val rowColor = mixColor(theme.rowBackground.withAlpha(214), theme.rowHover.withAlpha(238), hoverProgress("action:$title", hovered))
         val label = trimText(Fonts.fontRegular30, title, rect.width - 10F)
 
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, rowColor.rgb, 3F)
@@ -1121,12 +1187,13 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val hovered = rect.contains(mouseX, mouseY)
         val active = module.state
-        val rowColor = when {
-            active && module.isActive -> theme.accent.withAlpha(246)
-            active -> theme.accentMuted
-            hovered -> theme.rowHover.withAlpha(244)
-            else -> theme.rowBackground.withAlpha(220)
-        }
+        val activeColor = if (module.isActive) theme.accent.withAlpha(246) else theme.accentMuted
+        val key = "column-module:${module.name}"
+        val rowColor = mixColor(
+            mixColor(theme.rowBackground.withAlpha(220), theme.rowHover.withAlpha(244), hoverProgress(key, hovered)),
+            activeColor,
+            activeProgress(key, active)
+        )
         drawRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb)
 
         val name = trimText(Fonts.fontRegular35, module.getName(), rect.width - 12F)
@@ -1138,36 +1205,54 @@ object ModernClickGuiScreen : GuiScreen() {
         column: ColumnState,
         startY: Float,
         bodyHeight: Float,
+        expandedHeight: Float,
         mouseX: Int,
         mouseY: Int
     ): Float {
-        if (values.isEmpty()) {
+        if (values.isEmpty() || expandedHeight <= 0F) {
             return startY
         }
 
-        val valuesHeight = values.sumOf { ValueControls.height(it).toDouble() }.toFloat()
-        val area = UiRect(column.x + 3F, startY, column.width - 6F, valuesHeight + 2F)
+        val fullHeight = values.sumOf { ValueControls.height(it).toDouble() }.toFloat() + 2F
+        val visibleHeight = min(expandedHeight, fullHeight)
+        val visibleBottom = startY + visibleHeight
+        val clipTop = max(column.y + HEADER_HEIGHT, startY)
+        val clipBottom = min(column.y + bodyHeight - 2F, visibleBottom)
+        val area = UiRect(column.x + 3F, startY, column.width - 6F, visibleHeight)
         var y = startY + 1F
+
+        if (clipBottom <= clipTop) {
+            return startY + visibleHeight
+        }
+
+        makeColumnDeckScissorBox(column.x, clipTop, column.x + column.width, clipBottom)
 
         if (area.bottom >= column.y + HEADER_HEIGHT && area.y <= column.y + bodyHeight) {
             drawRect(area.x, area.y, area.right, area.bottom, theme.settingsBackground.rgb)
         }
 
+        val allowInput = visibleHeight >= fullHeight - 0.5F
         for (value in values) {
             val valueHeight = ValueControls.height(value)
             val rect = UiRect(column.x + 6F, y, column.width - 12F, valueHeight)
 
-            if (rect.bottom >= column.y + HEADER_HEIGHT && rect.y <= column.y + bodyHeight) {
-                ValueControls.drag(value, rect, mouseX, valueControlState) {
-                    // Values own their change side effects. The dirty state saves on release.
+            if (rect.bottom >= column.y + HEADER_HEIGHT && rect.y <= column.y + bodyHeight && rect.y <= visibleBottom) {
+                if (allowInput) {
+                    ValueControls.drag(value, rect, mouseX, valueControlState) {
+                        // Values own their change side effects. The dirty state saves on release.
+                    }
                 }
                 ValueControls.draw(value, rect, theme, mouseX, mouseY, valueControlState)
-                valueHitTargets += ValueHitTarget(rect, value)
+                if (allowInput && rect.bottom <= visibleBottom + 0.5F) {
+                    valueHitTargets += ValueHitTarget(rect, value)
+                }
             }
             y += valueHeight
         }
 
-        return startY + valuesHeight + 2F
+        makeColumnDeckScissorBox(column.x, column.y + HEADER_HEIGHT, column.x + column.width, column.y + bodyHeight - 2F)
+
+        return startY + visibleHeight
     }
 
     private fun handleWheel(mouseX: Int, mouseY: Int) {
@@ -1451,6 +1536,35 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun centeredTextY(font: FontRenderer, rect: UiRect) =
         rect.y + (rect.height - font.FONT_HEIGHT) / 2F + 1F
 
+    private fun animationsEnabled() =
+        themeProfile != UiPerformanceProfile.FAST
+
+    private fun animatedFloat(key: String, target: Float, speed: Float) =
+        animations.float(key, target, speed, animationsEnabled())
+
+    private fun hoverProgress(key: String, hovered: Boolean) =
+        animatedFloat("hover:$key", if (hovered) 1F else 0F, HOVER_ANIMATION_SPEED)
+
+    private fun activeProgress(key: String, active: Boolean) =
+        animatedFloat("active:$key", if (active) 1F else 0F, ACTIVE_ANIMATION_SPEED)
+
+    private fun expansionProgress(key: String, expanded: Boolean) =
+        animatedFloat("expand:$key", if (expanded) 1F else 0F, EXPAND_ANIMATION_SPEED)
+
+    private fun animatedScroll(key: String, target: Float, scrollMax: Float) =
+        animatedFloat("scroll:$key", target, SCROLL_ANIMATION_SPEED).coerceIn(0F, scrollMax)
+
+    private fun mixColor(from: Color, to: Color, progress: Float): Color {
+        val amount = progress.coerceIn(0F, 1F)
+
+        return Color(
+            (from.red + (to.red - from.red) * amount).roundToInt().coerceIn(0, 255),
+            (from.green + (to.green - from.green) * amount).roundToInt().coerceIn(0, 255),
+            (from.blue + (to.blue - from.blue) * amount).roundToInt().coerceIn(0, 255),
+            (from.alpha + (to.alpha - from.alpha) * amount).roundToInt().coerceIn(0, 255)
+        )
+    }
+
     private fun updateColumnDeckScale() {
         refreshColumnDeckScaleMode()
         columnDeckScale = computeColumnDeckScale()
@@ -1643,11 +1757,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun sidebarModuleHeight(module: Module): Float {
         val visibleValues = module.values.filter { it.shouldRender() }
-        val valuesHeight = if (module.name in expandedModules && visibleValues.isNotEmpty()) {
-            visibleValues.sumOf { ValueControls.height(it).toDouble() }.toFloat() + 6F
-        } else {
-            0F
-        }
+        val valuesHeight = sidebarExpandedHeight(module, visibleValues)
 
         return SIDEBAR_MODULE_HEIGHT + valuesHeight
     }
@@ -1688,21 +1798,26 @@ object ModernClickGuiScreen : GuiScreen() {
         return available.div(categoryCount).coerceIn(MIN_COLUMN_WIDTH, DEFAULT_COLUMN_WIDTH)
     }
 
-    private fun expandedHeight(module: Module): Float {
-        if (module.name !in expandedModules) {
-            return 0F
-        }
-
-        val visibleValues = module.values.filter { it.shouldRender() }
+    private fun columnExpandedHeight(module: Module, visibleValues: List<Value<*>> = module.values.filter { it.shouldRender() }): Float {
         if (visibleValues.isEmpty()) {
             return 0F
         }
 
-        val visibleHeight = visibleValues.sumOf {
-            ValueControls.height(it).toDouble()
-        }.toFloat()
+        val fullHeight = visibleValues.sumOf { ValueControls.height(it).toDouble() }.toFloat() + 2F
+        val expanded = module.name in expandedModules
 
-        return visibleHeight + 2F
+        return fullHeight * expansionProgress("column-module:${module.name}", expanded)
+    }
+
+    private fun sidebarExpandedHeight(module: Module, visibleValues: List<Value<*>> = module.values.filter { it.shouldRender() }): Float {
+        if (visibleValues.isEmpty()) {
+            return 0F
+        }
+
+        val fullHeight = visibleValues.sumOf { ValueControls.height(it).toDouble() }.toFloat() + 6F
+        val expanded = module.name in expandedModules
+
+        return fullHeight * expansionProgress("sidebar-module:${module.name}", expanded)
     }
 
     private fun processSidebarKeyboardNavigation(keyCode: Int): Boolean {

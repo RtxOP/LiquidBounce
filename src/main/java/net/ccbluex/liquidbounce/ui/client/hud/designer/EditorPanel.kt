@@ -55,6 +55,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
     private var currentElement: Element? = null
 
     fun drawPanel(mouseX: Int, mouseY: Int, wheel: Int) {
+        valueControlState.beginFrame(animationsEnabled = true)
         drag(mouseX, mouseY)
 
         if (currentElement != hudDesigner.selectedElement) {
@@ -109,6 +110,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
 
         drawHeader(title, mouseX, mouseY)
         updateMouseState()
+        valueControlState.pruneAnimations()
     }
 
     fun isMouseInside(mouseX: Int, mouseY: Int): Boolean {

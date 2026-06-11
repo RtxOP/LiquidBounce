@@ -36,9 +36,23 @@ class ValueControlState {
     var focusedText: EditableText? = null
         private set
 
+    private val animations = UiAnimationStore()
+    private var animationsEnabled = true
     private var draggingColorChannel: Int? = null
     private var draggingRangeHandle: RangeSlider? = null
     private var dirty = false
+
+    fun beginFrame(animationsEnabled: Boolean) {
+        this.animationsEnabled = animationsEnabled
+        animations.beginFrame()
+    }
+
+    fun animatedFloat(key: String, target: Float, speed: Float) =
+        animations.float(key, target, speed, animationsEnabled)
+
+    fun pruneAnimations() {
+        animations.prune()
+    }
 
     fun startDragging(value: Value<*>, colorChannel: Int? = null, rangeHandle: RangeSlider? = null) {
         if (focusedText?.value !== value) {
@@ -130,7 +144,7 @@ object ValueControls {
 
     fun draw(value: Value<*>, rect: UiRect, theme: UiTheme, mouseX: Int, mouseY: Int, state: ValueControlState) {
         when (value) {
-            is BoolValue -> drawBoolean(value, rect, theme)
+            is BoolValue -> drawBoolean(value, rect, theme, state)
             is IntValue -> drawSlider(
                 value.name,
                 value.get().toString(),
@@ -308,12 +322,22 @@ object ValueControls {
         onChanged: () -> Unit
     ) = state.processTextInput(typedChar, keyCode, save, onChanged)
 
-    private fun drawBoolean(value: BoolValue, rect: UiRect, theme: UiTheme) {
+    private fun drawBoolean(value: BoolValue, rect: UiRect, theme: UiTheme, state: ValueControlState) {
         val label = Fonts.fontRegular30.trimToWidthWithEllipsis(value.name, (rect.width - 31F).roundToInt())
         val enabled = value.get()
 
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textPrimary.rgb)
-        drawSwitch(enabled, rect.right - 27F, rect.y + (rect.height - 10F) / 2F, 22F, 10F, 8F, theme)
+        drawSwitch(
+            enabled,
+            rect.right - 27F,
+            rect.y + (rect.height - 10F) / 2F,
+            22F,
+            10F,
+            8F,
+            theme,
+            state,
+            "value:${System.identityHashCode(value)}"
+        )
     }
 
     private fun drawSwitch(
@@ -323,12 +347,17 @@ object ValueControls {
         width: Float,
         height: Float,
         knobSize: Float,
-        theme: UiTheme
+        theme: UiTheme,
+        state: ValueControlState,
+        key: String
     ) {
+        val progress = state.animatedFloat("switch:$key", if (enabled) 1F else 0F, 18F)
         val inset = (height - knobSize) / 2F
-        val knobX = if (enabled) x + width - knobSize - inset else x + inset
+        val offX = x + inset
+        val onX = x + width - knobSize - inset
+        val knobX = offX + (onX - offX) * progress
         val knobY = y + inset
-        val trackColor = if (enabled) theme.accent else Color(70, 72, 82, 210)
+        val trackColor = mixColor(Color(70, 72, 82, 210), theme.accent, progress)
 
         drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, height / 2F)
         drawRoundedRect(knobX, knobY, knobX + knobSize, knobY + knobSize, theme.textPrimary.rgb, knobSize / 2F)
@@ -664,6 +693,17 @@ object ValueControls {
 
     private fun rgbaText(color: Color) =
         "${color.red},${color.green},${color.blue},${color.alpha}"
+
+    private fun mixColor(from: Color, to: Color, progress: Float): Color {
+        val amount = progress.coerceIn(0F, 1F)
+
+        return Color(
+            (from.red + (to.red - from.red) * amount).roundToInt().coerceIn(0, 255),
+            (from.green + (to.green - from.green) * amount).roundToInt().coerceIn(0, 255),
+            (from.blue + (to.blue - from.blue) * amount).roundToInt().coerceIn(0, 255),
+            (from.alpha + (to.alpha - from.alpha) * amount).roundToInt().coerceIn(0, 255)
+        )
+    }
 
     private fun formatFloat(value: Float): String {
         val rounded = (value * 100F).roundToInt() / 100F
