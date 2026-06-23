@@ -116,6 +116,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private val categoryHitTargets = mutableListOf<CategoryHitTarget>()
     private val syntheticHitTargets = mutableListOf<SyntheticHitTarget>()
     private val syntheticActionHitTargets = mutableListOf<SyntheticActionHitTarget>()
+    private val scrollbarHitTargets = mutableListOf<ScrollbarHitTarget>()
     private val columnLayouts = mutableMapOf<Category, ColumnLayout>()
     private val valueControlState = ValueControlState()
 
@@ -124,6 +125,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private var draggingColumn: ColumnState? = null
     private var dragOffsetX = 0F
     private var dragOffsetY = 0F
+    private var draggingScrollbar: ScrollbarDrag? = null
     private var selectedCategory = Category.COMBAT
     private var sidebarContentScroll = 0F
     private var sidebarContentLayout: SidebarContentLayout? = null
@@ -300,6 +302,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
         handleWheel(layoutMouseX, layoutMouseY)
         updateDragging(layoutMouseX, layoutMouseY)
+        updateScrollbarDrag(layoutMouseY.toFloat())
 
         drawBackgroundOverlay()
 
@@ -308,6 +311,7 @@ object ModernClickGuiScreen : GuiScreen() {
         categoryHitTargets.clear()
         syntheticHitTargets.clear()
         syntheticActionHitTargets.clear()
+        scrollbarHitTargets.clear()
         columnLayouts.clear()
         sidebarContentLayout = null
         sidebarNavLayout = null
@@ -703,7 +707,10 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
+            scrollbarLayout(viewport, scrollMax, visibleScroll)?.let { layout ->
+                drawVerticalScrollbar(layout)
+                scrollbarHitTargets += ScrollbarHitTarget(ScrollbarKind.NAV, layout)
+            }
         }
     }
 
@@ -729,13 +736,15 @@ object ModernClickGuiScreen : GuiScreen() {
 
         val iconSize = 11F
         val iconGap = 7F
-        val label = trimText(Fonts.fontRegular30, category.displayName, row.width - iconSize - iconGap - 16F)
-        val labelWidth = textWidth(Fonts.fontRegular30, label)
-        val labelX = row.x + (row.width - labelWidth) / 2F
-        val iconX = (labelX - iconGap - iconSize).coerceAtLeast(row.x + 8F)
+        val rowPadding = 8F
+        val maxLabelWidth = row.width - (rowPadding * 2F) - iconSize - iconGap
+        val label = trimText(Fonts.fontRegular30, category.displayName, maxLabelWidth)
+        val iconX = row.x + rowPadding
+        val labelX = iconX + iconSize + iconGap
         val iconY = row.y + (row.height - iconSize) / 2F
+        val labelY = row.y + (row.height - Fonts.fontRegular30.FONT_HEIGHT) / 2F
         drawImage(category.iconResourceLocation, iconX, iconY, iconSize.toInt(), iconSize.toInt(), textColor)
-        Fonts.fontRegular30.drawString(label, labelX, centeredTextY(Fonts.fontRegular30, row), textColor.rgb)
+        Fonts.fontRegular30.drawString(label, labelX, labelY, textColor.rgb)
     }
 
     private fun drawSidebarUtilityRow(
@@ -876,7 +885,10 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
+            scrollbarLayout(viewport, scrollMax, visibleScroll)?.let { layout ->
+                drawVerticalScrollbar(layout)
+                scrollbarHitTargets += ScrollbarHitTarget(ScrollbarKind.CONTENT, layout)
+            }
         }
     }
 
@@ -952,7 +964,10 @@ object ModernClickGuiScreen : GuiScreen() {
         glDisable(GL_SCISSOR_TEST)
 
         if (scrollMax > 0F) {
-            drawVerticalScrollbar(viewport, scrollMax, visibleScroll)
+            scrollbarLayout(viewport, scrollMax, visibleScroll)?.let { layout ->
+                drawVerticalScrollbar(layout)
+                scrollbarHitTargets += ScrollbarHitTarget(ScrollbarKind.SYNTHETIC, layout)
+            }
         }
     }
 
@@ -1117,16 +1132,57 @@ object ModernClickGuiScreen : GuiScreen() {
         return startY + visibleHeight
     }
 
-    private fun drawVerticalScrollbar(viewport: UiRect, scrollMax: Float, scroll: Float) {
+    private fun drawVerticalScrollbar(layout: ScrollbarLayout) {
+        drawRect(
+            layout.track.x,
+            layout.track.y,
+            layout.track.right,
+            layout.track.bottom,
+            Color(55, 55, 62, 130).rgb
+        )
+        drawRoundedRect(
+            layout.thumb.x,
+            layout.thumb.y,
+            layout.thumb.right,
+            layout.thumb.bottom,
+            theme.accent.rgb,
+            1.5F
+        )
+    }
+
+    private fun scrollbarLayout(viewport: UiRect, scrollMax: Float, scroll: Float): ScrollbarLayout? {
+        if (scrollMax <= 0F) {
+            return null
+        }
+
         val trackX = viewport.right - 2F
         val trackTop = viewport.y + 4F
         val trackBottom = viewport.bottom - 4F
         val trackHeight = trackBottom - trackTop
         val thumbHeight = max(16F, trackHeight * (trackHeight / (trackHeight + scrollMax)))
-        val thumbY = trackTop + (trackHeight - thumbHeight) * (scroll / scrollMax)
+        val trackTravel = trackHeight - thumbHeight
+        val thumbY = if (trackTravel > 0F) {
+            trackTop + trackTravel * (scroll / scrollMax)
+        } else {
+            trackTop
+        }
 
-        drawRect(trackX, trackTop, trackX + 1.5F, trackBottom, Color(55, 55, 62, 130).rgb)
-        drawRoundedRect(trackX - 0.5F, thumbY, trackX + 2F, thumbY + thumbHeight, theme.accent.rgb, 1.5F)
+        // Hit zones are wider than the visible thumb so grabbing is forgiving.
+        val hitInset = 6F
+        val track = UiRect(trackX, trackTop, 2.5F, trackHeight)
+        val thumb = UiRect(trackX - 0.5F, thumbY, 3F, thumbHeight)
+        val trackHit = UiRect(trackX - hitInset, trackTop, 2.5F + hitInset * 2F, trackHeight)
+        val thumbHit = UiRect(trackX - hitInset, thumbY, 3F + hitInset * 2F, thumbHeight)
+
+        return ScrollbarLayout(
+            track,
+            thumb,
+            trackHit,
+            thumbHit,
+            trackTop,
+            trackHeight,
+            thumbHeight
+        )
     }
 
     private fun drawSyntheticRow(
@@ -1262,6 +1318,13 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun handleWheel(mouseX: Int, mouseY: Int) {
         if (!Mouse.hasWheel()) {
+            return
+        }
+
+        // While a scrollbar is being dragged, the cursor is the source of truth;
+        // ignore wheel input so the two don't fight each other.
+        if (draggingScrollbar != null) {
+            Mouse.getDWheel()
             return
         }
 
@@ -1436,6 +1499,20 @@ object ModernClickGuiScreen : GuiScreen() {
             }
         }
 
+        if (mouseButton == 0) {
+            for (target in scrollbarHitTargets.asReversed()) {
+                val layout = target.layout
+                if (layout.thumbHit.contains(inputMouseX, inputMouseY)) {
+                    startScrollbarDrag(target.kind, layout, inputMouseY.toFloat())
+                    return
+                }
+                if (layout.trackHit.contains(inputMouseX, inputMouseY)) {
+                    jumpScrollbarTo(target.kind, layout, inputMouseY.toFloat())
+                    return
+                }
+            }
+        }
+
         for (target in moduleHitTargets.asReversed()) {
             if (!target.rect.contains(inputMouseX, inputMouseY)) {
                 continue
@@ -1466,6 +1543,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
     public override fun mouseReleased(mouseX: Int, mouseY: Int, state: Int) {
         draggingColumn = null
+        draggingScrollbar = null
         valueControlState.release { saveConfig(valuesConfig) }
         saveLayoutIfDirty()
         val preset = ClickGUI.modernPreset ?: ModernClickGuiPreset.COLUMN_DECK
@@ -1676,6 +1754,102 @@ object ModernClickGuiScreen : GuiScreen() {
             column.x = clampedX
             column.y = clampedY
             markLayoutDirty()
+        }
+    }
+
+    private fun startScrollbarDrag(kind: ScrollbarKind, layout: ScrollbarLayout, mouseY: Float) {
+        val (scroll, scrollMax) = currentScrollPair(kind) ?: return
+        if (scrollMax <= 0F) {
+            return
+        }
+        val trackTop = layout.trackTop
+        val trackHeight = layout.trackHeight
+        val thumbHeight = layout.thumbHeight
+        val trackTravel = trackHeight - thumbHeight
+        // Place the thumb at its current animated position so the cursor's relative
+        // offset is preserved during the drag.
+        val startThumbY = if (trackTravel > 0F) {
+            trackTop + trackTravel * (scroll / scrollMax)
+        } else {
+            trackTop
+        }
+        draggingScrollbar = ScrollbarDrag(
+            kind,
+            mouseY,
+            startThumbY,
+            trackTop,
+            trackTravel,
+            scrollMax,
+        )
+    }
+
+    private fun jumpScrollbarTo(kind: ScrollbarKind, layout: ScrollbarLayout, mouseY: Float) {
+        val (_, scrollMax) = currentScrollPair(kind) ?: return
+        if (scrollMax <= 0F) {
+            return
+        }
+        val trackTop = layout.trackTop
+        val trackHeight = layout.trackHeight
+        val thumbHeight = layout.thumbHeight
+        val trackTravel = trackHeight - thumbHeight
+        if (trackTravel <= 0F) {
+            return
+        }
+        // Centre the thumb on the click point. animatedScroll() will smooth-scroll
+        // visibleScroll toward this value using the same easing the wheel uses, so
+        // the motion feels snappy rather than scripted.
+        val centeredOffset = mouseY - trackTop - thumbHeight / 2F
+        val ratio = (centeredOffset / trackTravel).coerceIn(0F, 1F)
+        applyScrollPair(kind, ratio * scrollMax)
+    }
+
+    private fun updateScrollbarDrag(mouseY: Float) {
+        val drag = draggingScrollbar ?: return
+
+        if (!Mouse.isButtonDown(0)) {
+            draggingScrollbar = null
+            return
+        }
+
+        if (drag.trackTravel <= 0F || drag.scrollMax <= 0F) {
+            return
+        }
+
+        val newThumbY = (drag.startThumbY + (mouseY - drag.startMouseY))
+            .coerceIn(drag.trackTop, drag.trackTop + drag.trackTravel)
+        val ratio = ((newThumbY - drag.trackTop) / drag.trackTravel).coerceIn(0F, 1F)
+        applyScrollPair(drag.kind, ratio * drag.scrollMax)
+    }
+
+    private fun currentScrollPair(kind: ScrollbarKind): Pair<Float, Float>? = when (kind) {
+        ScrollbarKind.NAV -> {
+            val layout = sidebarNavLayout ?: return null
+            sidebarNavScroll to layout.scrollMax
+        }
+        ScrollbarKind.CONTENT, ScrollbarKind.SYNTHETIC -> {
+            val layout = sidebarContentLayout ?: return null
+            sidebarContentScroll to layout.scrollMax
+        }
+    }
+
+    private fun applyScrollPair(kind: ScrollbarKind, target: Float) {
+        val clamped = target.coerceIn(0F, when (kind) {
+            ScrollbarKind.NAV -> sidebarNavLayout?.scrollMax ?: 0F
+            ScrollbarKind.CONTENT, ScrollbarKind.SYNTHETIC -> sidebarContentLayout?.scrollMax ?: 0F
+        })
+        when (kind) {
+            ScrollbarKind.NAV -> {
+                if (sidebarNavScroll != clamped) {
+                    sidebarNavScroll = clamped
+                    markLayoutDirty()
+                }
+            }
+            ScrollbarKind.CONTENT, ScrollbarKind.SYNTHETIC -> {
+                if (sidebarContentScroll != clamped) {
+                    sidebarContentScroll = clamped
+                    markLayoutDirty()
+                }
+            }
         }
     }
 
@@ -2186,5 +2360,31 @@ object ModernClickGuiScreen : GuiScreen() {
         val rect: UiRect,
         val contentHeight: Float,
         val scrollMax: Float
+    )
+
+    private data class ScrollbarLayout(
+        val track: UiRect,
+        val thumb: UiRect,
+        val trackHit: UiRect,
+        val thumbHit: UiRect,
+        val trackTop: Float,
+        val trackHeight: Float,
+        val thumbHeight: Float,
+    )
+
+    private enum class ScrollbarKind { NAV, CONTENT, SYNTHETIC }
+
+    private data class ScrollbarHitTarget(
+        val kind: ScrollbarKind,
+        val layout: ScrollbarLayout,
+    )
+
+    private class ScrollbarDrag(
+        val kind: ScrollbarKind,
+        val startMouseY: Float,
+        val startThumbY: Float,
+        val trackTop: Float,
+        val trackTravel: Float,
+        val scrollMax: Float,
     )
 }
