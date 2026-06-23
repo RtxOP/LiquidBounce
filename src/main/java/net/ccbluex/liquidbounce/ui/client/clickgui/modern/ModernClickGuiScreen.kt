@@ -1114,7 +1114,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
             if (rect.bottom >= viewport.y && rect.y <= viewport.bottom && rect.y <= visibleBottom) {
                 if (allowInput) {
-                    ValueControls.drag(value, rect, mouseX, valueControlState) {
+                    ValueControls.drag(value, rect, mouseX, mouseY, valueControlState) {
                         // Values own their change side effects. The dirty state saves on release.
                     }
                 }
@@ -1299,7 +1299,7 @@ object ModernClickGuiScreen : GuiScreen() {
 
             if (rect.bottom >= column.y + HEADER_HEIGHT && rect.y <= column.y + bodyHeight && rect.y <= visibleBottom) {
                 if (allowInput) {
-                    ValueControls.drag(value, rect, mouseX, valueControlState) {
+                    ValueControls.drag(value, rect, mouseX, mouseY, valueControlState) {
                         // Values own their change side effects. The dirty state saves on release.
                     }
                 }

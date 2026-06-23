@@ -8,6 +8,7 @@ package net.ccbluex.liquidbounce.ui.client.common
 import net.ccbluex.liquidbounce.config.BlockValue
 import net.ccbluex.liquidbounce.config.BoolValue
 import net.ccbluex.liquidbounce.config.ColorValue
+import net.ccbluex.liquidbounce.config.ColorValue.SliderType
 import net.ccbluex.liquidbounce.config.FloatRangeValue
 import net.ccbluex.liquidbounce.config.FloatValue
 import net.ccbluex.liquidbounce.config.FontValue
@@ -21,6 +22,7 @@ import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.SbPickerShader
 import net.ccbluex.liquidbounce.utils.ui.EditableText
 import org.lwjgl.input.Keyboard
 import java.awt.Color
@@ -38,7 +40,7 @@ class ValueControlState {
 
     private val animations = UiAnimationStore()
     private var animationsEnabled = true
-    private var draggingColorChannel: Int? = null
+    private var draggingColorComponent: SliderType? = null
     private var draggingRangeHandle: RangeSlider? = null
     private var dirty = false
 
@@ -54,19 +56,19 @@ class ValueControlState {
         animations.prune()
     }
 
-    fun startDragging(value: Value<*>, colorChannel: Int? = null, rangeHandle: RangeSlider? = null) {
+    fun startDragging(value: Value<*>, colorComponent: SliderType? = null, rangeHandle: RangeSlider? = null) {
         if (focusedText?.value !== value) {
             focusedText = null
         }
 
         draggingValue = value
-        draggingColorChannel = colorChannel
+        draggingColorComponent = colorComponent
         draggingRangeHandle = rangeHandle
     }
 
     fun focusText(value: TextValue) {
         draggingValue = null
-        draggingColorChannel = null
+        draggingColorComponent = null
         draggingRangeHandle = null
         focusedText = EditableText(
             value = value,
@@ -85,7 +87,7 @@ class ValueControlState {
 
     fun release(save: () -> Unit) {
         draggingValue = null
-        draggingColorChannel = null
+        draggingColorComponent = null
         draggingRangeHandle = null
         flush(save)
     }
@@ -112,7 +114,7 @@ class ValueControlState {
         return true
     }
 
-    fun colorChannelFor(value: Value<*>) = if (draggingValue === value) draggingColorChannel else null
+    fun colorComponentFor(value: Value<*>) = if (draggingValue === value) draggingColorComponent else null
 
     fun rangeHandleFor(value: Value<*>) = if (draggingValue === value) draggingRangeHandle else null
 
@@ -127,18 +129,26 @@ class ValueControlState {
 object ValueControls {
     const val ROW_HEIGHT = 18F
     private const val SLIDER_ROW_HEIGHT = 24F
-    private const val COLOR_CHANNEL_HEIGHT = 18F
-    private const val COLOR_CHANNEL_COUNT = 4
     private const val SLIDER_TRACK_HEIGHT = 2F
     private const val SLIDER_FILL_HEIGHT = 3F
     private const val SLIDER_KNOB_RADIUS = 4F
-    private const val COLOR_KNOB_RADIUS = 3.5F
 
-    private val colorLabels = arrayOf("R", "G", "B", "A")
+    // Modern color-picker geometry. The square is sized to the row width so it
+    // scales gracefully between narrow column-deck rows and wide sidebar modules.
+    // height() assumes the design width PICKER_DESIGN_SQUARE; rendering clamps the
+    // square to whatever the row actually allows.
+    private const val PICKER_INSET = 6F
+    private const val PICKER_GAP = 6F
+    private const val PICKER_STRIP_HEIGHT = 8F
+    private const val PICKER_CORNER_RADIUS = 3F
+    private const val PICKER_KNOB_RADIUS = 4F
+    private const val PICKER_DESIGN_SQUARE = 110F
+    private const val PICKER_DESIGN_TOTAL =
+        PICKER_INSET + PICKER_DESIGN_SQUARE + (PICKER_GAP + PICKER_STRIP_HEIGHT) * 2F + PICKER_INSET
 
     fun height(value: Value<*>) = when (value) {
         is IntValue, is FloatValue, is BlockValue, is IntRangeValue, is FloatRangeValue -> SLIDER_ROW_HEIGHT
-        is ColorValue -> ROW_HEIGHT + if (value.showPicker) COLOR_CHANNEL_HEIGHT * COLOR_CHANNEL_COUNT else 0F
+        is ColorValue -> ROW_HEIGHT + if (value.showPicker) PICKER_DESIGN_TOTAL else 0F
         else -> ROW_HEIGHT
     }
 
@@ -278,10 +288,11 @@ object ValueControls {
 
                 if (button != 0) return false
 
-                if (value.showPicker && mouseY >= rect.y + ROW_HEIGHT) {
-                    val channel = colorChannelAt(rect, mouseY) ?: return false
-                    state.startDragging(value, channel)
-                    updateColorChannel(value, rect, mouseX, state)
+                // Hits inside the expanded picker take precedence over toggling rainbow.
+                val zone = if (value.showPicker) colorPickerZoneAt(value, rect, mouseX, mouseY) else null
+                if (zone != null) {
+                    state.startDragging(value, colorComponent = zone)
+                    updateColorPicker(value, rect, mouseX, mouseY, zone)
                 } else {
                     value.rainbow = !value.rainbow
                     state.markDirty()
@@ -297,7 +308,7 @@ object ValueControls {
         return true
     }
 
-    fun drag(value: Value<*>, rect: UiRect, mouseX: Int, state: ValueControlState, onChanged: () -> Unit) {
+    fun drag(value: Value<*>, rect: UiRect, mouseX: Int, mouseY: Int, state: ValueControlState, onChanged: () -> Unit) {
         if (state.draggingValue !== value) {
             return
         }
@@ -305,7 +316,7 @@ object ValueControls {
         val changed = when (value) {
             is IntValue, is FloatValue, is BlockValue -> updateSlider(value, rect, mouseX, state)
             is IntRangeValue, is FloatRangeValue -> updateRangeSlider(value, rect, mouseX, state)
-            is ColorValue -> updateColorChannel(value, rect, mouseX, state)
+            is ColorValue -> updateColorPicker(value, rect, mouseX, mouseY, state.colorComponentFor(value))
             else -> false
         }
 
@@ -392,40 +403,156 @@ object ValueControls {
     }
 
     private fun drawColor(value: ColorValue, rect: UiRect, theme: UiTheme) {
-        val color = value.selectedColor()
-        val stateText = if (value.rainbow) "Rainbow" else rgbaText(value.get())
+        // Header row: name + R/G/B/A preview, or "Rainbow" when in rainbow mode.
+        val colorStateText = if (value.rainbow) "Rainbow" else rgbaText(value.get())
         val label = Fonts.fontRegular30.trimToWidthWithEllipsis(
-            "${value.name}: $stateText",
-            (rect.width - 36F).roundToInt()
+            "${value.name}: $colorStateText",
+            (rect.width - 32F).roundToInt()
         )
-        val swatchX = rect.right - 20F
-        val swatchY = rect.y + 4F
-
         Fonts.fontRegular30.drawString(label, rect.x + 5F, rect.y + 5F, theme.textPrimary.rgb)
-        drawRoundedRect(swatchX - 1F, swatchY - 1F, swatchX + 15F, swatchY + 11F, theme.textMuted.withAlpha(155).rgb, 3F)
-        drawRoundedRect(swatchX, swatchY, swatchX + 14F, swatchY + 10F, color.rgb, 3F)
+
+        // Trailing live swatch. In rainbow mode the swatch animates with the rainbow palette.
+        val swatchColor = value.selectedColor()
+        val swatchX = rect.right - 22F
+        val swatchY = rect.y + 4F
+        drawRoundedRect(
+            swatchX - 1F,
+            swatchY - 1F,
+            swatchX + 17F,
+            swatchY + 11F,
+            theme.textMuted.withAlpha(140).rgb,
+            3F
+        )
+        drawRoundedRect(
+            swatchX,
+            swatchY,
+            swatchX + 16F,
+            swatchY + 10F,
+            swatchColor.rgb,
+            3F
+        )
 
         if (!value.showPicker) {
             return
         }
 
-        val current = value.get()
-        drawColorChannel(0, current.red, colorChannelRect(rect, 0), theme, Color(225, 78, 78))
-        drawColorChannel(1, current.green, colorChannelRect(rect, 1), theme, Color(77, 196, 110))
-        drawColorChannel(2, current.blue, colorChannelRect(rect, 2), theme, Color(88, 142, 242))
-        drawColorChannel(3, current.alpha, colorChannelRect(rect, 3), theme, theme.accent)
+        drawColorPicker(value, rect, theme)
     }
 
-    private fun drawColorChannel(index: Int, current: Int, rect: UiRect, theme: UiTheme, fillColor: Color) {
-        val label = "${colorLabels[index]}: $current"
-        val track = UiRect(rect.x + 32F, rect.y + 11F, rect.width - 39F, 1F)
-        val progress = (current / 255F).coerceIn(0F, 1F)
-        val fill = track.x + track.width * progress
+    private data class ColorPickerLayout(
+        val square: UiRect,
+        val hueStrip: UiRect,
+        val alphaStrip: UiRect,
+    )
 
-        Fonts.fontRegular30.drawString(label, rect.x, rect.y + 5F, theme.textMuted.withAlpha(210).rgb)
-        drawSliderTrack(track, theme.textMuted.withAlpha(135))
-        drawSliderFill(track, track.x, fill, fillColor)
-        drawSliderKnob(fill, track, theme.textPrimary, COLOR_KNOB_RADIUS)
+    private fun colorPickerLayout(value: ColorValue, rect: UiRect): ColorPickerLayout {
+        // Sized to the design square, but clamped so the picker never exceeds the
+        // row's actual width (which can be narrow inside column-deck modules).
+        val maxWidth = max(40F, rect.width - PICKER_INSET * 2F)
+        val squareSize = min(PICKER_DESIGN_SQUARE, maxWidth)
+        val squareY = rect.y + ROW_HEIGHT + PICKER_INSET
+        val stripY = squareY + squareSize + PICKER_GAP
+        val stripWidth = max(40F, squareSize)
+        val square = UiRect(rect.x + (rect.width - squareSize) / 2F, squareY, squareSize, squareSize)
+        val hue = UiRect(square.x, stripY, stripWidth, PICKER_STRIP_HEIGHT)
+        val alpha = UiRect(square.x, stripY + PICKER_STRIP_HEIGHT + PICKER_GAP, stripWidth, PICKER_STRIP_HEIGHT)
+        return ColorPickerLayout(square, hue, alpha)
+    }
+
+    private fun drawColorPicker(value: ColorValue, rect: UiRect, theme: UiTheme) {
+        val layout = colorPickerLayout(value, rect)
+        val radius = PICKER_CORNER_RADIUS
+
+        val square = layout.square
+        // 1. The HSB square (left/right = saturation, top/bottom = brightness/y).
+        //    Hue is the slider value; rendered via the shader so it remains a stable
+        //    GPU-updated gradient rather than a per-pixel CPU repaint.
+        SbPickerShader.renderPicker(
+            square.x,
+            square.y,
+            square.right,
+            square.bottom,
+            passMode = 0, // MODE_HSB
+            passHue = value.hueSliderY,
+            passBaseColor = null,
+            passCornerRadius = radius,
+        )
+
+        // Overlay a marker indicating the current saturation/value selection so
+        // users can scrub back to the same point. The marker is a small white ring.
+        val markerX = square.x + square.width * value.colorPickerPos.x
+        val markerY = square.y + square.height * value.colorPickerPos.y
+        drawColorPickerMarker(markerX, markerY)
+
+        // 2. The hue strip — vertical rainbow regardless of mode. Border accent so
+        //    the strip looks like a discrete control next to the square.
+        val hue = layout.hueStrip
+        SbPickerShader.renderPicker(
+            hue.x,
+            hue.y,
+            hue.right,
+            hue.bottom,
+            passMode = 1, // MODE_HUE
+            passHue = 0F,
+            passBaseColor = null,
+            passCornerRadius = radius,
+        )
+        // 3. The alpha strip. Draw a checker pattern first so the user's alpha
+        //    selection is visible against a transparent-friendly background.
+        val alpha = layout.alphaStrip
+        SbPickerShader.renderPicker(
+            alpha.x,
+            alpha.y,
+            alpha.right,
+            alpha.bottom,
+            passMode = 3, // MODE_CHECKER
+            passHue = 0F,
+            passBaseColor = null,
+            passCornerRadius = radius,
+        )
+        SbPickerShader.renderPicker(
+            alpha.x,
+            alpha.y,
+            alpha.right,
+            alpha.bottom,
+            passMode = 2, // MODE_ALPHA
+            passHue = 0F,
+            passBaseColor = value.selectedColor(),
+            passCornerRadius = radius,
+        )
+
+        // Hue and alpha knobs are drawn on top so their position is always
+        // readable against the gradient.
+        val hueKnobY = hue.y + hue.height * (1F - value.hueSliderY)
+        drawColorPickerKnob(hue.x + hue.width * value.hueSliderY, hueKnobY)
+        drawColorPickerKnob(
+            alpha.x + alpha.width * value.opacitySliderY,
+            alpha.y + alpha.height / 2F,
+        )
+
+        // When rainbow is on, the picker is read-only — let the user know with a
+        // subtle tint and avoid drawing click affordances.
+        if (value.rainbow) {
+            drawRect(rect.x, rect.y + ROW_HEIGHT, rect.right, alpha.bottom, theme.textMuted.withAlpha(60).rgb)
+        }
+    }
+
+    private fun drawColorPickerMarker(centerX: Float, centerY: Float) {
+        // A 4 px white ring centered on the cursor's stored HSB position. White is
+        // used so it stays visible against any saturation/value combination.
+        val r = 4F
+        drawRoundedRect(centerX - r, centerY - r, centerX + r, centerY + r, Color(255, 255, 255, 220).rgb, r)
+    }
+
+    private fun drawColorPickerKnob(centerX: Float, centerY: Float) {
+        drawRoundedRect(
+            centerX - PICKER_KNOB_RADIUS,
+            centerY - PICKER_KNOB_RADIUS,
+            centerX + PICKER_KNOB_RADIUS,
+            centerY + PICKER_KNOB_RADIUS,
+            Color(255, 255, 255, 230).rgb,
+            PICKER_KNOB_RADIUS
+        )
     }
 
     private fun drawLabel(text: String, rect: UiRect, theme: UiTheme, color: Color = theme.textPrimary) {
@@ -577,40 +704,79 @@ object ValueControls {
         return changed
     }
 
-    private fun updateColorChannel(value: ColorValue, rect: UiRect, mouseX: Int, state: ValueControlState): Boolean {
-        val channel = state.colorChannelFor(value) ?: return false
-        val channelRect = colorChannelRect(rect, channel)
-        val track = UiRect(channelRect.x + 32F, channelRect.y + 11F, channelRect.width - 39F, 1F)
-        val percent = ((mouseX - track.x) / track.width).coerceIn(0F, 1F)
-        val component = (255F * percent).roundToInt().coerceIn(0, 255)
-        val current = value.get()
-        val next = when (channel) {
-            0 -> Color(component, current.green, current.blue, current.alpha)
-            1 -> Color(current.red, component, current.blue, current.alpha)
-            2 -> Color(current.red, current.green, component, current.alpha)
-            3 -> Color(current.red, current.green, current.blue, component)
-            else -> current
+    private fun colorPickerZoneAt(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): SliderType? {
+        if (!value.showPicker) return null
+        val layout = colorPickerLayout(value, rect)
+        val padX = PICKER_KNOB_RADIUS
+
+        // Hue strip first — it's drawn over the square's right edge in some layouts.
+        if (mouseY.toFloat() in layout.hueStrip.y..layout.hueStrip.bottom &&
+            mouseX.toFloat() in layout.hueStrip.x - padX..layout.hueStrip.right + padX
+        ) {
+            return SliderType.HUE
+        }
+        if (mouseY.toFloat() in layout.alphaStrip.y..layout.alphaStrip.bottom &&
+            mouseX.toFloat() in layout.alphaStrip.x - padX..layout.alphaStrip.right + padX
+        ) {
+            return SliderType.OPACITY
+        }
+        if (mouseY.toFloat() in layout.square.y..layout.square.bottom &&
+            mouseX.toFloat() in layout.square.x..layout.square.right
+        ) {
+            return SliderType.COLOR
+        }
+        return null
+    }
+
+    private fun updateColorPicker(
+        value: ColorValue,
+        rect: UiRect,
+        mouseX: Int,
+        mouseY: Int,
+        component: SliderType?
+    ): Boolean {
+        if (component == null) return false
+        val layout = colorPickerLayout(value, rect)
+        if (layout.square.width <= 0F) return false
+
+        when (component) {
+            SliderType.COLOR -> {
+                // Convert local pointer position to saturation/value fractions.
+                // Clamp to the square so dragging off-edge doesn't jump to the
+                // opposite side of the gradient.
+                val fx = ((mouseX - layout.square.x) / layout.square.width).coerceIn(0F, 1F)
+                val fy = ((mouseY - layout.square.y) / layout.square.height).coerceIn(0F, 1F)
+                value.colorPickerPos.set(fx, fy)
+            }
+            SliderType.HUE -> {
+                // Hue strip reads vertically. The strip's vertical axis maps hue 0..1
+                // (top = red, bottom = red) but the slider convention is bottom = max.
+                val fy = ((mouseY - layout.hueStrip.y) / layout.hueStrip.height).coerceIn(0F, 1F)
+                value.hueSliderY = 1F - fy
+            }
+            SliderType.OPACITY -> {
+                val fx = ((mouseX - layout.alphaStrip.x) / layout.alphaStrip.width).coerceIn(0F, 1F)
+                value.opacitySliderY = fx
+            }
         }
 
-        if (next == current && !value.rainbow) {
-            return false
+        val newColor = Color(
+            Color.HSBtoRGB(value.hueSliderY, value.colorPickerPos.x, 1 - value.colorPickerPos.y),
+            true,
+        ).withAlpha((value.opacitySliderY * 255F).roundToInt())
+
+        val previous = value.get()
+        if (value.rainbow || newColor == previous) {
+            // Disabling rainbow is enough; user already saw the change in sliders.
+            if (value.rainbow) {
+                value.rainbow = false
+            } else {
+                return false
+            }
         }
-
-        value.rainbow = false
-        value.changeValue(next)
-        value.setupSliders(next)
-        state.markDirty()
-
+        value.changeValue(newColor)
         return true
     }
-
-    private fun colorChannelAt(rect: UiRect, mouseY: Int): Int? {
-        val index = ((mouseY - (rect.y + ROW_HEIGHT)) / COLOR_CHANNEL_HEIGHT).toInt()
-        return index.takeIf { it in 0 until COLOR_CHANNEL_COUNT }
-    }
-
-    private fun colorChannelRect(rect: UiRect, index: Int) =
-        UiRect(rect.x + 5F, rect.y + ROW_HEIGHT + index * COLOR_CHANNEL_HEIGHT, rect.width - 10F, COLOR_CHANNEL_HEIGHT)
 
     private fun sliderTrack(rect: UiRect) = UiRect(rect.x + 7F, rect.bottom - 7F, rect.width - 14F, 1F)
 
