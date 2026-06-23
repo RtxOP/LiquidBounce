@@ -241,7 +241,7 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
             }
 
             if (Mouse.isButtonDown(0)) {
-                ValueControls.drag(value, rect, mouseX, valueControlState) {
+                ValueControls.drag(value, rect, mouseX, mouseY, valueControlState) {
                     element.updateElement()
                 }
             }
