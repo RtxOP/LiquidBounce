@@ -37,8 +37,10 @@ void main() {
         float v = 1.0 - uv.y;
         color = vec4(hsv2rgb(vec3(hue, s, v)), 1.0);
     } else if (mode == 1) {
-        // Vertical hue strip: rainbow gradient top-to-bottom.
-        color = vec4(hsv2rgb(vec3(uv.y, 1.0, 1.0)), 1.0);
+        // Hue gradient across the strip's long axis. uv.x runs 0..1 along the
+        // strip width; uv.y is unused so the gradient is a smooth horizontal
+        // rainbow rather than bands stacked across an 8px-tall strip.
+        color = vec4(hsv2rgb(vec3(uv.x, 1.0, 1.0)), 1.0);
     } else if (mode == 2) {
         // Alpha gradient at the current color, used on top of a checker.
         color = vec4(baseColor.rgb, uv.x);

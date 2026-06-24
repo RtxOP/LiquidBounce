@@ -77,6 +77,54 @@ class ValueControlState {
         )
     }
 
+    /**
+     * Open the side-panel HEX entry for a color value. Reuses the existing
+     * [focusedText] slot so key processing, Enter/Escape semantics and
+     * "did the user click a different value?" guards in [startDragging] apply
+     * uniformly. Each keystroke is validated by the [EditableText.validator]
+     * and routed through [EditableText.onUpdate], which maps the current
+     * hex string to an ARGB [Color] and pushes it into [ColorValue] without
+     * immediately saving to disk (the existing flush path on release/Enter
+     * persists it).
+     */
+    fun focusHexText(value: ColorValue) {
+        draggingValue = null
+        draggingColorComponent = null
+        draggingRangeHandle = null
+        val hex = "#%08X".format(value.get().rgb)
+        focusedText = EditableText(
+            value = value,
+            string = hex,
+            cursorIndex = hex.length,
+            validator = { input ->
+                val raw = input.removePrefix("#")
+                raw.length <= 8 &&
+                    raw.all { c ->
+                        c.isDigit() || c in 'a'..'f' || c in 'A'..'F'
+                    }
+            },
+            onUpdate = { input ->
+                val raw = input.removePrefix("#")
+                // Pad with zeros so partial input still parses to a valid color
+                // (e.g. "77aa" -> "77aa0000"). The validator only lets through
+                // hex characters, so Long.parseLong won't throw on those.
+                try {
+                    val padded = raw.padStart(8, '0')
+                    val argb = java.lang.Long.parseLong(padded, 16).toInt()
+                    val next = Color(argb, true)
+                    if (next != value.get()) {
+                        value.set(next, saveImmediately = false)
+                        // Keep the HSB square + strip markers in lock-step with
+                        // the new RGB so the picker doesn't lie about the color.
+                        value.setupSliders(next)
+                    }
+                } catch (_: NumberFormatException) {
+                    // Mid-typing state — ignore until input is a valid hex.
+                }
+            }
+        )
+    }
+
     fun clearFocus() {
         focusedText = null
     }
@@ -146,6 +194,16 @@ object ValueControls {
     private const val PICKER_DESIGN_TOTAL =
         PICKER_INSET + PICKER_DESIGN_SQUARE + (PICKER_GAP + PICKER_STRIP_HEIGHT) * 2F + PICKER_INSET
 
+    // Side panel (HEX entry + R/G/B/A mini-sliders) appears beside the picker when
+    // the row is wide enough to host it. Sized so column-deck rows (~134 px) stay
+    // tightly packed while sidebar-list rows (~300+ px) gain a precision entry.
+    private const val PICKER_SIDE_PANEL_WIDTH = 150F
+    private const val PICKER_SIDE_PANEL_ROW_HEIGHT = 22F
+    private const val PICKER_SIDE_PANEL_ROWS = 5 // HEX + R + G + B + A
+    private const val PICKER_SIDE_PANEL_HEADER_GAP = 4F
+    private const val PICKER_MIN_WIDTH_FOR_PANEL =
+        PICKER_INSET + PICKER_DESIGN_SQUARE + PICKER_GAP + PICKER_SIDE_PANEL_WIDTH + PICKER_INSET
+
     fun height(value: Value<*>) = when (value) {
         is IntValue, is FloatValue, is BlockValue, is IntRangeValue, is FloatRangeValue -> SLIDER_ROW_HEIGHT
         is ColorValue -> ROW_HEIGHT + if (value.showPicker) PICKER_DESIGN_TOTAL else 0F
@@ -210,7 +268,7 @@ object ValueControls {
             is ListValue -> drawChoice(value.name, value.get(), rect, theme)
             is FontValue -> drawLabel(value.displayName, rect, theme)
             is TextValue -> drawText(value, rect, theme, state.focusedText)
-            is ColorValue -> drawColor(value, rect, theme)
+            is ColorValue -> drawColor(value, rect, theme, state)
             else -> drawLabel(value.name, rect, theme, theme.textMuted.withAlpha(155))
         }
     }
@@ -289,6 +347,15 @@ object ValueControls {
                 if (button != 0) return false
 
                 // Hits inside the expanded picker take precedence over toggling rainbow.
+                // HEX field is its own path: it does not engage the slider-drag flow
+                // and instead opens a text-input focus keyed to this value.
+                if (value.showPicker && colorPickerHexHit(value, rect, mouseX, mouseY)) {
+                    state.focusHexText(value)
+                    state.markDirty()
+                    UiSound.click()
+                    return true
+                }
+
                 val zone = if (value.showPicker) colorPickerZoneAt(value, rect, mouseX, mouseY) else null
                 if (zone != null) {
                     state.startDragging(value, colorComponent = zone)
@@ -402,7 +469,7 @@ object ValueControls {
         }
     }
 
-    private fun drawColor(value: ColorValue, rect: UiRect, theme: UiTheme) {
+    private fun drawColor(value: ColorValue, rect: UiRect, theme: UiTheme, state: ValueControlState) {
         // Header row: name + R/G/B/A preview, or "Rainbow" when in rainbow mode.
         val colorStateText = if (value.rainbow) "Rainbow" else rgbaText(value.get())
         val label = Fonts.fontRegular30.trimToWidthWithEllipsis(
@@ -436,13 +503,23 @@ object ValueControls {
             return
         }
 
-        drawColorPicker(value, rect, theme)
+        drawColorPicker(value, rect, theme, state)
     }
 
     private data class ColorPickerLayout(
         val square: UiRect,
         val hueStrip: UiRect,
         val alphaStrip: UiRect,
+        val sidePanel: UiRect?,
+        val sidePanelRows: SidePanelRows?,
+    )
+
+    private data class SidePanelRows(
+        val hexField: UiRect,
+        val redRow: UiRect,
+        val greenRow: UiRect,
+        val blueRow: UiRect,
+        val alphaRow: UiRect,
     )
 
     private fun colorPickerLayout(value: ColorValue, rect: UiRect): ColorPickerLayout {
@@ -452,14 +529,41 @@ object ValueControls {
         val squareSize = min(PICKER_DESIGN_SQUARE, maxWidth)
         val squareY = rect.y + ROW_HEIGHT + PICKER_INSET
         val stripY = squareY + squareSize + PICKER_GAP
-        val stripWidth = max(40F, squareSize)
-        val square = UiRect(rect.x + (rect.width - squareSize) / 2F, squareY, squareSize, squareSize)
-        val hue = UiRect(square.x, stripY, stripWidth, PICKER_STRIP_HEIGHT)
-        val alpha = UiRect(square.x, stripY + PICKER_STRIP_HEIGHT + PICKER_GAP, stripWidth, PICKER_STRIP_HEIGHT)
-        return ColorPickerLayout(square, hue, alpha)
+        val alphaY = stripY + PICKER_STRIP_HEIGHT + PICKER_GAP
+
+        // Picker is left-aligned to the row inset rather than centered, so it stops
+        // floating when the row has lots of horizontal room (e.g. sidebar modules).
+        val pickerLeft = rect.x + PICKER_INSET
+        val square = UiRect(pickerLeft, squareY, squareSize, squareSize)
+        val hue = UiRect(pickerLeft, stripY, squareSize, PICKER_STRIP_HEIGHT)
+        val alpha = UiRect(pickerLeft, alphaY, squareSize, PICKER_STRIP_HEIGHT)
+
+        // Side panel only renders when the row is wide enough to host it. Tight
+        // rows (column-deck) skip it and keep the existing stacked layout.
+        val canShowPanel = rect.width >= PICKER_MIN_WIDTH_FOR_PANEL && squareSize >= PICKER_DESIGN_SQUARE * 0.7F
+        if (!canShowPanel) {
+            return ColorPickerLayout(square, hue, alpha, null, null)
+        }
+
+        val panelLeft = square.right + PICKER_GAP
+        val panelRightConstraint = rect.right - PICKER_INSET
+        val panelWidth = max(60F, panelRightConstraint - panelLeft)
+        // Match the square's vertical extent so the panel aligns visually with the
+        // picker's center axis.
+        val panelHeight = squareSize
+        val panel = UiRect(panelLeft, square.y, panelWidth, panelHeight)
+        val rowH = (panelHeight - PICKER_SIDE_PANEL_HEADER_GAP) / PICKER_SIDE_PANEL_ROWS
+        val rows = SidePanelRows(
+            hexField  = UiRect(panel.x, panel.y,                                 panel.width, rowH),
+            redRow    = UiRect(panel.x, panel.y + rowH,                          panel.width, rowH),
+            greenRow  = UiRect(panel.x, panel.y + rowH * 2F,                     panel.width, rowH),
+            blueRow   = UiRect(panel.x, panel.y + rowH * 3F,                     panel.width, rowH),
+            alphaRow  = UiRect(panel.x, panel.y + rowH * 4F,                     panel.width, rowH),
+        )
+        return ColorPickerLayout(square, hue, alpha, panel, rows)
     }
 
-    private fun drawColorPicker(value: ColorValue, rect: UiRect, theme: UiTheme) {
+    private fun drawColorPicker(value: ColorValue, rect: UiRect, theme: UiTheme, state: ValueControlState) {
         val layout = colorPickerLayout(value, rect)
         val radius = PICKER_CORNER_RADIUS
 
@@ -522,19 +626,157 @@ object ValueControls {
         )
 
         // Hue and alpha knobs are drawn on top so their position is always
-        // readable against the gradient.
-        val hueKnobY = hue.y + hue.height * (1F - value.hueSliderY)
-        drawColorPickerKnob(hue.x + hue.width * value.hueSliderY, hueKnobY)
+        // readable against the gradient. Both strips are horizontal, so the
+        // knob travels along the strip's width and stays on the mid-line.
+        drawColorPickerKnob(
+            hue.x + hue.width * value.hueSliderY,
+            hue.y + hue.height / 2F,
+        )
         drawColorPickerKnob(
             alpha.x + alpha.width * value.opacitySliderY,
             alpha.y + alpha.height / 2F,
         )
 
-        // When rainbow is on, the picker is read-only — let the user know with a
-        // subtle tint and avoid drawing click affordances.
-        if (value.rainbow) {
-            drawRect(rect.x, rect.y + ROW_HEIGHT, rect.right, alpha.bottom, theme.textMuted.withAlpha(60).rgb)
+        // 4. (Wide rows only) Side panel: HEX entry + R/G/B/A compact bars.
+        layout.sidePanelRows?.let { rows ->
+            drawColorSidePanel(rows, value, theme, state)
         }
+
+        // When rainbow is on, the picker is read-only — let the user know with a
+        // subtle tint spanning the full picker region (and the side panel, where
+        // present), and avoid drawing click affordances.
+        if (value.rainbow) {
+            val tintBottom = layout.sidePanel?.bottom ?: alpha.bottom
+            val tintRight = layout.sidePanel?.right ?: rect.right
+            drawRect(rect.x, rect.y + ROW_HEIGHT, tintRight, tintBottom, theme.textMuted.withAlpha(60).rgb)
+        }
+    }
+
+    private fun drawColorSidePanel(
+        rows: SidePanelRows,
+        value: ColorValue,
+        theme: UiTheme,
+        state: ValueControlState
+    ) {
+        // Surface so the panel reads as a discrete control rather than floating
+        // chrome; muted so the picker gradient stays the visual center of mass.
+        val panel = UiRect(
+            rows.hexField.x,
+            rows.hexField.y,
+            rows.hexField.width,
+            rows.alphaRow.bottom - rows.hexField.y
+        )
+        drawRoundedRect(
+            panel.x,
+            panel.y,
+            panel.right,
+            panel.bottom,
+            Color(15, 18, 28, 200).rgb,
+            PICKER_CORNER_RADIUS
+        )
+
+        val color = value.get()
+        drawColorSidePanelHex(rows.hexField, color, value, state)
+        drawColorSidePanelChannel(rows.redRow,   "R", color.red,   Color(225, 78, 78), theme)
+        drawColorSidePanelChannel(rows.greenRow, "G", color.green, Color(77, 196, 110), theme)
+        drawColorSidePanelChannel(rows.blueRow,  "B", color.blue,  Color(88, 142, 242), theme)
+        drawColorSidePanelChannel(rows.alphaRow, "A", color.alpha, theme.accent,         theme)
+    }
+
+    private fun drawColorSidePanelHex(
+        field: UiRect,
+        color: Color,
+        value: ColorValue,
+        state: ValueControlState
+    ) {
+        // focusedText is shared across all value rows. Identify the focused
+        // instance by reference against this row's ColorValue — startDragging
+        // clears it only when the user clicks a different Value<*>.
+        val focused = state.focusedText?.takeIf { it.value === value }
+        val hex = focused?.string ?: "#%08X".format(color.rgb)
+
+        // Pill background so the field reads as an input slot.
+        drawRoundedRect(
+            field.x + 2F,
+            field.y + 2F,
+            field.right - 2F,
+            field.bottom - 2F,
+            Color(8, 10, 16, 220).rgb,
+            (field.height - 4F) / 2F
+        )
+
+        val labelX = field.x + 8F
+        val textY = field.y + (field.height - Fonts.fontRegular30.fontHeight) / 2F
+        Fonts.fontRegular30.drawString(
+            "HEX",
+            labelX,
+            textY,
+            theme.textMuted.withAlpha(200).rgb
+        )
+        val labelEnd = labelX + Fonts.fontRegular30.getStringWidth("HEX") + 6F
+
+        // Trim text width to fit the remaining pill width.
+        val maxTextWidth = (field.right - labelEnd - 8F).toInt().coerceAtLeast(0)
+        val displayText =
+            if (Fonts.fontRegular30.getStringWidth(hex) <= maxTextWidth) hex
+            else Fonts.fontRegular30.trimToWidthWithEllipsis(hex, maxTextWidth)
+        Fonts.fontRegular30.drawString(displayText, labelEnd, textY, theme.textPrimary.rgb)
+
+        if (focused != null) {
+            val cursorX = (labelEnd + Fonts.fontRegular30.getStringWidth(focused.string.take(focused.cursorIndex)))
+                .coerceAtMost(field.right - 8F)
+            drawRect(cursorX, field.y + 4F, cursorX + 1F, field.bottom - 4F, theme.accent.rgb)
+            drawRect(field.x + 4F, field.bottom - 4F, field.right - 4F, field.bottom - 2.5F, theme.accent.withAlpha(160).rgb)
+        }
+    }
+
+    private fun drawColorSidePanelChannel(
+        row: UiRect,
+        label: String,
+        current: Int,
+        trackTint: Color,
+        theme: UiTheme,
+    ) {
+        val rowHeight = row.height
+        val trackHeight = SLIDER_TRACK_HEIGHT
+        val trackY = row.y + (rowHeight - trackHeight) / 2F
+        val trackX = row.x + 28F
+        val trackRight = row.right - 60F
+        val trackWidth = max(1F, trackRight - trackX)
+        val progress = (current / 255F).coerceIn(0F, 1F)
+        val fillEnd = trackX + trackWidth * progress
+
+        val textY = row.y + (rowHeight - Fonts.fontRegular30.fontHeight) / 2F
+        val labelText = "$label: $current"
+        val valueX = trackRight + 6F
+        Fonts.fontRegular30.drawString(
+            labelText,
+            valueX,
+            textY,
+            theme.textMuted.withAlpha(190).rgb
+        )
+
+        // Compact track: muted background plus accent fill up to the channel value.
+        drawRoundedRect(
+            trackX,
+            trackY,
+            trackRight,
+            trackY + trackHeight,
+            theme.textMuted.withAlpha(120).rgb,
+            trackHeight / 2F
+        )
+        if (fillEnd > trackX) {
+            drawRoundedRect(
+                trackX,
+                trackY,
+                fillEnd,
+                trackY + trackHeight,
+                trackTint.withAlpha(220).rgb,
+                trackHeight / 2F
+            )
+        }
+        // No knob at this scale — a 22 px row can't host a knob effectively, and
+        // the filled track already conveys the value.
     }
 
     private fun drawColorPickerMarker(centerX: Float, centerY: Float) {
@@ -709,6 +951,18 @@ object ValueControls {
         val layout = colorPickerLayout(value, rect)
         val padX = PICKER_KNOB_RADIUS
 
+        // Side panel rows come first so the side area fully absorbs clicks before
+        // we fall back to the picker square / strips. If a hit is found here it
+        // wins; otherwise we keep checking.
+        layout.sidePanelRows?.let { rows ->
+            fun inRow(row: UiRect, type: SliderType) =
+                if (mouseX.toFloat() in row.x..row.right && mouseY.toFloat() in row.y..row.bottom) type else null
+            inRow(rows.redRow, SliderType.RED)?.let { return it }
+            inRow(rows.greenRow, SliderType.GREEN)?.let { return it }
+            inRow(rows.blueRow, SliderType.BLUE)?.let { return it }
+            inRow(rows.alphaRow, SliderType.OPACITY)?.let { return it }
+        }
+
         // Hue strip first — it's drawn over the square's right edge in some layouts.
         if (mouseY.toFloat() in layout.hueStrip.y..layout.hueStrip.bottom &&
             mouseX.toFloat() in layout.hueStrip.x - padX..layout.hueStrip.right + padX
@@ -726,6 +980,17 @@ object ValueControls {
             return SliderType.COLOR
         }
         return null
+    }
+
+    /** True iff the cursor hits the side panel's HEX field (for click routing). */
+    private fun colorPickerHexHit(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): Boolean {
+        if (!value.showPicker) return false
+        val rows = colorPickerLayout(value, rect).sidePanelRows ?: return false
+        val fx = rows.hexField.x.toFloat()
+        val fy = rows.hexField.y.toFloat()
+        val fr = rows.hexField.right.toFloat()
+        val fb = rows.hexField.bottom.toFloat()
+        return mouseX.toFloat() in fx..fr && mouseY.toFloat() in fy..fb
     }
 
     private fun updateColorPicker(
@@ -749,14 +1014,41 @@ object ValueControls {
                 value.colorPickerPos.set(fx, fy)
             }
             SliderType.HUE -> {
-                // Hue strip reads vertically. The strip's vertical axis maps hue 0..1
-                // (top = red, bottom = red) but the slider convention is bottom = max.
-                val fy = ((mouseY - layout.hueStrip.y) / layout.hueStrip.height).coerceIn(0F, 1F)
-                value.hueSliderY = 1F - fy
+                // Hue strip is horizontal (long x, short y). Map the cursor's
+                // horizontal fraction to hue so the user can slide smoothly across
+                // the strip; converting from vertical mouse position would squash
+                // every change into the strip's 8px height and produce jumps.
+                val fx = ((mouseX - layout.hueStrip.x) / layout.hueStrip.width).coerceIn(0F, 1F)
+                value.hueSliderY = fx
             }
             SliderType.OPACITY -> {
                 val fx = ((mouseX - layout.alphaStrip.x) / layout.alphaStrip.width).coerceIn(0F, 1F)
                 value.opacitySliderY = fx
+            }
+            SliderType.RED, SliderType.GREEN, SliderType.BLUE -> {
+                // RGB drags bypass the HSB reconstruction step below: we modify
+                // exactly the touched channel and resync the HSB state to keep
+                // the picker square consistent with the new color.
+                val row = layout.sidePanelRows ?: return false
+                val targetRow = when (component) {
+                    SliderType.RED -> row.redRow
+                    SliderType.GREEN -> row.greenRow
+                    SliderType.BLUE -> row.blueRow
+                    else -> return false
+                }
+                val fx = ((mouseX - targetRow.x) / targetRow.width).coerceIn(0F, 1F)
+                val intValue = (fx * 255F).roundToInt()
+                val cur = value.get()
+                val next = when (component) {
+                    SliderType.RED -> Color(intValue, cur.green, cur.blue, cur.alpha, true)
+                    SliderType.GREEN -> Color(cur.red, intValue, cur.blue, cur.alpha, true)
+                    SliderType.BLUE -> Color(cur.red, cur.green, intValue, cur.alpha, true)
+                    else -> cur
+                }
+                if (value.rainbow) value.rainbow = false
+                value.changeValue(next)
+                value.setupSliders(next)
+                return true
             }
         }
 

@@ -448,7 +448,8 @@ class ColorValue(
     }
 
     enum class SliderType {
-        COLOR, HUE, OPACITY
+        COLOR, HUE, OPACITY,
+        RED, GREEN, BLUE,
     }
 
 }
