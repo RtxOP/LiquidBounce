@@ -185,14 +185,16 @@ object ValueControls {
     // scales gracefully between narrow column-deck rows and wide sidebar modules.
     // height() assumes the design width PICKER_DESIGN_SQUARE; rendering clamps the
     // square to whatever the row actually allows.
-    private const val PICKER_INSET = 6F
+    private const val PICKER_INSET_TOP = 2F
+    private const val PICKER_INSET_BOTTOM = 2F
+    private const val PICKER_INSET_SIDE = 6F
     private const val PICKER_GAP = 6F
     private const val PICKER_STRIP_HEIGHT = 8F
     private const val PICKER_CORNER_RADIUS = 3F
     private const val PICKER_KNOB_RADIUS = 4F
     private const val PICKER_DESIGN_SQUARE = 110F
     private const val PICKER_DESIGN_TOTAL =
-        PICKER_INSET + PICKER_DESIGN_SQUARE + (PICKER_GAP + PICKER_STRIP_HEIGHT) * 2F + PICKER_INSET
+        PICKER_INSET_TOP + PICKER_DESIGN_SQUARE + (PICKER_GAP + PICKER_STRIP_HEIGHT) * 2F + PICKER_INSET_BOTTOM
 
     // Side panel (HEX entry + R/G/B/A mini-sliders) appears beside the picker when
     // the row is wide enough to host it. Sized so column-deck rows (~134 px) stay
@@ -202,7 +204,7 @@ object ValueControls {
     private const val PICKER_SIDE_PANEL_ROWS = 5 // HEX + R + G + B + A
     private const val PICKER_SIDE_PANEL_HEADER_GAP = 4F
     private const val PICKER_MIN_WIDTH_FOR_PANEL =
-        PICKER_INSET + PICKER_DESIGN_SQUARE + PICKER_GAP + PICKER_SIDE_PANEL_WIDTH + PICKER_INSET
+        PICKER_INSET_SIDE + PICKER_DESIGN_SQUARE + PICKER_GAP + PICKER_SIDE_PANEL_WIDTH + PICKER_INSET_SIDE
 
     fun height(value: Value<*>) = when (value) {
         is IntValue, is FloatValue, is BlockValue, is IntRangeValue, is FloatRangeValue -> SLIDER_ROW_HEIGHT
@@ -525,15 +527,15 @@ object ValueControls {
     private fun colorPickerLayout(value: ColorValue, rect: UiRect): ColorPickerLayout {
         // Sized to the design square, but clamped so the picker never exceeds the
         // row's actual width (which can be narrow inside column-deck modules).
-        val maxWidth = max(40F, rect.width - PICKER_INSET * 2F)
+        val maxWidth = max(40F, rect.width - PICKER_INSET_SIDE * 2F)
         val squareSize = min(PICKER_DESIGN_SQUARE, maxWidth)
-        val squareY = rect.y + ROW_HEIGHT + PICKER_INSET
+        val squareY = rect.y + ROW_HEIGHT + PICKER_INSET_TOP
         val stripY = squareY + squareSize + PICKER_GAP
         val alphaY = stripY + PICKER_STRIP_HEIGHT + PICKER_GAP
 
         // Picker is left-aligned to the row inset rather than centered, so it stops
         // floating when the row has lots of horizontal room (e.g. sidebar modules).
-        val pickerLeft = rect.x + PICKER_INSET
+        val pickerLeft = rect.x + PICKER_INSET_SIDE
         val square = UiRect(pickerLeft, squareY, squareSize, squareSize)
         val hue = UiRect(pickerLeft, stripY, squareSize, PICKER_STRIP_HEIGHT)
         val alpha = UiRect(pickerLeft, alphaY, squareSize, PICKER_STRIP_HEIGHT)
@@ -546,7 +548,7 @@ object ValueControls {
         }
 
         val panelLeft = square.right + PICKER_GAP
-        val panelRightConstraint = rect.right - PICKER_INSET
+        val panelRightConstraint = rect.right - PICKER_INSET_SIDE
         val panelWidth = max(60F, panelRightConstraint - panelLeft)
         // Match the square's vertical extent so the panel aligns visually with the
         // picker's center axis.

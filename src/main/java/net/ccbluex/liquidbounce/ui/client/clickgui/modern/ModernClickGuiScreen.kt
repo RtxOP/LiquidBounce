@@ -741,8 +741,11 @@ object ModernClickGuiScreen : GuiScreen() {
         val label = trimText(Fonts.fontRegular30, category.displayName, maxLabelWidth)
         val iconX = row.x + rowPadding
         val labelX = iconX + iconSize + iconGap
+        // Centered via the same (+2F) correction PopupScreen uses for fontRegular35
+        // buttons; centeredTextY in this file is tuned for the column-deck header,
+        // which is too aggressive here (visible glyph lands above the icon).
         val iconY = row.y + (row.height - iconSize) / 2F
-        val labelY = row.y + (row.height - Fonts.fontRegular30.FONT_HEIGHT) / 2F
+        val labelY = row.y + (row.height - Fonts.fontRegular30.FONT_HEIGHT) / 2F + 2F
         drawImage(category.iconResourceLocation, iconX, iconY, iconSize.toInt(), iconSize.toInt(), textColor)
         Fonts.fontRegular30.drawString(label, labelX, labelY, textColor.rgb)
     }
