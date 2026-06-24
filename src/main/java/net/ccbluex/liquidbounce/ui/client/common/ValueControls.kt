@@ -676,7 +676,7 @@ object ValueControls {
         )
 
         val color = value.get()
-        drawColorSidePanelHex(rows.hexField, color, value, state)
+        drawColorSidePanelHex(rows.hexField, color, value, state, theme)
         drawColorSidePanelChannel(rows.redRow,   "R", color.red,   Color(225, 78, 78), theme)
         drawColorSidePanelChannel(rows.greenRow, "G", color.green, Color(77, 196, 110), theme)
         drawColorSidePanelChannel(rows.blueRow,  "B", color.blue,  Color(88, 142, 242), theme)
@@ -687,7 +687,8 @@ object ValueControls {
         field: UiRect,
         color: Color,
         value: ColorValue,
-        state: ValueControlState
+        state: ValueControlState,
+        theme: UiTheme,
     ) {
         // focusedText is shared across all value rows. Identify the focused
         // instance by reference against this row's ColorValue — startDragging
@@ -1040,9 +1041,9 @@ object ValueControls {
                 val intValue = (fx * 255F).roundToInt()
                 val cur = value.get()
                 val next = when (component) {
-                    SliderType.RED -> Color(intValue, cur.green, cur.blue, cur.alpha, true)
-                    SliderType.GREEN -> Color(cur.red, intValue, cur.blue, cur.alpha, true)
-                    SliderType.BLUE -> Color(cur.red, cur.green, intValue, cur.alpha, true)
+                    SliderType.RED -> Color(intValue, cur.green, cur.blue, cur.alpha)
+                    SliderType.GREEN -> Color(cur.red, intValue, cur.blue, cur.alpha)
+                    SliderType.BLUE -> Color(cur.red, cur.green, intValue, cur.alpha)
                     else -> cur
                 }
                 if (value.rainbow) value.rainbow = false
