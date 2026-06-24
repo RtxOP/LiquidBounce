@@ -8,14 +8,12 @@ package net.ccbluex.liquidbounce.ui.client.clickgui.modern
 import net.ccbluex.liquidbounce.utils.client.ClientUtils.LOGGER
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.minecraft.client.gui.ScaledResolution
-import net.minecraft.client.renderer.GlStateManager.glGetInteger
 import net.minecraft.client.shader.Framebuffer
 import org.lwjgl.opengl.GL11.*
 import org.lwjgl.opengl.GL12.GL_CLAMP_TO_EDGE
 import org.lwjgl.opengl.GL13.GL_TEXTURE0
 import org.lwjgl.opengl.GL13.glActiveTexture
-import org.lwjgl.opengl.GL20.GL_CURRENT_PROGRAM
-import org.lwjgl.opengl.GL20.glUseProgram
+import org.lwjgl.opengl.GL20.*
 import kotlin.math.max
 
 /**
