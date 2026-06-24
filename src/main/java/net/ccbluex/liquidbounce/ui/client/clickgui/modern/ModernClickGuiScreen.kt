@@ -332,14 +332,34 @@ object ModernClickGuiScreen : GuiScreen() {
     }
 
     private fun drawShadow(rect: UiRect, radius: Float, strong: Boolean = false) {
+        // GPU-side drop shadow: the actual Gaussian blur lives in
+        // SmoothShadowRenderer (separable 2-pass kernel, mirroring how
+        // browsers render CSS box-shadow). We only supply the mask shape.
+        // On the FAST profile the blur pass is skipped — a few stamped layers
+        // are cheap to reproduce natively at very low visual cost.
         if (themeProfile == UiPerformanceProfile.FAST) {
             drawRoundedRect(rect.x + 1F, rect.y + 1F, rect.right + 1F, rect.bottom + 1F, Color(0, 0, 0, 72).rgb, radius)
             return
         }
 
-        val alpha = if (strong) 118 else 82
-        drawRoundedRect(rect.x + 3F, rect.y + 4F, rect.right + 3F, rect.bottom + 4F, Color(0, 0, 0, alpha).rgb, radius)
-        drawRoundedRect(rect.x + 1F, rect.y + 2F, rect.right + 1F, rect.bottom + 2F, Color(0, 0, 0, alpha / 2).rgb, radius)
+        val blurR = if (strong) 22F else 16F
+        val canvasW = rect.width + 2F * blurR
+        val canvasH = rect.height + 2F * blurR
+        val mx = blurR
+        val my = blurR
+        val shadowRgb = Color(0, 0, 0, if (strong) 110 else 90).rgb
+
+        SmoothShadowRenderer.draw(
+            canvasW = canvasW,
+            canvasH = canvasH,
+            destX = rect.x - blurR,
+            destY = rect.y - blurR,
+            blurRadius = blurR,
+        ) {
+            // Any shape the caller renders here becomes the α-mask source.
+            // Gladly shadow a rounded rect, text, an icon — anything.
+            drawRoundedRect(mx, my, mx + rect.width, my + rect.height, shadowRgb, radius)
+        }
     }
 
     private fun drawSurface(rect: UiRect, color: Color, radius: Float, shadow: Boolean = false, borderAlpha: Int = 120) {
