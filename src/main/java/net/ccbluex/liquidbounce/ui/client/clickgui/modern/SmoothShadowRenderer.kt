@@ -39,6 +39,15 @@ import kotlin.math.max
  *  4. Composite ping FBO onto MC's main framebuffer at (destX, destY) using
  *     premultiplied alpha (GL_ONE, GL_ONE_MINUS_SRC_ALPHA), so the shadow
  *     correctly blends over previously-rendered UI underneath.
+ *
+ * Coordinate scaling: the shader's [ShadowBlurShader] interprets the blur
+ * radius against [sourceSize], which matches the caller's canvas dimensions
+ * (i.e. unscaled CV pixels), not the FBO pixel dimensions. The FBO is sized
+ * canvasW*scale × canvasH*scale to keep the mask crisp at >1 GUI scales,
+ * but [blurRadius] itself must stay in canvas-space. Multiplying it by
+ * [scale] would over-shoot the halo by an extra factor of `scale` and the
+ * outer ring would clamp to the FBO edge — effectively erasing the shadow at
+ * any GUI scale above 1.
  */
 object SmoothShadowRenderer : MinecraftInstance {
     private val blurShader = ShadowBlurShader()
@@ -95,7 +104,7 @@ object SmoothShadowRenderer : MinecraftInstance {
             pongFbo!!.framebufferClear()
             glViewport(0, 0, fboW, fboH)
             pushFboOrtho(canvasW.toDouble(), canvasH.toDouble())
-            runBlurPass(pingFbo!!, dir = 0, blurRadius * scale, canvasW, canvasH)
+            runBlurPass(pingFbo!!, dir = 0, blurRadius, canvasW, canvasH)
             popOrthoAndModelview()
 
             // 3. Vertical blur: pong → ping.
@@ -103,7 +112,7 @@ object SmoothShadowRenderer : MinecraftInstance {
             pingFbo!!.framebufferClear()
             glViewport(0, 0, fboW, fboH)
             pushFboOrtho(canvasW.toDouble(), canvasH.toDouble())
-            runBlurPass(pongFbo!!, dir = 1, blurRadius * scale, canvasW, canvasH)
+            runBlurPass(pongFbo!!, dir = 1, blurRadius, canvasW, canvasH)
             popOrthoAndModelview()
 
             // 4. Composite onto MC framebuffer.

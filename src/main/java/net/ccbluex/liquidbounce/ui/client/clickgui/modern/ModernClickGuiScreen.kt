@@ -347,7 +347,13 @@ object ModernClickGuiScreen : GuiScreen() {
         val canvasH = rect.height + 2F * blurR
         val mx = blurR
         val my = blurR
-        val shadowRgb = Color(0, 0, 0, if (strong) 110 else 90).rgb
+        // The mask is written into the FBO with non-premultiplied blending
+        // (GL_SRC_ALPHA), then composited back with GL_ONE — so the alpha
+        // gets effectively squared (peak dst-darkening is mask.a²). To make
+        // the shadow match the legacy layered shading when it does reach the
+        // screen, the mask is bumped to roughly √0.5 ≈ 0.71 ≙ 180 here so
+        // the visible halo darkens by ~50% at the strongest point.
+        val shadowRgb = Color(0, 0, 0, if (strong) 213 else 200).rgb
 
         SmoothShadowRenderer.draw(
             canvasW = canvasW,
