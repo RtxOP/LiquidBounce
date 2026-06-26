@@ -18,9 +18,11 @@ import net.ccbluex.liquidbounce.config.ListValue
 import net.ccbluex.liquidbounce.config.RangeSlider
 import net.ccbluex.liquidbounce.config.TextValue
 import net.ccbluex.liquidbounce.config.Value
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.SbPickerShader
 import net.ccbluex.liquidbounce.utils.ui.EditableText
@@ -1082,6 +1084,23 @@ object ValueControls {
     private fun drawSliderFill(track: UiRect, fromX: Float, toX: Float, color: Color) {
         val start = min(fromX, toX).coerceIn(track.x, track.right)
         val end = max(fromX, toX).coerceIn(track.x, track.right)
+
+        if (end <= start) {
+            return
+        }
+
+        if (ThemeResolver.gradientEnabled) {
+            // Horizontal accent → accentMuted gradient tracks the active theme.
+            // Rounded ends preserved via drawRoundedGradientRect so the slider
+            // keeps the same pill geometry as the solid fallback.
+            val centerY = sliderCenterY(track)
+            val halfHeight = SLIDER_FILL_HEIGHT / 2F
+            drawRoundedGradientRect(
+                start, centerY - halfHeight, end, centerY + halfHeight,
+                color.rgb, ThemeResolver.current.accentMuted.rgb, halfHeight
+            )
+            return
+        }
 
         drawSliderSegment(track, start, end, SLIDER_FILL_HEIGHT, color)
     }

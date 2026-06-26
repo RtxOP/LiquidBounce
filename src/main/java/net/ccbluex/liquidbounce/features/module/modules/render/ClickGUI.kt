@@ -17,14 +17,12 @@ import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.BlackStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.LiquidBounceStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.NullStyle
 import net.ccbluex.liquidbounce.ui.client.clickgui.style.styles.SlowlyStyle
-import net.ccbluex.liquidbounce.ui.client.common.UiPerformanceProfile
 import net.minecraft.network.play.server.S2EPacketCloseWindow
 import org.lwjgl.input.Keyboard
 import java.awt.Color
 
 object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBeEnabled = false) {
     private val modernStyleNames = ModernClickGuiPreset.entries.map { it.configName }.toTypedArray()
-    private val performanceProfileNames = UiPerformanceProfile.entries.map { it.configName }.toTypedArray()
 
     private val style by choices(
         "Style",
@@ -39,7 +37,6 @@ object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBe
     val scrolls by boolean("Scrolls", true)
     val spacedModules by boolean("SpacedModules", false)
     val panelsForcedInBoundaries by boolean("PanelsForcedInBoundaries", false)
-    private val performance by choices("Performance", performanceProfileNames, UiPerformanceProfile.BALANCED.configName)
 
     private val color by color("Color", Color(0, 160, 255)) { style !in arrayOf("Slowly", "Black") }
 
@@ -48,9 +45,6 @@ object ClickGUI : Module("ClickGUI", Category.RENDER, Keyboard.KEY_RSHIFT, canBe
 
     val modernPreset
         get() = ModernClickGuiPreset.fromConfigName(style)
-
-    val performanceProfile
-        get() = UiPerformanceProfile.fromConfigName(performance)
 
     override fun onEnable() {
         updateStyle()

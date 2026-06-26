@@ -24,10 +24,11 @@ import net.ccbluex.liquidbounce.features.module.modules.render.ClickGUI
 import net.ccbluex.liquidbounce.file.FileManager.clickGuiConfig
 import net.ccbluex.liquidbounce.file.FileManager.saveConfig
 import net.ccbluex.liquidbounce.file.FileManager.valuesConfig
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.CustomTheme
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.common.UiAnimationStore
 import net.ccbluex.liquidbounce.ui.client.common.UiRect
 import net.ccbluex.liquidbounce.ui.client.common.UiSound
-import net.ccbluex.liquidbounce.ui.client.common.UiPerformanceProfile
 import net.ccbluex.liquidbounce.ui.client.common.UiTextCache
 import net.ccbluex.liquidbounce.ui.client.common.UiTheme
 import net.ccbluex.liquidbounce.ui.client.common.ValueControlState
@@ -46,7 +47,10 @@ import net.ccbluex.liquidbounce.utils.render.ColorUtils
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawImage
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedVerticalGradientRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.makeScissorBox
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.RoundedCorners
 import net.ccbluex.liquidbounce.utils.ui.isCtrlPressed
@@ -104,8 +108,16 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val EXPAND_ANIMATION_SPEED = 16F
     private const val SCROLL_ANIMATION_SPEED = 20F
 
-    private var theme = UiTheme.MODERN
-    private var themeProfile = UiPerformanceProfile.BALANCED
+    private var themeEditorDraft: CustomTheme? = null
+
+    private val theme: UiTheme
+        get() = themeEditorDraft?.toUiTheme() ?: ThemeResolver.current
+    private val themeHitTargets = mutableListOf<ThemeHitTarget>()
+    private val customThemes = mutableListOf<CustomTheme>()
+    private var themeEditorOpen = false
+    private var themeEditorMode: ThemeEditorMode = ThemeEditorMode.NEW
+
+    private enum class ThemeEditorMode { NEW, EDIT }
     private val animations = UiAnimationStore()
     private val textCache = UiTextCache()
     private val columns = linkedMapOf<Category, ColumnState>()
@@ -156,7 +168,6 @@ object ModernClickGuiScreen : GuiScreen() {
         ensureColumns()
         lastObservedScaleSetting = ClickGUI.scale
         columnDeckScaleManuallyControlled = !isDefaultColumnDeckScaleSetting(ClickGUI.scale)
-        refreshPerformanceProfile()
         textCache.clear()
     }
 
@@ -181,6 +192,25 @@ object ModernClickGuiScreen : GuiScreen() {
                 val section = parseSyntheticSection(runCatching { element.asString }.getOrNull()) ?: return@forEach
                 expandedSyntheticSections += section
             }
+        }
+
+        // Theme state lives at the top level so it survives preset switches.
+        runCatching {
+            customThemes.clear()
+            val customsArray = runCatching { json["customThemes"]?.asJsonArray }.getOrNull()
+            val parsed = CustomThemeCollection.fromJsonArray(customsArray)
+            customThemes.addAll(parsed)
+
+            val savedActiveId = runCatching { json["activeThemeId"]?.asString }.getOrNull()
+                ?: BuiltInThemes.DEFAULT_ID
+            val effectiveId = when {
+                savedActiveId.startsWith("custom:") && parsed.none { "custom:${it.name}" == savedActiveId } -> {
+                    chat("§eSaved custom theme '$savedActiveId' not found; reverting to defaults.")
+                    BuiltInThemes.DEFAULT_ID
+                }
+                else -> savedActiveId
+            }
+            ThemeResolver.setActive(effectiveId, customThemes)
         }
 
         runCatching {
@@ -259,6 +289,10 @@ object ModernClickGuiScreen : GuiScreen() {
         expandedSyntheticSections.sortedBy(SyntheticSection::name).forEach { expandedSynthetic.add(it.name) }
         root.add("expandedSyntheticSections", expandedSynthetic)
 
+        // Theme state lives at the top level so it survives preset switches.
+        root.addProperty("activeThemeId", ThemeResolver.activeId)
+        root.add("customThemes", CustomThemeCollection.toJsonArray(customThemes))
+
         val columnDeck = JsonObject()
         val columnObjects = JsonObject()
         for ((category, column) in columns) {
@@ -288,9 +322,8 @@ object ModernClickGuiScreen : GuiScreen() {
     }
 
     override fun drawScreen(mouseX: Int, mouseY: Int, partialTicks: Float) {
-        refreshPerformanceProfile()
         animations.beginFrame()
-        valueControlState.beginFrame(animationsEnabled())
+        valueControlState.beginFrame(animationsEnabled = true)
         val preset = ClickGUI.modernPreset ?: ModernClickGuiPreset.COLUMN_DECK
 
         if (preset == ModernClickGuiPreset.COLUMN_DECK) {
@@ -331,48 +364,7 @@ object ModernClickGuiScreen : GuiScreen() {
         Gui.drawRect(0, 0, width, height, theme.backgroundOverlay.rgb)
     }
 
-    private fun drawShadow(rect: UiRect, radius: Float, strong: Boolean = false) {
-        // GPU-side drop shadow: the actual Gaussian blur lives in
-        // SmoothShadowRenderer (separable 2-pass kernel, mirroring how
-        // browsers render CSS box-shadow). We only supply the mask shape.
-        // On the FAST profile the blur pass is skipped — a few stamped layers
-        // are cheap to reproduce natively at very low visual cost.
-        if (themeProfile == UiPerformanceProfile.FAST) {
-            drawRoundedRect(rect.x + 1F, rect.y + 1F, rect.right + 1F, rect.bottom + 1F, Color(0, 0, 0, 72).rgb, radius)
-            return
-        }
-
-        val blurR = if (strong) 22F else 16F
-        val canvasW = rect.width + 2F * blurR
-        val canvasH = rect.height + 2F * blurR
-        val mx = blurR
-        val my = blurR
-        // The mask is written into the FBO with non-premultiplied blending
-        // (GL_SRC_ALPHA), then composited back with GL_ONE — so the alpha
-        // gets effectively squared (peak dst-darkening is mask.a²). To make
-        // the shadow match the legacy layered shading when it does reach the
-        // screen, the mask is bumped to roughly √0.5 ≈ 0.71 ≙ 180 here so
-        // the visible halo darkens by ~50% at the strongest point.
-        val shadowRgb = Color(0, 0, 0, if (strong) 213 else 200).rgb
-
-        SmoothShadowRenderer.draw(
-            canvasW = canvasW,
-            canvasH = canvasH,
-            destX = rect.x - blurR,
-            destY = rect.y - blurR,
-            blurRadius = blurR,
-        ) {
-            // Any shape the caller renders here becomes the α-mask source.
-            // Gladly shadow a rounded rect, text, an icon — anything.
-            drawRoundedRect(mx, my, mx + rect.width, my + rect.height, shadowRgb, radius)
-        }
-    }
-
-    private fun drawSurface(rect: UiRect, color: Color, radius: Float, shadow: Boolean = false, borderAlpha: Int = 120) {
-        if (shadow) {
-            drawShadow(rect, radius)
-        }
-
+    private fun drawSurface(rect: UiRect, color: Color, radius: Float, borderAlpha: Int = 120) {
         drawRoundedRect(rect.x - 0.5F, rect.y - 0.5F, rect.right + 0.5F, rect.bottom + 0.5F, theme.border.withAlpha(borderAlpha).rgb, radius + 0.5F)
         drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, color.rgb, radius)
     }
@@ -393,8 +385,19 @@ object ModernClickGuiScreen : GuiScreen() {
         val knobX = offX + (onX - offX) * progress
         val knobY = y + inset
         val trackColor = mixColor(Color(70, 72, 82, 210), theme.accent, progress)
+        val radius = height / 2F
 
-        drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, height / 2F)
+        if (progress > 0.05F && ThemeResolver.gradientEnabled) {
+            // Gradient flavor sweeps accent → accentMuted across the track so the
+            // "on" state shows a richer fill than the muted accent used by the
+            // solid fallback. Knob stays solid white.
+            drawRoundedGradientRect(
+                x, y, x + width, y + height,
+                trackColor.rgb, theme.accentMuted.withAlpha(trackColor.alpha).rgb, radius
+            )
+        } else {
+            drawRoundedRect(x, y, x + width, y + height, trackColor.rgb, radius)
+        }
         drawRoundedRect(knobX, knobY, knobX + knobSize, knobY + knobSize, theme.textPrimary.rgb, knobSize / 2F)
     }
 
@@ -628,7 +631,7 @@ object ModernClickGuiScreen : GuiScreen() {
         val sidebar = UiRect(shell.x, shell.y, sidebarWidth, shell.height)
         val content = UiRect(sidebar.right, shell.y, shell.width - sidebarWidth, shell.height)
 
-        drawSurface(shell, theme.panelBackground, 8F, shadow = true, borderAlpha = 150)
+        drawSurface(shell, theme.panelBackground, 8F, borderAlpha = 150)
         drawRoundedRect(sidebar.x, sidebar.y, sidebar.right, sidebar.bottom, Color(8, 9, 14, 248).rgb, 8F)
         drawRect(sidebar.right, sidebar.y + 9F, sidebar.right + 1F, sidebar.bottom - 9F, theme.border.withAlpha(125).rgb)
 
@@ -811,10 +814,16 @@ object ModernClickGuiScreen : GuiScreen() {
         )
     }
 
-    private fun sidebarUtilityRows() = listOf(
-        SyntheticSection.TARGETS to "Target filters",
-        SyntheticSection.AUTO_SETTINGS to "Cloud presets"
-    )
+    private fun sidebarUtilityRows(): List<Pair<SyntheticSection, String>> {
+        val base = mutableListOf<Pair<SyntheticSection, String>>(
+            SyntheticSection.TARGETS to "Target filters",
+            SyntheticSection.AUTO_SETTINGS to "Cloud presets"
+        )
+        if (ClickGUI.modernPreset == ModernClickGuiPreset.SIDEBAR_LIST) {
+            base += SyntheticSection.THEMES to "Color presets"
+        }
+        return base
+    }
 
     private fun sidebarNavigationHeight(): Float {
         val categoryHeight = Category.entries.size * (SIDEBAR_ROW_HEIGHT + 3F)
@@ -1277,14 +1286,21 @@ object ModernClickGuiScreen : GuiScreen() {
     ) {
         val hovered = rect.contains(mouseX, mouseY)
         val active = module.state
-        val activeColor = if (module.isActive) theme.accent.withAlpha(246) else theme.accentMuted
+        val moduleActive = module.isActive
+        val activeColor = if (moduleActive) theme.accent.withAlpha(246) else theme.accentMuted
         val key = "column-module:${module.name}"
         val rowColor = mixColor(
             mixColor(theme.rowBackground.withAlpha(220), theme.rowHover.withAlpha(244), hoverProgress(key, hovered)),
             activeColor,
             activeProgress(key, active)
         )
-        drawRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb)
+        if (moduleActive && ThemeResolver.gradientEnabled) {
+            // Gradient flavor swaps the active row to a horizontal accent sweep.
+            // Only the active row gets the gradient — the rest of the column stays solid.
+            drawGradientRect(rect.x, rect.y, rect.right, rect.bottom, theme.accent.rgb, theme.accentMuted.rgb, 0F)
+        } else {
+            drawRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb)
+        }
 
         val name = trimText(Fonts.fontRegular35, module.getName(), rect.width - 12F)
         Fonts.fontRegular35.drawString(name, rect.x + 6F, rect.y + 5F, theme.textPrimary.rgb)
@@ -1628,17 +1644,6 @@ object ModernClickGuiScreen : GuiScreen() {
 
     override fun doesGuiPauseGame() = false
 
-    private fun refreshPerformanceProfile() {
-        val profile = ClickGUI.performanceProfile
-        if (profile == themeProfile) {
-            return
-        }
-
-        themeProfile = profile
-        theme = UiTheme.MODERN.forPerformanceProfile(profile)
-        textCache.clear()
-    }
-
     private fun trimText(font: FontRenderer, text: String, maxWidth: Number) =
         textCache.trim(font, text, maxWidth.toFloat().roundToInt().coerceAtLeast(0))
 
@@ -1648,8 +1653,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun centeredTextY(font: FontRenderer, rect: UiRect) =
         rect.y + (rect.height - font.FONT_HEIGHT) / 2F + 1F
 
-    private fun animationsEnabled() =
-        themeProfile != UiPerformanceProfile.FAST
+    private fun animationsEnabled() = true
 
     private fun animatedFloat(key: String, target: Float, speed: Float) =
         animations.float(key, target, speed, animationsEnabled())
@@ -1986,6 +1990,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private fun syntheticColumnExpandedHeight(section: SyntheticSection) = when (section) {
         SyntheticSection.TARGETS -> TargetOption.entries.size * ROW_HEIGHT
         SyntheticSection.AUTO_SETTINGS -> max(1, autoSettingsList?.size ?: 1) * ROW_HEIGHT
+        SyntheticSection.THEMES -> 0F
     }
 
     private fun sidebarSyntheticContentHeight(section: SyntheticSection) = when (section) {
@@ -1998,6 +2003,7 @@ object ModernClickGuiScreen : GuiScreen() {
                 settings.size * (SIDEBAR_AUTO_SETTING_ROW_HEIGHT + SIDEBAR_MODULE_GAP)
             }
         }
+        SyntheticSection.THEMES -> 0F
     }.toFloat()
 
     private fun columnWidth(): Float {
@@ -2289,7 +2295,8 @@ object ModernClickGuiScreen : GuiScreen() {
         val description: String
     ) {
         TARGETS("Targets", "Entity filters", "Choose which entities modules may target"),
-        AUTO_SETTINGS("Auto Settings", "Cloud presets", "Browse and apply shared settings presets")
+        AUTO_SETTINGS("Auto Settings", "Cloud presets", "Browse and apply shared settings presets"),
+        THEMES("Themes", "Color presets", "Switch palette or design a custom theme")
     }
 
     private enum class TargetOption(
