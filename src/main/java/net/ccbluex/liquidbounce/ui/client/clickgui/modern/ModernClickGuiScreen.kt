@@ -24,7 +24,9 @@ import net.ccbluex.liquidbounce.features.module.modules.render.ClickGUI
 import net.ccbluex.liquidbounce.file.FileManager.clickGuiConfig
 import net.ccbluex.liquidbounce.file.FileManager.saveConfig
 import net.ccbluex.liquidbounce.file.FileManager.valuesConfig
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.BuiltInThemes
 import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.CustomTheme
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.CustomThemeCollection
 import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.common.UiAnimationStore
 import net.ccbluex.liquidbounce.ui.client.common.UiRect
@@ -553,6 +555,7 @@ object ModernClickGuiScreen : GuiScreen() {
         y = when (section) {
             SyntheticSection.TARGETS -> drawColumnTargetOptions(column, y, bodyHeight, mouseX, mouseY)
             SyntheticSection.AUTO_SETTINGS -> drawColumnAutoSettings(column, y, bodyHeight, mouseX, mouseY)
+            SyntheticSection.THEMES -> y
         }
 
         return y + 2F
@@ -996,6 +999,10 @@ object ModernClickGuiScreen : GuiScreen() {
                         y += SIDEBAR_AUTO_SETTING_ROW_HEIGHT + SIDEBAR_MODULE_GAP
                     }
                 }
+            }
+
+            SyntheticSection.THEMES -> {
+                drawSidebarThemesContent(viewport, y, mouseX, mouseY)
             }
         }
 
@@ -2391,6 +2398,13 @@ object ModernClickGuiScreen : GuiScreen() {
         val rect: UiRect,
         val action: SyntheticAction
     )
+
+    private data class ThemeHitTarget(
+        val rect: UiRect,
+        val id: String
+    )
+
+    private enum class ThemeHitKind { CARD, NEW_THEME, APPLY, RESET, DELETE, CLOSE }
 
     private data class SidebarContentLayout(
         val rect: UiRect,
