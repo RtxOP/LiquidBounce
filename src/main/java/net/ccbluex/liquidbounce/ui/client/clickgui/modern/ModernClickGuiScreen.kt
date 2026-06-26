@@ -99,6 +99,13 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val SIDEBAR_MODULE_GAP = 5F
     private const val SIDEBAR_SYNTHETIC_ROW_HEIGHT = 46F
     private const val SIDEBAR_AUTO_SETTING_ROW_HEIGHT = 58F
+    private const val SIDEBAR_THEME_CARD_WIDTH = 140F
+    private const val SIDEBAR_THEME_CARD_HEIGHT = 88F
+    private const val SIDEBAR_THEME_CARD_GAP_X = 12F
+    private const val SIDEBAR_THEME_CARD_GAP_Y = 10F
+    private const val SIDEBAR_THEME_CARD_RADIUS = 6F
+    private const val SIDEBAR_THEME_MATTE_RATIO = 0.20F
+    private const val SIDEBAR_THEME_ROW_INSET = 14F
     private const val SEARCH_HEIGHT = 18F
     private const val MAX_SEARCH_QUERY_LENGTH = 64
     private const val SETTINGS_SWITCH_WIDTH = 22F
@@ -1016,6 +1023,192 @@ object ModernClickGuiScreen : GuiScreen() {
         }
     }
 
+    private fun drawSidebarThemesContent(
+        viewport: UiRect,
+        startY: Float,
+        mouseX: Int,
+        mouseY: Int
+    ) {
+        if (themeEditorOpen) {
+            drawThemeEditorBody(viewport, startY, mouseX, mouseY)
+            return
+        }
+
+        val entries = BuiltInThemes.list.map { it.id }
+            .plus(customThemes.map { "custom:${it.name}" })
+
+        var y = startY
+        val cardColumns = max(1, ((viewport.width + SIDEBAR_THEME_CARD_GAP_X) /
+            (SIDEBAR_THEME_CARD_WIDTH + SIDEBAR_THEME_CARD_GAP_X)).toInt())
+
+        if (entries.isNotEmpty()) {
+            for ((index, id) in entries.withIndex()) {
+                val col = index % cardColumns
+                val row = index / cardColumns
+                val cardX = viewport.x + col * (SIDEBAR_THEME_CARD_WIDTH + SIDEBAR_THEME_CARD_GAP_X)
+                val cardY = y + row * (SIDEBAR_THEME_CARD_HEIGHT + SIDEBAR_THEME_CARD_GAP_Y)
+                val rect = UiRect(cardX, cardY, SIDEBAR_THEME_CARD_WIDTH, SIDEBAR_THEME_CARD_HEIGHT)
+                if (rect.bottom >= viewport.y && rect.y <= viewport.bottom) {
+                    val cardTheme = ThemeResolver.resolve(id)
+                    val active = ThemeResolver.activeId == id
+                    drawThemeCard(rect, id, activeThemeName(id), active, cardTheme, mouseX, mouseY)
+                    themeHitTargets += ThemeHitTarget(rect, id)
+                }
+            }
+            val rows = (entries.size + cardColumns - 1) / cardColumns
+            y += rows * (SIDEBAR_THEME_CARD_HEIGHT + SIDEBAR_THEME_CARD_GAP_Y)
+        }
+
+        val actionRow = UiRect(viewport.x, y, viewport.width - 5F, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        if (actionRow.bottom >= viewport.y && actionRow.y <= viewport.bottom) {
+            drawSidebarStatusRow("+ New Theme", actionRow, mouseX, mouseY)
+            syntheticActionHitTargets += SyntheticActionHitTarget(actionRow, SyntheticAction.OpenThemeEditor)
+        }
+    }
+
+    private fun activeThemeName(id: String): String {
+        if (id.startsWith("custom:")) return id.removePrefix("custom:")
+        return BuiltInThemes.byId(id)?.displayName ?: id
+    }
+
+    private fun drawThemeCard(
+        rect: UiRect,
+        id: String,
+        label: String,
+        active: Boolean,
+        cardTheme: UiTheme,
+        mouseX: Int,
+        mouseY: Int
+    ) {
+        val hovered = rect.contains(mouseX, mouseY)
+        val rowHeight = rect.height * (1F - SIDEBAR_THEME_MATTE_RATIO)
+        val matteTop = rect.y + rowHeight
+        val yMid1 = rect.y + rowHeight * 0.35F
+        val yMid2 = rect.y + rowHeight * 0.70F
+        val cardRadius = SIDEBAR_THEME_CARD_RADIUS
+
+        // Use the focused theme's colors for the card so each card is distinguishable.
+        val accent = cardTheme.accent
+        val rowHover = cardTheme.rowHover
+        val accentMuted = cardTheme.accentMuted
+        val panelBg = cardTheme.panelBackground
+        val panelHeader = cardTheme.panelHeader
+        val border = cardTheme.border
+        val textPrimary = cardTheme.textPrimary
+        val accentAlpha = if (active) 200 else 90
+
+        drawRoundedRect(rect.x - 0.5F, rect.y - 0.5F, rect.right + 0.5F, rect.bottom + 0.5F, border.withAlpha(accentAlpha).rgb, cardRadius + 0.5F)
+
+        // Layered gradient body (top 80% of card).
+        drawGradientRect(rect.x, rect.y, rect.right, yMid1, accent.rgb, rowHover.rgb, 0F)
+        drawGradientRect(rect.x, yMid1, rect.right, yMid2, rowHover.rgb, accentMuted.rgb, 0F)
+        drawGradientRect(rect.x, yMid2, rect.right, matteTop, accentMuted.rgb, panelBg.rgb, 0F)
+
+        // Bottom matte strip — flat panel header color, rounded only on the bottom.
+        drawRoundedRect(rect.x, matteTop, rect.right, rect.bottom, panelHeader.rgb, cardRadius, RoundedCorners.BOTTOM_ONLY)
+
+        // Label (matte strip only).
+        Fonts.fontSemibold35.drawCenteredString(
+            label, rect.x + rect.width / 2F, matteTop + (rect.bottom - matteTop - Fonts.fontSemibold35.FONT_HEIGHT) / 2F,
+            textPrimary.rgb
+        )
+
+        // Tick badge: top-right of the gradient body, only when this is the active id.
+        if (active) {
+            val tickSize = 7F
+            drawRoundedRect(rect.right - tickSize - 4F, rect.y + 4F, rect.right - 4F, rect.y + 4F + tickSize,
+                accent.rgb, 1.5F)
+        }
+
+        // Hover raises the border alpha; cheap visual feedback. Polished keyboard nav to come in step 14.
+        val hoverAlpha = hoverProgress("theme-card:$id", hovered)
+        if (hoverAlpha > 0.05F) {
+            drawRoundedRect(
+                rect.x - 1F, rect.y - 1F, rect.right + 1F, rect.bottom + 1F,
+                accent.withAlpha((180 * hoverAlpha).toInt().coerceIn(0, 255)).rgb,
+                cardRadius + 1F
+            )
+        }
+    }
+
+    private fun drawThemeEditorBody(
+        viewport: UiRect,
+        startY: Float,
+        mouseX: Int,
+        mouseY: Int
+    ) {
+        var y = startY
+        val draft = themeEditorDraft ?: return
+        val rowWidth = viewport.width - 5F
+        val accentRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val backgroundRow = UiRect(viewport.x, y + SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val textRow = UiRect(viewport.x, y + 2 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val gradientRow = UiRect(viewport.x, y + 3 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val actionRow = UiRect(viewport.x, y + 4 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+
+        drawThemeEditorLabeledRow("Accent", draft.accent, accentRow, mouseX, mouseY)
+        drawThemeEditorLabeledRow("Background", draft.background, backgroundRow, mouseX, mouseY)
+        drawThemeEditorLabeledRow("Text", draft.text, textRow, mouseX, mouseY)
+        drawThemeEditorGradientRow(gradientRow, mouseX, mouseY)
+        drawThemeEditorActionsRow(actionRow, mouseX, mouseY)
+    }
+
+    private fun drawThemeEditorLabeledRow(label: String, color: Color, rect: UiRect, mouseX: Int, mouseY: Int) {
+        val hovered = rect.contains(mouseX, mouseY)
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("theme-editor-row:$label", hovered))
+
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
+        drawRoundedRect(rect.right - 32F, rect.y + 11F, rect.right - 10F, rect.bottom - 11F, color.rgb, 4F)
+    }
+
+    private fun drawThemeEditorGradientRow(rect: UiRect, mouseX: Int, mouseY: Int) {
+        val draft = themeEditorDraft ?: return
+        val hovered = rect.contains(mouseX, mouseY)
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("theme-editor-row:gradient", hovered))
+
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        Fonts.fontSemibold35.drawString("Gradient", rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
+        val trackX = rect.right - 27F
+        val trackY = rect.y + (rect.height - SETTINGS_SWITCH_HEIGHT) / 2F
+        drawSwitch(draft.gradient, trackX, trackY, SETTINGS_SWITCH_WIDTH, SETTINGS_SWITCH_HEIGHT, SETTINGS_SWITCH_KNOB_SIZE, "theme-editor:gradient")
+    }
+
+    private fun drawThemeEditorActionsRow(rect: UiRect, mouseX: Int, mouseY: Int) {
+        val actions = mutableListOf<Triple<String, SyntheticAction, Boolean>>()
+        actions += Triple("Apply", SyntheticAction.ApplyCustomTheme, true)
+        actions += Triple("Reset", SyntheticAction.ResetCustomTheme, true)
+        if (themeEditorMode == ThemeEditorMode.EDIT) {
+            actions += Triple("Delete", SyntheticAction.DeleteCustomTheme, true)
+        }
+        actions += Triple("Close", SyntheticAction.CloseThemeEditor, true)
+
+        val cellWidth = (rect.width - (actions.size - 1) * 4F) / actions.size
+        actions.forEachIndexed { index, (label, action, _) ->
+            val cellRect = UiRect(
+                rect.x + index * (cellWidth + 4F),
+                rect.y,
+                cellWidth,
+                rect.height
+            )
+            val hovered = cellRect.contains(mouseX, mouseY)
+            val key = "theme-editor-action:$label"
+            val rowColor = mixColor(
+                mixColor(theme.rowBackground.withAlpha(214), theme.rowHover.withAlpha(238), hoverProgress(key, hovered)),
+                if (label == "Apply") theme.accent.withAlpha(255) else if (label == "Delete") Color(190, 70, 70, 220) else Color(70, 72, 82, 210),
+                activeProgress(key, hovered)
+            )
+            drawRoundedRect(cellRect.x, cellRect.y, cellRect.right, cellRect.bottom - 1F, rowColor.rgb, 3F)
+            Fonts.fontRegular30.drawString(
+                trimText(Fonts.fontRegular30, label, cellWidth - 10F),
+                cellRect.x + 5F,
+                cellRect.y + 5F,
+                theme.textPrimary.rgb
+            )
+            syntheticActionHitTargets += SyntheticActionHitTarget(cellRect, action)
+        }
+    }
+
     private fun drawSidebarTargetRow(target: TargetOption, rect: UiRect, mouseX: Int, mouseY: Int) {
         val hovered = rect.contains(mouseX, mouseY)
         val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("sidebar-target:${target.name}", hovered))
@@ -1460,6 +1653,18 @@ object ModernClickGuiScreen : GuiScreen() {
         }
 
         if (mouseButton == 0) {
+            for (target in themeHitTargets.asReversed()) {
+                if (!target.rect.contains(inputMouseX, inputMouseY)) {
+                    continue
+                }
+                if (ThemeResolver.activeId != target.id) {
+                    ThemeResolver.setActive(target.id, customThemes)
+                    saveConfig(clickGuiConfig)
+                    UiSound.click()
+                }
+                return
+            }
+
             for (target in syntheticActionHitTargets.asReversed()) {
                 if (!target.rect.contains(inputMouseX, inputMouseY)) {
                     continue
@@ -2208,7 +2413,111 @@ object ModernClickGuiScreen : GuiScreen() {
                 UiSound.click()
                 mc.displayGuiScreen(GuiHudDesigner())
             }
+
+            is SyntheticAction.SelectTheme -> {
+                ThemeResolver.setActive(action.id, customThemes)
+                saveConfig(clickGuiConfig)
+                UiSound.click()
+            }
+
+            SyntheticAction.OpenThemeEditor -> {
+                openThemeEditor()
+            }
+
+            SyntheticAction.CloseThemeEditor -> {
+                closeThemeEditor()
+            }
+
+            SyntheticAction.ApplyCustomTheme -> {
+                applyCustomTheme()
+            }
+
+            SyntheticAction.ResetCustomTheme -> {
+                resetCustomTheme()
+            }
+
+            SyntheticAction.DeleteCustomTheme -> {
+                deleteCustomTheme()
+            }
         }
+    }
+
+    private fun openThemeEditor() {
+        themeEditorOpen = true
+        themeEditorMode = ThemeEditorMode.NEW
+        themeEditorDraft = currentCustomDraft()
+    }
+
+    private fun currentCustomDraft(): CustomTheme {
+        val activeId = ThemeResolver.activeId
+        if (ThemeResolver.isCustom(activeId)) {
+            val existing = ThemeResolver.customThemeFor(activeId)
+            if (existing != null) {
+                themeEditorMode = ThemeEditorMode.EDIT
+                return existing.copy()
+            }
+        }
+        val seed = ThemeResolver.current
+        return CustomTheme(
+            name = "Custom",
+            accent = seed.accent,
+            background = seed.panelBackground,
+            text = seed.textPrimary,
+            gradient = ThemeResolver.gradientEnabled
+        )
+    }
+
+    private fun closeThemeEditor() {
+        themeEditorOpen = false
+    }
+
+    private fun applyCustomTheme() {
+        val draft = themeEditorDraft ?: return
+        val sanitizedName = draft.name.trim().ifBlank { "Custom" }
+        val effective = draft.copy(name = sanitizedName)
+
+        if (CustomTheme.isReservedName(sanitizedName)) {
+            chat("§eTheme name '$sanitizedName' collides with a built-in; using '$sanitizedName (copy)'.")
+            val renamed = effective.copy(name = "$sanitizedName (copy)")
+            upsertCustomTheme(renamed)
+            applyCustomActive("custom:${renamed.name}")
+            themeEditorDraft = renamed
+        } else {
+            upsertCustomTheme(effective)
+            applyCustomActive("custom:${effective.name}")
+            themeEditorDraft = effective
+        }
+        themeEditorMode = ThemeEditorMode.EDIT
+        saveConfig(clickGuiConfig)
+    }
+
+    private fun upsertCustomTheme(theme: CustomTheme) {
+        val existingIndex = customThemes.indexOfFirst { it.name == theme.name }
+        if (existingIndex >= 0) {
+            customThemes[existingIndex] = theme
+        } else {
+            customThemes.add(theme)
+        }
+    }
+
+    private fun applyCustomActive(id: String) {
+        ThemeResolver.setActive(id, customThemes)
+    }
+
+    private fun resetCustomTheme() {
+        themeEditorDraft = currentCustomDraft()
+    }
+
+    private fun deleteCustomTheme() {
+        val draft = themeEditorDraft ?: return
+        val activeId = ThemeResolver.activeId
+        if (activeId == "custom:${draft.name}") {
+            applyCustomActive(BuiltInThemes.DEFAULT_ID)
+        }
+        customThemes.removeAll { it.name == draft.name }
+        ThemeResolver.refresh(customThemes)
+        closeThemeEditor()
+        saveConfig(clickGuiConfig)
     }
 
     private fun ensureAutoSettingsRequested(force: Boolean = false) {
@@ -2340,6 +2649,12 @@ object ModernClickGuiScreen : GuiScreen() {
         data class ApplyAutoSetting(val setting: AutoSettings) : SyntheticAction()
         object RefreshAutoSettings : SyntheticAction()
         object OpenHudDesigner : SyntheticAction()
+        data class SelectTheme(val id: String) : SyntheticAction()
+        object OpenThemeEditor : SyntheticAction()
+        object CloseThemeEditor : SyntheticAction()
+        object ApplyCustomTheme : SyntheticAction()
+        object ResetCustomTheme : SyntheticAction()
+        object DeleteCustomTheme : SyntheticAction()
     }
 
     private data class ColumnState(
