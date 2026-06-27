@@ -255,7 +255,7 @@ class ScoreboardElement(
                         if (rect) {
                             val rectColorValue = when {
                                 this.rectColorUser.rainbow -> ColorUtils.rainbow(400000000L * index).rgb
-                                else -> this.rectColor
+                                else -> this.rectColor.rgb
                             }
 
                             drawRoundedRect(

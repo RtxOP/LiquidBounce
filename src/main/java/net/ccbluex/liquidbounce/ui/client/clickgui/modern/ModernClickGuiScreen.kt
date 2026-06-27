@@ -52,6 +52,7 @@ import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawImage
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedGradientRect
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedMultiStopGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawRoundedVerticalGradientRect
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawGradientRect

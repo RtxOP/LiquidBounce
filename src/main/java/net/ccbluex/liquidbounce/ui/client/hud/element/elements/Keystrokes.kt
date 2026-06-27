@@ -15,8 +15,8 @@ import net.ccbluex.liquidbounce.utils.extensions.lerpWith
 import net.ccbluex.liquidbounce.utils.extensions.safeDiv
 import net.ccbluex.liquidbounce.utils.render.ColorSettingsInteger
 import net.ccbluex.liquidbounce.utils.render.ColorUtils
+import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
-import net.ccbluex.liquidbounce.utils.render.RenderUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.withOutline
 import java.awt.Color
 import kotlin.math.nextDown
@@ -36,12 +36,12 @@ class Keystrokes : Element("Keystrokes", 2.0, 34.0) {
     ) { mode == "Custom" }
     private val rectColors = ColorSettingsInteger(
         this, "Rectangle"
-    ).with(a = 150) { mode == "Custom" }
-    private val pressColors = ColorSettingsInteger(this, "Press").with(Color.BLUE) { mode == "Custom" }
+    ) { mode == "Custom" }.with(a = 150)
+    private val pressColors = ColorSettingsInteger(this, "Press") { mode == "Custom" }.with(Color.BLUE)
     private val renderBorder by boolean("RenderBorder", false)
     private val borderColors = ColorSettingsInteger(
         this, "Border"
-    ) { renderBorder }.with(Color.BLUE) { mode == "Custom" }
+    ) { renderBorder && mode == "Custom" }.with(Color.BLUE)
     private val borderWidth by float("BorderWidth", 1.5F, 0.5F..5F) { renderBorder }
     private val onPressAnimation by choices(
         "OnPressAnimationMode", arrayOf("None", "Shrink", "Fill", "ReverseFill"), "Fill"

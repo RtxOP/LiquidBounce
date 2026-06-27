@@ -50,9 +50,9 @@ class Notifications(
     // Theme-routed colors that mirror the color/borderColor fields when
     // `mode == "Theme"`. Centralizing the routing in one place keeps the
     // `drawNotification` plumbing unchanged.
-    private val resolvedBackgroundColor: Color
+    internal val resolvedBackgroundColor: Color
         get() = if (mode == "Theme") ThemeResolver.current.panelBackground.withAlpha(128) else color
-    private val resolvedBorderColor: Color
+    internal val resolvedBorderColor: Color
         get() = if (mode == "Theme") ThemeResolver.current.accent else borderColor
 
     private val exampleNotification = Notification("Example Title", "Example Description")
