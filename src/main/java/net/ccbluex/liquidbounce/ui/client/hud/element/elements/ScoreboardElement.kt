@@ -62,8 +62,8 @@ class ScoreboardElement(
     // same names regardless of mode.
     private val textColor
         get() = if (mode == "Theme") ThemeResolver.current.textPrimary else textColorUser
-    private val rectColor
-        get() = if (mode == "Theme") ThemeResolver.current.accent else rectColorUser
+    private val rectColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.accent else rectColorUser.selectedColor()
     private val titleRectColorUsed
         get() = if (mode == "Theme") ThemeResolver.current.accentMuted.withAlpha(128) else titleRectColor
 
