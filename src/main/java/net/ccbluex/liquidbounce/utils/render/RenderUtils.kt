@@ -18,6 +18,7 @@ import net.ccbluex.liquidbounce.utils.io.flipSafely
 import net.ccbluex.liquidbounce.utils.render.animation.AnimationUtil
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.CircleShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedGradientRectShader
+import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedMultiStopGradientRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedRectShader
 import net.ccbluex.liquidbounce.utils.render.shader.shaders.RoundedTextureShader
 import net.minecraft.client.gui.FontRenderer
@@ -1207,6 +1208,48 @@ object RenderUtils : MinecraftInstance {
             top,
             bottom,
             true
+        )
+    }
+
+    /**
+     * Rounded rect whose four corners are independently colored and bilinearly
+     * interpolated across the surface. Modeled on
+     * [drawRoundedVerticalGradientRect] but uses
+     * [RoundedMultiStopGradientRectShader] so that all four corners can carry
+     * distinct colors (e.g. theme preview cards where top-left, top-right,
+     * bottom-left and bottom-right each carry a different palette role).
+     */
+    @JvmStatic
+    fun drawRoundedMultiStopGradientRect(
+        x1: Float,
+        y1: Float,
+        x2: Float,
+        y2: Float,
+        topLeftColor: Int,
+        topRightColor: Int,
+        bottomLeftColor: Int,
+        bottomRightColor: Int,
+        radius: Float,
+        cornersToRound: RoundedCorners = RoundedCorners.ALL
+    ) {
+        val (newX1, newY1, newX2, newY2) = orderPoints(x1, y1, x2, y2)
+        val clampedRadius = clampRadius(radius, newX1, newY1, newX2, newY2)
+
+        fun toFloatRgba(argb: Int): FloatArray {
+            val components = ColorUtils.unpackARGBFloatValue(argb)
+            return floatArrayOf(components[1], components[2], components[3], components[0])
+        }
+
+        RoundedMultiStopGradientRectShader.render(
+            newX1,
+            newY1,
+            newX2,
+            newY2,
+            radiiForCorners(clampedRadius, cornersToRound),
+            toFloatRgba(topLeftColor),
+            toFloatRgba(topRightColor),
+            toFloatRgba(bottomLeftColor),
+            toFloatRgba(bottomRightColor)
         )
     }
 

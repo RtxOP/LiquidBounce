@@ -38,17 +38,17 @@ object BuiltInThemes {
             description = "Soft lavender on cream",
             gradient = false,
             theme = UiTheme(
-                backgroundOverlay = Color(0, 0, 0, 64),
-                panelBackground = Color(245, 240, 250, 255),
-                panelHeader = Color(228, 220, 236, 255),
-                rowBackground = Color(250, 246, 254, 255),
-                settingsBackground = Color(238, 232, 244, 255),
-                rowHover = Color(235, 225, 242, 255),
-                accent = Color(181, 140, 235, 255),
-                accentMuted = Color(210, 190, 225, 232),
-                textPrimary = Color(62, 52, 76, 255),
-                textMuted = Color(124, 108, 138, 255),
-                border = Color(210, 198, 220, 140)
+                backgroundOverlay = Color(28, 18, 48, 96),
+                panelBackground = Color(232, 222, 244, 255),
+                panelHeader = Color(186, 162, 222, 255),
+                rowBackground = Color(244, 234, 252, 255),
+                settingsBackground = Color(214, 198, 232, 255),
+                rowHover = Color(206, 184, 232, 255),
+                accent = Color(154, 96, 222, 255),
+                accentMuted = Color(112, 70, 178, 255),
+                textPrimary = Color(48, 36, 68, 255),
+                textMuted = Color(96, 80, 124, 255),
+                border = Color(168, 144, 196, 160)
             )
         ),
 
@@ -73,7 +73,7 @@ object BuiltInThemes {
                 settingsBackground = Color(8, 14, 26, 255),
                 rowHover = Color(24, 38, 62, 255),
                 accent = Color(66, 148, 255, 255),
-                accentMuted = Color(28, 60, 108, 232),
+                accentMuted = Color(28, 60, 108, 255),
                 textPrimary = Color(236, 242, 250, 255),
                 textMuted = Color(138, 156, 180, 255),
                 border = Color(52, 72, 108, 130)
@@ -92,8 +92,8 @@ object BuiltInThemes {
                 rowBackground = Color(12, 12, 15, 255),
                 settingsBackground = Color(8, 8, 11, 255),
                 rowHover = Color(24, 24, 28, 255),
-                accent = Color(218, 218, 224, 220),
-                accentMuted = Color(60, 60, 66, 200),
+                accent = Color(218, 218, 224, 255),
+                accentMuted = Color(60, 60, 66, 255),
                 textPrimary = Color(244, 244, 244, 255),
                 textMuted = Color(150, 150, 154, 255),
                 border = Color(38, 38, 42, 130)
@@ -113,7 +113,7 @@ object BuiltInThemes {
                 settingsBackground = Color(8, 16, 12, 255),
                 rowHover = Color(22, 42, 32, 255),
                 accent = Color(90, 196, 138, 255),
-                accentMuted = Color(32, 80, 58, 232),
+                accentMuted = Color(32, 80, 58, 255),
                 textPrimary = Color(232, 242, 236, 255),
                 textMuted = Color(138, 168, 150, 255),
                 border = Color(44, 72, 56, 130)
@@ -133,7 +133,7 @@ object BuiltInThemes {
                 settingsBackground = Color(22, 10, 6, 255),
                 rowHover = Color(60, 30, 22, 255),
                 accent = Color(255, 126, 82, 255),
-                accentMuted = Color(120, 56, 32, 232),
+                accentMuted = Color(120, 56, 32, 255),
                 textPrimary = Color(250, 238, 228, 255),
                 textMuted = Color(180, 140, 124, 255),
                 border = Color(88, 44, 28, 130)

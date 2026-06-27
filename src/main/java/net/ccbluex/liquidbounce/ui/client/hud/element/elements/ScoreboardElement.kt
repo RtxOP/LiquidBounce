@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.ui.client.hud.element.elements
 
 import net.ccbluex.liquidbounce.LiquidBounce.CLIENT_NAME
 import net.ccbluex.liquidbounce.LiquidBounce.CLIENT_WEBSITE
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.hud.element.Border
 import net.ccbluex.liquidbounce.ui.client.hud.element.Element
 import net.ccbluex.liquidbounce.ui.client.hud.element.ElementInfo
@@ -40,17 +41,31 @@ import kotlin.math.abs
 class ScoreboardElement(
     x: Double = 11.0, y: Double = 100.0, scale: Float = 1F, side: Side = Side(Side.Horizontal.LEFT, Side.Vertical.MIDDLE)
 ) : Element("Scoreboard", x, y, scale, side) {
-    private val textColor by color("TextColor", Color.WHITE)
-    private val backgroundColor by color("BackgroundColor", Color.BLACK.withAlpha(128))
+    // HUD ↔ theme propagation: ColorMode gates between the user's Custom
+    // colors and the active `ThemeResolver.current` palette. Default Theme
+    // so existing layouts pick up the new system on first launch.
+    private val mode by choices("ColorMode", arrayOf("Custom", "Theme"), "Theme")
+    private val textColorUser by color("TextColor", Color.WHITE) { mode == "Custom" }
+    private val backgroundColor by color("BackgroundColor", Color.BLACK.withAlpha(128)) { mode == "Custom" }
     private val roundedRectRadius by float("Rounded-Radius", 3F, 0F..5F)
 
     private val rect by boolean("Rect", true)
-    private val rectColor = color("RectangleColor", Color(0, 111, 255)) { rect }
+    private val rectColorUser = color("RectangleColor", Color(0, 111, 255)) { rect && mode == "Custom" }
 
     private val drawRectOnTitle by boolean("DrawRectOnTitle", true)
-    private val titleRectColor by color("TitleRectColor", Color.BLACK.withAlpha(128)) { drawRectOnTitle }
+    private val titleRectColor by color("TitleRectColor", Color.BLACK.withAlpha(128)) { drawRectOnTitle && mode == "Custom" }
     private val titleRectExtraHeight by int("TitleRectExtraHeight", 5, 0..20) { drawRectOnTitle }
     private val rectHeightPadding by int("TitleRectHeightPadding", 0, 0..10) { drawRectOnTitle }
+
+    // Theme-routed colors that mirror the user's `*Color` fields when
+    // `mode == "Theme"`. Kept as separate vals so the draw loop reads the
+    // same names regardless of mode.
+    private val textColor
+        get() = if (mode == "Theme") ThemeResolver.current.textPrimary else textColorUser
+    private val rectColor
+        get() = if (mode == "Theme") ThemeResolver.current.accent else rectColorUser
+    private val titleRectColorUsed
+        get() = if (mode == "Theme") ThemeResolver.current.accentMuted.withAlpha(128) else titleRectColor
 
     private val serverIp by choices("ServerIP", arrayOf("Normal", "None", "Client", "Website"), "Normal")
     private val number by boolean("Number", false)
@@ -222,7 +237,7 @@ class ScoreboardElement(
                         } else title
 
                         if (drawRectOnTitle) {
-                            drawRect(minX, -(4 + inc), maxX, fontHeight - inc + rectHeightPadding, titleRectColor.rgb)
+                            drawRect(minX, -(4 + inc), maxX, fontHeight - inc + rectHeightPadding, titleRectColorUsed.rgb)
                         }
 
                         glColor4f(1f, 1f, 1f, 1f)
@@ -238,9 +253,9 @@ class ScoreboardElement(
 
                     indexRects += {
                         if (rect) {
-                            val rectColor = when {
-                                this.rectColor.rainbow -> ColorUtils.rainbow(400000000L * index).rgb
-                                else -> this.rectColor.selectedColor().rgb
+                            val rectColorValue = when {
+                                this.rectColorUser.rainbow -> ColorUtils.rainbow(400000000L * index).rgb
+                                else -> this.rectColor
                             }
 
                             drawRoundedRect(
@@ -248,7 +263,7 @@ class ScoreboardElement(
                                 (if (index == scoreCollection.size - 1) -2F else height) - inc - 2F,
                                 (if (side.horizontal != Side.Horizontal.LEFT) maxX else minX).toFloat(),
                                 (if (index == 0) fontHeight.toFloat() else height + fontHeight * 2F) + 2F,
-                                rectColor,
+                                rectColorValue,
                                 roundedRectRadius,
                                 if (side.horizontal != Side.Horizontal.LEFT) {
                                     RenderUtils.RoundedCorners.RIGHT_ONLY

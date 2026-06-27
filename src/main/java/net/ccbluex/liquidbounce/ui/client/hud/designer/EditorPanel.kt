@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.ui.client.hud.designer
 
 import net.ccbluex.liquidbounce.file.FileManager.hudConfig
 import net.ccbluex.liquidbounce.file.FileManager.saveConfig
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.common.UiRect
 import net.ccbluex.liquidbounce.ui.client.common.UiSound
 import net.ccbluex.liquidbounce.ui.client.common.UiTheme
@@ -48,7 +49,12 @@ class EditorPanel(private val hudDesigner: GuiHudDesigner, var x: Int, var y: In
     private var showConfirmation = false
     private var scroll = 0
 
-    private val theme = UiTheme.MODERN
+    // Issue 13 — HUD designer's chrome reads from the active Modern ClickGUI
+    // theme rather than the static MODERN default. Routes through a per-call
+    // getter so theme card picks (and editor-draft previews) propagate into
+    // the HUD designer without re-creating the panel.
+    private val theme: UiTheme
+        get() = ThemeResolver.current
     private val valueControlState = ValueControlState()
 
     var create = false

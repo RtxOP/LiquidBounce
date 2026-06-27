@@ -194,8 +194,11 @@ object ValueControls {
     private const val PICKER_STRIP_HEIGHT = 8F
     private const val PICKER_CORNER_RADIUS = 3F
     private const val PICKER_KNOB_RADIUS = 4F
-    private const val PICKER_DESIGN_SQUARE = 110F
-    private const val PICKER_DESIGN_TOTAL =
+    // Public so out-of-row callers (e.g. the custom-theme editor in
+    // ModernClickGuiScreen) can size the picker's anchor rectangle to match
+    // the layout the picker would claim if it were a real ColorValue row.
+    const val PICKER_DESIGN_SQUARE = 110F
+    const val PICKER_DESIGN_TOTAL =
         PICKER_INSET_TOP + PICKER_DESIGN_SQUARE + (PICKER_GAP + PICKER_STRIP_HEIGHT) * 2F + PICKER_INSET_BOTTOM
 
     // Side panel (HEX entry + R/G/B/A mini-sliders) appears beside the picker when
@@ -510,7 +513,12 @@ object ValueControls {
         drawColorPicker(value, rect, theme, state)
     }
 
-    private data class ColorPickerLayout(
+    /**
+     * Layout produced by [colorPickerLayout]. Public so external renderers
+     * (e.g. the theme editor) can mirror the picker's geometry for hit-testing
+     * or for sizing sibling UI without re-deriving the geometry constants.
+     */
+    data class ColorPickerLayout(
         val square: UiRect,
         val hueStrip: UiRect,
         val alphaStrip: UiRect,
@@ -518,7 +526,12 @@ object ValueControls {
         val sidePanelRows: SidePanelRows?,
     )
 
-    private data class SidePanelRows(
+    /**
+     * Layout for the optional side panel (HEX + RGB/Alpha sliders) that
+     * appears next to the HSB square on wide rows. See
+     * [colorPickerLayout] for the conditions under which it is rendered.
+     */
+    data class SidePanelRows(
         val hexField: UiRect,
         val redRow: UiRect,
         val greenRow: UiRect,
@@ -526,7 +539,7 @@ object ValueControls {
         val alphaRow: UiRect,
     )
 
-    private fun colorPickerLayout(value: ColorValue, rect: UiRect): ColorPickerLayout {
+    fun colorPickerLayout(value: ColorValue, rect: UiRect): ColorPickerLayout {
         // Sized to the design square, but clamped so the picker never exceeds the
         // row's actual width (which can be narrow inside column-deck modules).
         val maxWidth = max(40F, rect.width - PICKER_INSET_SIDE * 2F)
@@ -567,7 +580,7 @@ object ValueControls {
         return ColorPickerLayout(square, hue, alpha, panel, rows)
     }
 
-    private fun drawColorPicker(value: ColorValue, rect: UiRect, theme: UiTheme, state: ValueControlState) {
+    fun drawColorPicker(value: ColorValue, rect: UiRect, theme: UiTheme, state: ValueControlState) {
         val layout = colorPickerLayout(value, rect)
         val radius = PICKER_CORNER_RADIUS
 
@@ -951,7 +964,7 @@ object ValueControls {
         return changed
     }
 
-    private fun colorPickerZoneAt(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): SliderType? {
+    fun colorPickerZoneAt(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): SliderType? {
         if (!value.showPicker) return null
         val layout = colorPickerLayout(value, rect)
         val padX = PICKER_KNOB_RADIUS
@@ -988,7 +1001,7 @@ object ValueControls {
     }
 
     /** True iff the cursor hits the side panel's HEX field (for click routing). */
-    private fun colorPickerHexHit(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): Boolean {
+    fun colorPickerHexHit(value: ColorValue, rect: UiRect, mouseX: Int, mouseY: Int): Boolean {
         if (!value.showPicker) return false
         val rows = colorPickerLayout(value, rect).sidePanelRows ?: return false
         val fx = rows.hexField.x.toFloat()
@@ -998,7 +1011,7 @@ object ValueControls {
         return mouseX.toFloat() in fx..fr && mouseY.toFloat() in fy..fb
     }
 
-    private fun updateColorPicker(
+    fun updateColorPicker(
         value: ColorValue,
         rect: UiRect,
         mouseX: Int,

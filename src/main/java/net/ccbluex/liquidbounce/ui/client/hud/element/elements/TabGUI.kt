@@ -8,6 +8,7 @@ package net.ccbluex.liquidbounce.ui.client.hud.element.elements
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.ModuleManager
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.hud.element.Border
 import net.ccbluex.liquidbounce.ui.client.hud.element.Element
 import net.ccbluex.liquidbounce.ui.client.hud.element.ElementInfo
@@ -32,22 +33,37 @@ import kotlin.math.abs
 @ElementInfo(name = "TabGUI")
 class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = y) {
 
-    private val rectColor = color("RectangleColor", Color(0, 148, 255, 140))
+    // HUD ↔ theme propagation: ColorMode gates between the user's Custom
+    // colors and the active `ThemeResolver.current` palette. Default Theme
+    // so existing layouts pick up the new system on first launch.
+    private val mode by choices("ColorMode", arrayOf("Custom", "Theme"), "Theme")
+
+    private val rectColorUser = color("RectangleColor", Color(0, 148, 255, 140)) { mode == "Custom" }
 
     private val rectRainbow
-        get() = rectColor.rainbow && rectColor.isSupported()
+        get() = mode == "Custom" && rectColorUser.rainbow && rectColorUser.isSupported()
 
     private val roundedRectRadius by float("Rounded-Radius", 3F, 0F..5F)
 
-    private val bgColor by color("BackgroundColor", Color.BLACK.withAlpha(150))
+    private val bgColor by color("BackgroundColor", Color.BLACK.withAlpha(150)) { mode == "Custom" }
 
     private val borderValue by boolean("Border", false)
     private val borderStrength by float("Border-Strength", 2F, 1F..5F) { borderValue }
 
-    private val borderColor = color("BorderColor", Color.BLACK.withAlpha(150)) { borderValue }
+    private val borderColor = color("BorderColor", Color.BLACK.withAlpha(150)) { borderValue && mode == "Custom" }
 
     private val borderRainbow
-        get() = borderColor.rainbow && borderColor.isSupported()
+        get() = borderValue && mode == "Custom" && borderColor.rainbow && borderColor.isSupported()
+
+    // Theme-routed getters mirroring the user-defined color fields. The
+    // drawing code reads through these getters so the rendering is identical
+    // when ColorMode == "Theme" or "Custom".
+    private val rectColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.accent else rectColorUser.selectedColor()
+    private val resolvedBgColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.panelBackground.withAlpha(150) else bgColor
+    private val resolvedBorderColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.accentMuted else borderColor.selectedColor()
 
     private val rainbowX by float("Rainbow-X", -1000F, -2000F..2000F) { rectRainbow || (borderValue && borderRainbow) }
     private val rainbowY by float("Rainbow-Y", -1000F, -2000F..2000F) { rectRainbow || (borderValue && borderRainbow) }
@@ -59,7 +75,7 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
         "UseRectangleColorForChosenIconColor", true
     ) { displayIcons }
     private val iconCategoryChosenColor by color(
-        "IconChosenCategoryColor", rectColor.selectedColor()
+        "IconChosenCategoryColor", rectColorUser.selectedColor()
     ) { displayIcons && !useRectangleColorForChosenIconColor }
     private val iconNonChosenCategoryColor by color("IconNonChosenCategoryColor", Color.WHITE) { displayIcons }
     private val iconShadows by boolean("IconShadows", true) { displayIcons }
@@ -107,7 +123,10 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
     override fun drawElement(): Border {
         updateAnimation()
 
-        val borderColor = if (borderRainbow) Color.black else borderColor.selectedColor()
+        // Resolved border color — looks up Theme palette when `mode == "Theme"`,
+        // otherwise reads the user's selected color. Rainbow still wins when the
+        // user is on Custom (it's a per-element user choice, not a theme choice).
+        val resolvedBorder = if (borderRainbow) Color.black else resolvedBorderColor
 
         // Draw
         val guiHeight = tabs.size * tabHeight
@@ -132,11 +151,11 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
         }
 
         AWTFontRenderer.assumeNonVolatile {
-            val rectColor = if (rectRainbow) Color.black else rectColor.selectedColor()
+            val resolvedRect = if (rectRainbow) Color.black else rectColor
 
             withClipping(main = {
                 drawRoundedRect(
-                    2F, 0F, widthWithPadding, guiHeight, bgColor.rgb, roundedRectRadius, if (displayIcons) {
+                    2F, 0F, widthWithPadding, guiHeight, resolvedBgColor.rgb, roundedRectRadius, if (displayIcons) {
                         corners[if (side.horizontal != Side.Horizontal.RIGHT) 0 else 1]
                     } else {
                         RenderUtils.RoundedCorners.ALL
@@ -160,7 +179,7 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
                     if (rainbowY == 0f) 0f else 1f / rainbowY,
                     System.currentTimeMillis() % 10000 / 10000F
                 ).use {
-                    drawRect(2F, 1 + tabY - 1, widthWithPadding, tabY + tabHeight, rectColor)
+                    drawRect(2F, 1 + tabY - 1, widthWithPadding, tabY + tabHeight, resolvedRect)
                 }
             })
 
@@ -213,9 +232,9 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
                     tab.drawTab(
                         tabX,
                         y,
-                        rectColor.rgb,
-                        bgColor.rgb,
-                        borderColor.rgb,
+                        resolvedRect.rgb,
+                        resolvedBgColor.rgb,
+                        resolvedBorder.rgb,
                         borderStrength,
                         font,
                         borderRainbow,
@@ -231,7 +250,7 @@ class TabGUI(x: Double = 16.0, y: Double = 43.0) : Element("TabGUI", x = x, y = 
                         System.currentTimeMillis() % 10000 / 10000F
                     ).use {
                         drawRoundedBorder(
-                            borderX1, 0F, borderX2, guiHeight, borderStrength, borderColor.rgb, roundedRectRadius
+                            borderX1, 0F, borderX2, guiHeight, borderStrength, resolvedBorder.rgb, roundedRectRadius
                         )
                     }
                 }

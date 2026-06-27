@@ -7,6 +7,7 @@ package net.ccbluex.liquidbounce.ui.client.hud.element.elements
 
 
 import net.ccbluex.liquidbounce.features.module.Module
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.hud.HUD.addNotification
 import net.ccbluex.liquidbounce.ui.client.hud.HUD.notifications
 import net.ccbluex.liquidbounce.ui.client.hud.designer.GuiHudDesigner
@@ -37,10 +38,22 @@ class Notifications(
     val horizontalFade by choices("HorizontalFade", arrayOf("InOnly", "OutOnly", "Both", "None"), "OutOnly")
     val padding by int("Padding", 5, 1..20)
     val roundRadius by float("RoundRadius", 3f, 0f..10f)
-    val color by color("BackgroundColor", Color.BLACK.withAlpha(128))
+    // HUD ↔ theme propagation: ColorMode gates between the user's Custom
+    // background + border colors and the active `ThemeResolver.current`
+    // palette. Default Theme so existing layouts pick up the new system.
+    val mode by choices("ColorMode", arrayOf("Custom", "Theme"), "Theme")
+    val color by color("BackgroundColor", Color.BLACK.withAlpha(128)) { mode == "Custom" }
     val renderBorder by boolean("RenderBorder", false)
-    val borderColor by color("BorderColor", Color.BLUE.withAlpha(255)) { renderBorder }
+    val borderColor by color("BorderColor", Color.BLUE.withAlpha(255)) { renderBorder && mode == "Custom" }
     val borderWidth by float("BorderWidth", 2f, 0.5F..5F) { renderBorder }
+
+    // Theme-routed colors that mirror the color/borderColor fields when
+    // `mode == "Theme"`. Centralizing the routing in one place keeps the
+    // `drawNotification` plumbing unchanged.
+    private val resolvedBackgroundColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.panelBackground.withAlpha(128) else color
+    private val resolvedBorderColor: Color
+        get() = if (mode == "Theme") ThemeResolver.current.accent else borderColor
 
     private val exampleNotification = Notification("Example Title", "Example Description")
 
@@ -170,7 +183,7 @@ class Notification(
             else -> x
         }
 
-        drawRoundedRect(0F, -y - MAX_HEIGHT, -currentX - extraSpace, -y, element.color.rgb, element.roundRadius)
+        drawRoundedRect(0F, -y - MAX_HEIGHT, -currentX - extraSpace, -y, element.resolvedBackgroundColor.rgb, element.roundRadius)
 
         if (element.renderBorder) {
             drawRoundedBorder(
@@ -179,7 +192,7 @@ class Notification(
                 -currentX - extraSpace,
                 -y,
                 element.borderWidth,
-                element.borderColor.rgb,
+                element.resolvedBorderColor.rgb,
                 element.roundRadius
             )
         }

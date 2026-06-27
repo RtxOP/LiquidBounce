@@ -9,6 +9,7 @@ import net.ccbluex.liquidbounce.LiquidBounce.moduleManager
 import net.ccbluex.liquidbounce.config.Configurable
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.misc.GameDetector
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.hud.designer.GuiHudDesigner
 import net.ccbluex.liquidbounce.ui.client.hud.element.Border
 import net.ccbluex.liquidbounce.ui.client.hud.element.Element
@@ -46,7 +47,7 @@ class Arraylist(
 ) : Element("Arraylist", x, y, scale, side) {
 
     private val textColorMode by choices(
-        "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient"), "Custom"
+        "Text-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
     )
     private val textColors = ColorSettingsInteger(this, "TextColor") { textColorMode == "Custom" }.with(blueRibbon)
     private val textFadeColors = ColorSettingsInteger(this, "Text-Fade") { textColorMode == "Fade" }.with(0, 111, 255)
@@ -64,7 +65,7 @@ class Arraylist(
     private val rectMode by choices("Rect-Mode", arrayOf("None", "Left", "Right", "Outline"), "Right")
     private val roundedRectRadius by float("RoundedRect-Radius", 0F, 0F..2F) { rectMode !in setOf("None", "Outline") }
     private val rectColorMode by choices(
-        "Rect-ColorMode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient"), "Custom"
+        "Rect-ColorMode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
     ) { rectMode != "None" }
     private val rectColors =
         ColorSettingsInteger(this, "RectColor", applyMax = true) { isCustomRectSupported }.with(blueRibbon)
@@ -84,7 +85,7 @@ class Arraylist(
     private val roundedBackgroundRadius by float("RoundedBackGround-Radius", 1F, 0F..5F) { bgColors.color().alpha > 0 }
 
     private val backgroundMode by choices(
-        "Background-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient"), "Custom"
+        "Background-Mode", arrayOf("Custom", "Fade", "Random", "Rainbow", "Gradient", "Theme"), "Custom"
     )
     private val bgColors =
         ColorSettingsInteger(this, "BackgroundColor") { backgroundMode == "Custom" }.with(Color.BLACK.withAlpha(150))
@@ -111,7 +112,7 @@ class Arraylist(
     private val shadowColor by color("ShadowColor", Color.BLACK.withAlpha(128), rainbow = true) { iconShadows }
 
     private val iconColorMode by choices(
-        "IconColorMode", arrayOf("Custom", "Fade"), "Custom"
+        "IconColorMode", arrayOf("Custom", "Fade", "Theme"), "Custom"
     ) { displayIcons }
     private val iconColor by color("IconColor", Color.WHITE) { iconColorMode == "Custom" && displayIcons }
     private val iconFadeColor by color("IconFadeColor", Color.WHITE) { iconColorMode == "Fade" && displayIcons }
@@ -260,6 +261,13 @@ class Arraylist(
             val gradientX = 1f safeDiv gradientX
             val gradientY = 1f safeDiv gradientY
 
+            val activeTheme = ThemeResolver.current
+            val moduleCount = modules.size.coerceAtLeast(1)
+            val isTextTheme = textColorMode == "Theme"
+            val isRectTheme = rectColorMode == "Theme"
+            val isBackgroundTheme = backgroundMode == "Theme"
+            val isIconTheme = iconColorMode == "Theme"
+
             modules.forEachIndexed { index, module ->
                 var yPos =
                     (if (side.vertical == Vertical.DOWN) -textSpacer else textSpacer) * if (side.vertical == Vertical.DOWN) index + 1 else index
@@ -281,6 +289,14 @@ class Arraylist(
 
                 val previousDisplayString = getDisplayString(modules[(if (index > 0) index else 1) - 1])
                 val previousDisplayStringWidth = font.getStringWidth(previousDisplayString)
+
+                // Per-row Theme-mode blend of accent ↔ accentMuted. Mirrors the
+                // Fade cycle's progression across the module list so Theme
+                // reads as a smooth walk along the same palette axis.
+                val themeRowProgress = (index.toFloat() / moduleCount.toFloat()).coerceIn(0F, 1F)
+                val themeText = ColorUtils.interpolateColor(activeTheme.accent, activeTheme.accentMuted, themeRowProgress).rgb
+                val themeAccentMutedRow = activeTheme.accentMuted.rgb
+                val themeBackground = activeTheme.panelBackground.withAlpha(140).rgb
 
                 when (side.horizontal) {
                     Horizontal.RIGHT, Horizontal.MIDDLE -> {
@@ -305,6 +321,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> bgFadeColor
+                                        "Theme" -> themeBackground
                                         else -> backgroundCustomColor
                                     },
                                     roundedBackgroundRadius,
@@ -338,6 +355,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> textFadeColor
+                                        "Theme" -> themeText
                                         else -> textCustomColor
                                     },
                                     textShadow,
@@ -363,6 +381,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> rectFadeColor
+                                        "Theme" -> themeAccentMutedRow
                                         else -> rectCustomColor
                                     }
 
@@ -444,6 +463,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> bgFadeColor
+                                        "Theme" -> themeBackground
                                         else -> backgroundCustomColor
                                     },
                                     roundedBackgroundRadius,
@@ -474,6 +494,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> textFadeColor
+                                        "Theme" -> themeText
                                         else -> textCustomColor
                                     }, textShadow
                                 )
@@ -498,6 +519,7 @@ class Arraylist(
                                         "Rainbow" -> 0
                                         "Random" -> moduleColor
                                         "Fade" -> rectFadeColor
+                                        "Theme" -> themeAccentMutedRow
                                         else -> rectCustomColor
                                     }
 
@@ -596,6 +618,7 @@ class Arraylist(
                         "Gradient" -> 0
                         "Rainbow" -> 0
                         "Fade" -> iconFadeColor
+                        "Theme" -> themeAccentMutedRow
                         else -> this.iconColor.rgb
                     }
 

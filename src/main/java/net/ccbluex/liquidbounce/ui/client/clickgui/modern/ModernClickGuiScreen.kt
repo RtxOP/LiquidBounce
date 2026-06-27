@@ -15,6 +15,7 @@ import net.ccbluex.liquidbounce.api.AutoSettings
 import net.ccbluex.liquidbounce.api.ClientApi
 import net.ccbluex.liquidbounce.api.autoSettingsList
 import net.ccbluex.liquidbounce.api.loadSettings
+import net.ccbluex.liquidbounce.config.ColorValue
 import net.ccbluex.liquidbounce.config.SettingsUtils
 import net.ccbluex.liquidbounce.config.TextValue
 import net.ccbluex.liquidbounce.config.Value
@@ -38,6 +39,7 @@ import net.ccbluex.liquidbounce.ui.client.common.ValueControls
 import net.ccbluex.liquidbounce.ui.client.hud.HUD
 import net.ccbluex.liquidbounce.ui.client.hud.designer.GuiHudDesigner
 import net.ccbluex.liquidbounce.ui.client.hud.element.elements.Notification
+import net.ccbluex.liquidbounce.ui.client.hud.element.elements.Notifications
 import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.Targets
 import net.ccbluex.liquidbounce.utils.client.ClientUtils
@@ -104,8 +106,14 @@ object ModernClickGuiScreen : GuiScreen() {
     private const val SIDEBAR_THEME_CARD_GAP_X = 12F
     private const val SIDEBAR_THEME_CARD_GAP_Y = 10F
     private const val SIDEBAR_THEME_CARD_RADIUS = 6F
+    private const val MAX_THEME_NAME_LENGTH = 24
     private const val SIDEBAR_THEME_MATTE_RATIO = 0.20F
     private const val SIDEBAR_THEME_ROW_INSET = 14F
+    // Vertical gap inside the theme editor between a colour row and its
+    // picker's pseudo-header. The picker hangs below this gap using
+    // ValueControls.ROW_HEIGHT + ValueControls.PICKER_DESIGN_TOTAL vertical
+    // extent — see drawThemeEditorBody for the layout maths.
+    private const val EDITOR_PICKER_GAP = 4F
     private const val SEARCH_HEIGHT = 18F
     private const val MAX_SEARCH_QUERY_LENGTH = 64
     private const val SETTINGS_SWITCH_WIDTH = 22F
@@ -119,14 +127,44 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private var themeEditorDraft: CustomTheme? = null
 
+    // Issue 30 — Theme editor Name row. The editor seeds themeEditorNameText
+    // from draft.name every time it opens, so the user always sees and can
+    // edit the same string that applyCustomTheme() will eventually save.
+    // `focused` gates key routing in `keyTyped` ahead of processSearchInput.
+    private var themeEditorNameFocused = false
+    private var themeEditorNameText: EditableText? = null
+
+    // Theme getter prefers the editor's draft while the editor is open so that
+    // Accent / Background / Text / Gradient edits live-preview against the
+    // full UI. As soon as the editor closes, `themeEditorDraft` is cleared
+    // (see `closeThemeEditor`) and the getter falls through to the active
+    // resolver — otherwise a stale draft would permanently shadow theme
+    // picks made via card clicks after the editor was opened once.
     private val theme: UiTheme
-        get() = themeEditorDraft?.toUiTheme() ?: ThemeResolver.current
+        get() = if (themeEditorOpen)
+            themeEditorDraft?.toUiTheme() ?: ThemeResolver.current
+        else ThemeResolver.current
     private val themeHitTargets = mutableListOf<ThemeHitTarget>()
+
+    // Transient ColorValues that mirror the editor's three anchors
+    // (Accent / Background / Text). They are NOT owned by any Configurable, so
+    // they never end up in valuesConfig on save. They live as long as the
+    // editor does and are re-seeded from the draft on every open/reset so the
+    // HSB slider math tracks the latest colour. Routing the picker's
+    // click/drag/keyboard through them reuses the existing ValueControls
+    // pipeline — the only bespoke bit is the per-frame CV → draft mirror that
+    // keeps the live theme getter in step with the in-flight picker.
+    private var themeEditorAccentValue: ColorValue? = null
+    private var themeEditorBackgroundValue: ColorValue? = null
+    private var themeEditorTextValue: ColorValue? = null
     private val customThemes = mutableListOf<CustomTheme>()
     private var themeEditorOpen = false
     private var themeEditorMode: ThemeEditorMode = ThemeEditorMode.NEW
 
     private enum class ThemeEditorMode { NEW, EDIT }
+
+    /** Anchors the theme editor can edit. Each one has its own picker state. */
+    private enum class ThemeEditorAnchor { ACCENT, BACKGROUND, TEXT }
     private val animations = UiAnimationStore()
     private val textCache = UiTextCache()
     private val columns = linkedMapOf<Category, ColumnState>()
@@ -138,6 +176,7 @@ object ModernClickGuiScreen : GuiScreen() {
     private val syntheticHitTargets = mutableListOf<SyntheticHitTarget>()
     private val syntheticActionHitTargets = mutableListOf<SyntheticActionHitTarget>()
     private val scrollbarHitTargets = mutableListOf<ScrollbarHitTarget>()
+    private val themeEditorRowHitTargets = mutableListOf<ThemeEditorRowHitTarget>()
     private val columnLayouts = mutableMapOf<Category, ColumnLayout>()
     private val valueControlState = ValueControlState()
 
@@ -215,6 +254,11 @@ object ModernClickGuiScreen : GuiScreen() {
             val effectiveId = when {
                 savedActiveId.startsWith("custom:") && parsed.none { "custom:${it.name}" == savedActiveId } -> {
                     chat("§eSaved custom theme '$savedActiveId' not found; reverting to defaults.")
+                    HUD.addNotification(Notification(
+                        "Theme",
+                        "Saved custom theme not found; reverting to defaults.",
+                        severityType = Notifications.SeverityType.WARNING
+                    ))
                     BuiltInThemes.DEFAULT_ID
                 }
                 else -> savedActiveId
@@ -353,6 +397,8 @@ object ModernClickGuiScreen : GuiScreen() {
         categoryHitTargets.clear()
         syntheticHitTargets.clear()
         syntheticActionHitTargets.clear()
+        themeHitTargets.clear()
+        themeEditorRowHitTargets.clear()
         scrollbarHitTargets.clear()
         columnLayouts.clear()
         sidebarContentLayout = null
@@ -641,8 +687,21 @@ object ModernClickGuiScreen : GuiScreen() {
         val sidebar = UiRect(shell.x, shell.y, sidebarWidth, shell.height)
         val content = UiRect(sidebar.right, shell.y, shell.width - sidebarWidth, shell.height)
 
+        // Issue 24/1 (thematic sidebar background):
+        //   Sidebar body uses `accentMuted` filled with `panelBackground`
+        //   at low alpha so the sidebar reads as the active theme's accent
+        //   over its panel-toned body. The previous hardcoded dark-navy
+        //   panel detached the sidebar from every palette except Pastel /
+        //   Modern by accident.
         drawSurface(shell, theme.panelBackground, 8F, borderAlpha = 150)
-        drawRoundedRect(sidebar.x, sidebar.y, sidebar.right, sidebar.bottom, Color(8, 9, 14, 248).rgb, 8F)
+        drawRoundedRect(sidebar.x, sidebar.y, sidebar.right, sidebar.bottom, theme.panelBackground.rgb, 8F)
+        // Overlay an accentMuted wash to inject the active theme's accent
+        // identity into the chrome. Low alpha so rows still read clearly.
+        drawRoundedRect(
+            sidebar.x, sidebar.y, sidebar.right, sidebar.bottom,
+            theme.accentMuted.withAlpha(26).rgb,
+            8F
+        )
         drawRect(sidebar.right, sidebar.y + 9F, sidebar.right + 1F, sidebar.bottom - 9F, theme.border.withAlpha(125).rgb)
 
         drawSidebarHeader(sidebar)
@@ -1059,9 +1118,9 @@ object ModernClickGuiScreen : GuiScreen() {
             y += rows * (SIDEBAR_THEME_CARD_HEIGHT + SIDEBAR_THEME_CARD_GAP_Y)
         }
 
-        val actionRow = UiRect(viewport.x, y, viewport.width - 5F, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val actionRow = UiRect(viewport.x, y, viewport.width - 5F, SIDEBAR_SYNTHETIC_ROW_HEIGHT * 0.8F)
         if (actionRow.bottom >= viewport.y && actionRow.y <= viewport.bottom) {
-            drawSidebarStatusRow("+ New Theme", actionRow, mouseX, mouseY)
+            drawSidebarActionPill("+ New Theme", actionRow, mouseX, mouseY)
             syntheticActionHitTargets += SyntheticActionHitTarget(actionRow, SyntheticAction.OpenThemeEditor)
         }
     }
@@ -1080,11 +1139,16 @@ object ModernClickGuiScreen : GuiScreen() {
         mouseX: Int,
         mouseY: Int
     ) {
+        // Subtle Y-shift on hover (~2px, 100ms ease-out via the existing
+        // hoverProgress animation). Shadows and a surround outline were both
+        // considered and dropped — they made the grid feel busy / framed
+        // every card regardless of state.
         val hovered = rect.contains(mouseX, mouseY)
-        val rowHeight = rect.height * (1F - SIDEBAR_THEME_MATTE_RATIO)
-        val matteTop = rect.y + rowHeight
-        val yMid1 = rect.y + rowHeight * 0.35F
-        val yMid2 = rect.y + rowHeight * 0.70F
+        val hoverLift = -2F * hoverProgress("theme-card:$id", hovered)
+        val drawn = if (hoverLift == 0F) rect else UiRect(rect.x, rect.y + hoverLift, rect.width, rect.height)
+
+        val rowHeight = drawn.height * (1F - SIDEBAR_THEME_MATTE_RATIO)
+        val matteTop = drawn.y + rowHeight
         val cardRadius = SIDEBAR_THEME_CARD_RADIUS
 
         // Use the focused theme's colors for the card so each card is distinguishable.
@@ -1093,42 +1157,36 @@ object ModernClickGuiScreen : GuiScreen() {
         val accentMuted = cardTheme.accentMuted
         val panelBg = cardTheme.panelBackground
         val panelHeader = cardTheme.panelHeader
-        val border = cardTheme.border
         val textPrimary = cardTheme.textPrimary
-        val accentAlpha = if (active) 200 else 90
 
-        drawRoundedRect(rect.x - 0.5F, rect.y - 0.5F, rect.right + 0.5F, rect.bottom + 0.5F, border.withAlpha(accentAlpha).rgb, cardRadius + 0.5F)
-
-        // Layered gradient body (top 80% of card).
-        drawGradientRect(rect.x, rect.y, rect.right, yMid1, accent.rgb, rowHover.rgb, 0F)
-        drawGradientRect(rect.x, yMid1, rect.right, yMid2, rowHover.rgb, accentMuted.rgb, 0F)
-        drawGradientRect(rect.x, yMid2, rect.right, matteTop, accentMuted.rgb, panelBg.rgb, 0F)
+        // Layered gradient body — Issue 27 drops the previous outline + hover overlay rects.
+        // Issue 28/9: collapse the three stacked horizontal gradients into a single
+        // rounded-rect 4-corner bilinear interpolation. The three stops above replicated
+        // TL→TR, ROWHOVER→ACCENTMUTED, ACCENTMUTED→PANELBG, but with sharp edges at each
+        // band — the rounded top of the card leaked through. The new shader respects the
+        // corner radius and lets each corner carry its own color.
+        drawRoundedMultiStopGradientRect(
+            drawn.x, drawn.y, drawn.right, matteTop,
+            accent.rgb, rowHover.rgb, panelBg.rgb, accentMuted.rgb,
+            cardRadius
+        )
 
         // Bottom matte strip — flat panel header color, rounded only on the bottom.
-        drawRoundedRect(rect.x, matteTop, rect.right, rect.bottom, panelHeader.rgb, cardRadius, RoundedCorners.BOTTOM_ONLY)
+        drawRoundedRect(drawn.x, matteTop, drawn.right, drawn.bottom, panelHeader.rgb, cardRadius, RoundedCorners.BOTTOM_ONLY)
 
         // Label (matte strip only).
         Fonts.fontSemibold35.drawCenteredString(
-            label, rect.x + rect.width / 2F, matteTop + (rect.bottom - matteTop - Fonts.fontSemibold35.FONT_HEIGHT) / 2F,
+            label, drawn.x + drawn.width / 2F, matteTop + (drawn.bottom - matteTop - Fonts.fontSemibold35.FONT_HEIGHT) / 2F,
             textPrimary.rgb
         )
 
         // Tick badge: top-right of the gradient body, only when this is the active id.
         if (active) {
             val tickSize = 7F
-            drawRoundedRect(rect.right - tickSize - 4F, rect.y + 4F, rect.right - 4F, rect.y + 4F + tickSize,
+            drawRoundedRect(drawn.right - tickSize - 4F, drawn.y + 4F, drawn.right - 4F, drawn.y + 4F + tickSize,
                 accent.rgb, 1.5F)
         }
-
-        // Hover raises the border alpha; cheap visual feedback. Polished keyboard nav to come in step 14.
-        val hoverAlpha = hoverProgress("theme-card:$id", hovered)
-        if (hoverAlpha > 0.05F) {
-            drawRoundedRect(
-                rect.x - 1F, rect.y - 1F, rect.right + 1F, rect.bottom + 1F,
-                accent.withAlpha((180 * hoverAlpha).toInt().coerceIn(0, 255)).rgb,
-                cardRadius + 1F
-            )
-        }
+        // Issue 27: previously there was a hover overlay rect here. Removed.
     }
 
     private fun drawThemeEditorBody(
@@ -1137,29 +1195,218 @@ object ModernClickGuiScreen : GuiScreen() {
         mouseX: Int,
         mouseY: Int
     ) {
-        var y = startY
         val draft = themeEditorDraft ?: return
         val rowWidth = viewport.width - 5F
-        val accentRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
-        val backgroundRow = UiRect(viewport.x, y + SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
-        val textRow = UiRect(viewport.x, y + 2 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
-        val gradientRow = UiRect(viewport.x, y + 3 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
-        val actionRow = UiRect(viewport.x, y + 4 * (SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP), rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        val accentCV = themeEditorAccentValue
+        val backgroundCV = themeEditorBackgroundValue
+        val textCV = themeEditorTextValue
 
-        drawThemeEditorLabeledRow("Accent", draft.accent, accentRow, mouseX, mouseY)
-        drawThemeEditorLabeledRow("Background", draft.background, backgroundRow, mouseX, mouseY)
-        drawThemeEditorLabeledRow("Text", draft.text, textRow, mouseX, mouseY)
+        val accentOpen = accentCV?.showPicker == true
+        val backgroundOpen = backgroundCV?.showPicker == true
+        val textOpen = textCV?.showPicker == true
+
+        // Side panel only renders when the row is wide enough — at the editor's
+        // full ~430 px content width ValueControls surfaces its 5-row HEX/RGB/
+        // alpha side panel automatically, which is what we want here.
+        // The picker anchor's height spans ROW_HEIGHT + PICKER_DESIGN_TOTAL so
+        // ValueControls.click's `rect.contains(...)` outer guard correctly
+        // accepts clicks inside the picker square / strips / side panel.
+        val pickerAnchorHeight = ValueControls.ROW_HEIGHT + ValueControls.PICKER_DESIGN_TOTAL
+        val pickerHeight = EDITOR_PICKER_GAP + pickerAnchorHeight
+
+        var y = startY
+        val nameRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        y += SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP
+
+        val accentRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        y += SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP
+        val accentPickerAnchor = if (accentOpen) {
+            UiRect(accentRow.x, accentRow.bottom + EDITOR_PICKER_GAP, rowWidth, pickerAnchorHeight)
+        } else null
+        if (accentPickerAnchor != null) y += pickerHeight + SIDEBAR_MODULE_GAP
+
+        val backgroundRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        y += SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP
+        val backgroundPickerAnchor = if (backgroundOpen) {
+            UiRect(backgroundRow.x, backgroundRow.bottom + EDITOR_PICKER_GAP, rowWidth, pickerAnchorHeight)
+        } else null
+        if (backgroundPickerAnchor != null) y += pickerHeight + SIDEBAR_MODULE_GAP
+
+        val textRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        y += SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP
+        val textPickerAnchor = if (textOpen) {
+            UiRect(textRow.x, textRow.bottom + EDITOR_PICKER_GAP, rowWidth, pickerAnchorHeight)
+        } else null
+        if (textPickerAnchor != null) y += pickerHeight + SIDEBAR_MODULE_GAP
+
+        val gradientRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+        y += SIDEBAR_SYNTHETIC_ROW_HEIGHT + SIDEBAR_MODULE_GAP
+        val actionRow = UiRect(viewport.x, y, rowWidth, SIDEBAR_SYNTHETIC_ROW_HEIGHT)
+
+        drawThemeEditorNameRow(nameRow, mouseX, mouseY)
+        drawThemeEditorLabeledRow(
+            "accent", "Accent",
+            accentCV?.get() ?: draft.accent,
+            accentRow, mouseX, mouseY,
+            pickerOpen = accentPickerAnchor != null,
+        )
+        if (accentPickerAnchor != null) drawEditorPicker(accentCV!!, accentPickerAnchor)
+        drawThemeEditorLabeledRow(
+            "background", "Background",
+            backgroundCV?.get() ?: draft.background,
+            backgroundRow, mouseX, mouseY,
+            pickerOpen = backgroundPickerAnchor != null,
+        )
+        if (backgroundPickerAnchor != null) drawEditorPicker(backgroundCV!!, backgroundPickerAnchor)
+        drawThemeEditorLabeledRow(
+            "text", "Text",
+            textCV?.get() ?: draft.text,
+            textRow, mouseX, mouseY,
+            pickerOpen = textPickerAnchor != null,
+        )
+        if (textPickerAnchor != null) drawEditorPicker(textCV!!, textPickerAnchor)
+
         drawThemeEditorGradientRow(gradientRow, mouseX, mouseY)
         drawThemeEditorActionsRow(actionRow, mouseX, mouseY)
+
+        // Per-frame write-back: each picker internally updates `cv.get()` via
+        // value.changeValue(...) which does not fire onChanged listeners, so
+        // sync the live CV back into the draft here. The `theme` getter reads
+        // the draft, so this propagates the new colour to the wider UI
+        // (sidebar wash, theme cards, accent borders) on every frame.
+        writebackEditorDraftFromColorValues()
     }
 
-    private fun drawThemeEditorLabeledRow(label: String, color: Color, rect: UiRect, mouseX: Int, mouseY: Int) {
+    /**
+     * Render the picker for one editor anchor below its row and register the
+     * picker rectangle as a value hit target. The existing valueHitTargets
+     * loop in `mouseClicked` then routes picker clicks through
+     * ValueControls.click, which handles HEX focus, square/hue/alpha drag,
+     * RGB/alpha slider drag, and rainbow toggle.
+     */
+    private fun drawEditorPicker(value: ColorValue, anchor: UiRect) {
+        ValueControls.drawColorPicker(value, anchor, theme, valueControlState)
+        valueHitTargets += ValueHitTarget(anchor, value)
+    }
+
+    /**
+     * Toggle the picker for [anchor]:
+     *  * clicking the currently-open anchor closes it;
+     *  * clicking a different anchor swaps to that one (closes the old one).
+     */
+    private fun toggleOrSelectAnchor(anchor: ThemeEditorAnchor) {
+        val a = themeEditorAccentValue ?: return
+        val b = themeEditorBackgroundValue ?: return
+        val t = themeEditorTextValue ?: return
+        val targetOpen = when (anchor) {
+            ThemeEditorAnchor.ACCENT -> !a.showPicker
+            ThemeEditorAnchor.BACKGROUND -> !b.showPicker
+            ThemeEditorAnchor.TEXT -> !t.showPicker
+        }
+        a.showPicker = targetOpen && anchor == ThemeEditorAnchor.ACCENT
+        b.showPicker = targetOpen && anchor == ThemeEditorAnchor.BACKGROUND
+        t.showPicker = targetOpen && anchor == ThemeEditorAnchor.TEXT
+    }
+
+    /**
+     * True iff any anchor's picker is currently expanded. Drives the
+     * extra-height contribution in `themesContentHeight` so the scroll
+     * viewport accommodates the picker overhang.
+     */
+    private fun anyAnchorPickerOpen(): Boolean =
+        themeEditorAccentValue?.showPicker == true ||
+            themeEditorBackgroundValue?.showPicker == true ||
+            themeEditorTextValue?.showPicker == true
+
+    /**
+     * Per-frame dump of the transient ColorValue mirrors into
+     * `themeEditorDraft`. Three equality guards mean we only realloc the draft
+     * when one of the anchors actually changed — i.e. while the user is
+     * dragging the picker or after the HEX path fired.
+     */
+    private fun writebackEditorDraftFromColorValues() {
+        val draft = themeEditorDraft ?: return
+        val a = themeEditorAccentValue
+        val b = themeEditorBackgroundValue
+        val t = themeEditorTextValue
+        if (a == null || b == null || t == null) return
+        var next = draft
+        var changed = false
+        if (a.get() != next.accent) { next = next.copy(accent = a.get()); changed = true }
+        if (b.get() != next.background) { next = next.copy(background = b.get()); changed = true }
+        if (t.get() != next.text) { next = next.copy(text = t.get()); changed = true }
+        if (changed) themeEditorDraft = next
+    }
+
+    /**
+     * Editable Name row at the top of the theme editor. Renders the current
+     * draft name with an inline cursor when focused; click the row to grab
+     * focus. Validation rules: no whitespace, no leading `/`, max 24 chars.
+     */
+    private fun drawThemeEditorNameRow(rect: UiRect, mouseX: Int, mouseY: Int) {
+        val draft = themeEditorDraft ?: return
         val hovered = rect.contains(mouseX, mouseY)
-        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("theme-editor-row:$label", hovered))
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("theme-editor-row:name", hovered))
+
+        drawSurface(rect, rowColor, 5F, borderAlpha = 70)
+        Fonts.fontSemibold35.drawString("Name", rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
+
+        // Right-side pill mirrors the value pill style used for color rows so
+        // the row reads as a discrete editable slot.
+        val pillRect = UiRect(rect.right - 152F, rect.y + 7F, 142F, rect.height - 14F)
+        val pillFill = if (themeEditorNameFocused) theme.accent.withAlpha(36) else Color(0, 0, 0, 48)
+        drawRoundedRect(pillRect.x, pillRect.y, pillRect.right, pillRect.bottom, pillFill.rgb, 4F)
+
+        val nameText = themeEditorNameText?.string ?: draft.name
+        val display = trimText(Fonts.fontSemibold35, nameText, pillRect.width - 14F)
+        val textY = rect.y + (rect.height - Fonts.fontSemibold35.FONT_HEIGHT) / 2F + 1F
+        val nameColor = if (themeEditorNameFocused) theme.textPrimary.rgb else theme.textMuted.rgb
+        Fonts.fontSemibold35.drawString(display, pillRect.x + 7F, textY, nameColor)
+
+        if (themeEditorNameFocused) {
+            val prefixWidth = Fonts.fontSemibold35.getStringWidth(display)
+            val cursorX = (pillRect.x + 7F + prefixWidth).coerceAtMost(pillRect.right - 4F)
+            drawRect(cursorX, pillRect.y + 3F, cursorX + 1F, pillRect.bottom - 3F, theme.accent.rgb)
+        }
+
+        // Register the row as a click target so mouse-clicks can grab focus
+        // alongside the themed Accent/Background/Text rows.
+        themeEditorRowHitTargets += ThemeEditorRowHitTarget(rect, "name")
+    }
+
+    private fun drawThemeEditorLabeledRow(
+        rowId: String,
+        label: String,
+        color: Color,
+        rect: UiRect,
+        mouseX: Int,
+        mouseY: Int,
+        pickerOpen: Boolean,
+    ) {
+        val hovered = rect.contains(mouseX, mouseY)
+        val rowColor = mixColor(theme.rowBackground, theme.rowHover.withAlpha(245), hoverProgress("theme-editor-row:$rowId", hovered))
 
         drawSurface(rect, rowColor, 5F, borderAlpha = 70)
         Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
-        drawRoundedRect(rect.right - 32F, rect.y + 11F, rect.right - 10F, rect.bottom - 11F, color.rgb, 4F)
+
+        // Swatch sits inside the visible row. When the picker is open an
+        // accent-coloured halo sits one pixel out from the swatch so the row
+        // reads as the active one — the same "this control is expanded"
+        // cue the toggle switch and module rows already use elsewhere.
+        val swatchX = rect.right - 32F
+        val swatchY = rect.y + 11F
+        val swatchRight = rect.right - 10F
+        val swatchBottom = rect.bottom - 11F
+        if (pickerOpen) {
+            drawRoundedRect(
+                swatchX - 1F, swatchY - 1F, swatchRight + 1F, swatchBottom + 1F,
+                theme.accent.withAlpha(220).rgb, 5F
+            )
+        }
+        drawRoundedRect(swatchX, swatchY, swatchRight, swatchBottom, color.rgb, 4F)
+
+        // Register as a hit target so left-clicks can toggle the picker.
+        themeEditorRowHitTargets += ThemeEditorRowHitTarget(rect, rowId)
     }
 
     private fun drawThemeEditorGradientRow(rect: UiRect, mouseX: Int, mouseY: Int) {
@@ -1272,6 +1519,29 @@ object ModernClickGuiScreen : GuiScreen() {
         Fonts.fontSemibold35.drawString(label, rect.x + 10F, rect.y + 13F, theme.textPrimary.rgb)
     }
 
+    /**
+     * Compact accent-tinted pill used for primary actions (e.g. `+ New Theme`)
+     * inside the synthetic section. Resting fill is the plan's `accent.withAlpha(36)`;
+     * hover ramps the alpha up to 110 for tactile feedback. Text stays full accent.
+     */
+    private fun drawSidebarActionPill(label: String, rect: UiRect, mouseX: Int, mouseY: Int) {
+        val accent = theme.accent
+        val hovered = rect.contains(mouseX, mouseY)
+        val hover = hoverProgress("sidebar-pill:$label", hovered)
+        val restingAlpha = 36
+        val hoveredAlpha = 110
+        val fillAlpha = (restingAlpha + (hoveredAlpha - restingAlpha) * hover).roundToInt().coerceIn(0, 255)
+        drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom - 1F, accent.withAlpha(fillAlpha).rgb, 5F)
+        val trimmed = trimText(Fonts.fontSemibold35, label, rect.width - 20F)
+        // Center vertically and slightly inset horizontally.
+        Fonts.fontSemibold35.drawString(
+            trimmed,
+            rect.x + 10F,
+            rect.y + (rect.height - Fonts.fontSemibold35.FONT_HEIGHT) / 2F + 1F,
+            accent.rgb
+        )
+    }
+
     private fun drawSidebarModuleRow(
         module: Module,
         contextCategory: Category?,
@@ -1302,7 +1572,10 @@ object ModernClickGuiScreen : GuiScreen() {
         if (expanded) {
             drawRoundedRect(rect.x, rect.y, rect.right, rect.bottom, rowColor.rgb, 5F, RoundedCorners.TOP_ONLY)
         } else {
-            drawSurface(rect, rowColor, 5F, borderAlpha = if (active) 105 else 66)
+            // Issue 27: remove the bright ring around active modules — keep
+            // borderAlpha uniform across states. The viewing cue for active
+            // modules is the row fill, not the outline.
+            drawSurface(rect, rowColor, 5F, borderAlpha = 66)
         }
 
         Fonts.fontSemibold35.drawString(name, rect.x + 10F, rect.y + 8F, theme.textPrimary.rgb)
@@ -1653,6 +1926,34 @@ object ModernClickGuiScreen : GuiScreen() {
         }
 
         if (mouseButton == 0) {
+            for (target in themeEditorRowHitTargets.asReversed()) {
+                if (!target.rect.contains(inputMouseX, inputMouseY)) {
+                    continue
+                }
+                when (target.rowId) {
+                    "name" -> {
+                        focusThemeEditorNameField()
+                        UiSound.click()
+                        return
+                    }
+                    "accent" -> {
+                        toggleOrSelectAnchor(ThemeEditorAnchor.ACCENT)
+                        UiSound.expand()
+                        return
+                    }
+                    "background" -> {
+                        toggleOrSelectAnchor(ThemeEditorAnchor.BACKGROUND)
+                        UiSound.expand()
+                        return
+                    }
+                    "text" -> {
+                        toggleOrSelectAnchor(ThemeEditorAnchor.TEXT)
+                        UiSound.expand()
+                        return
+                    }
+                }
+            }
+
             for (target in themeHitTargets.asReversed()) {
                 if (!target.rect.contains(inputMouseX, inputMouseY)) {
                     continue
@@ -1811,6 +2112,33 @@ object ModernClickGuiScreen : GuiScreen() {
     }
 
     override fun keyTyped(typedChar: Char, keyCode: Int) {
+        // Issue 30 — Theme editor Name row. While the row has focus we route
+        // the keystroke into its EditableText BEFORE search/value handling so
+        // typing into the field doesn't leak into the search box or other
+        // value rows. ESC only clears focus here; the broader ESC arm further
+        // down still closes the editor on a second press.
+        if (themeEditorOpen && themeEditorNameFocused) {
+            val nameText = themeEditorNameText
+            if (keyCode == Keyboard.KEY_ESCAPE) {
+                themeEditorNameFocused = false
+                return
+            }
+            if (keyCode == Keyboard.KEY_RETURN || keyCode == Keyboard.KEY_NUMPADENTER) {
+                themeEditorNameFocused = false
+                return
+            }
+            if (nameText != null) {
+                val before = nameText.string
+                nameText.processInput(typedChar, keyCode) {
+                    // The Name row has no index-based navigation; ignore up/down from processInput.
+                }
+                if (nameText.string != before) {
+                    themeEditorDraft = themeEditorDraft?.copy(name = nameText.string)
+                }
+                return
+            }
+        }
+
         if (processSearchInput(typedChar, keyCode)) {
             return
         }
@@ -1829,6 +2157,14 @@ object ModernClickGuiScreen : GuiScreen() {
         }
 
         if (processSidebarKeyboardNavigation(keyCode)) {
+            return
+        }
+
+        // Issue 14: ESC closes the theme editor first; a second ESC (or any
+        // other prior keystroke mapped to ClickGUI.keyBind) closes the GUI
+        // as before. Without this guard, the editor-draft flow loses work.
+        if (keyCode == Keyboard.KEY_ESCAPE && themeEditorOpen) {
+            closeThemeEditor()
             return
         }
 
@@ -2215,8 +2551,46 @@ object ModernClickGuiScreen : GuiScreen() {
                 settings.size * (SIDEBAR_AUTO_SETTING_ROW_HEIGHT + SIDEBAR_MODULE_GAP)
             }
         }
-        SyntheticSection.THEMES -> 0F
+        SyntheticSection.THEMES -> themesContentHeight()
     }.toFloat()
+
+    /**
+     * Compute the vertical extent of the THEMES synthetic section's content.
+     * The card grid (theme cards + `+ New Theme` pill) and the theme editor
+     * take turns sharing the slot, so we branch on whether the editor is
+     * open. When the editor is open we also need to find room for any
+     * expanded picker via [anyAnchorPickerOpen]; otherwise the picker hugs
+     * the row so tightly the action row would scroll past it.
+     */
+    private fun themesContentHeight(): Float {
+        if (themeEditorOpen) {
+            // The editor draws six rows: Name, Accent, Background, Text,
+            // Gradient, Actions — with a SIDEBAR_MODULE_GAP between each.
+            val rows = 6
+            val base = rows * SIDEBAR_SYNTHETIC_ROW_HEIGHT +
+                (rows - 1) * SIDEBAR_MODULE_GAP
+            val pickerExtra = if (anyAnchorPickerOpen()) {
+                EDITOR_PICKER_GAP +
+                    ValueControls.ROW_HEIGHT +
+                    ValueControls.PICKER_DESIGN_TOTAL +
+                    SIDEBAR_MODULE_GAP
+            } else 0F
+            return base + pickerExtra
+        }
+
+        val entries = BuiltInThemes.list.size + customThemes.size
+        if (entries == 0) return SIDEBAR_SYNTHETIC_ROW_HEIGHT * 0.8F
+        val shell = sidebarShellRect()
+        val vw = ((shell.width - SIDEBAR_WIDTH) - 23F).coerceAtLeast(1F)
+        val cols = max(
+            1,
+            ((vw + SIDEBAR_THEME_CARD_GAP_X) /
+                (SIDEBAR_THEME_CARD_WIDTH + SIDEBAR_THEME_CARD_GAP_X)).toInt()
+        )
+        val cardRows = (entries + cols - 1) / cols
+        return cardRows * (SIDEBAR_THEME_CARD_HEIGHT + SIDEBAR_THEME_CARD_GAP_Y) +
+            SIDEBAR_SYNTHETIC_ROW_HEIGHT * 0.8F
+    }
 
     private fun columnWidth(): Float {
         val categoryCount = Category.entries.size
@@ -2446,6 +2820,58 @@ object ModernClickGuiScreen : GuiScreen() {
         themeEditorOpen = true
         themeEditorMode = ThemeEditorMode.NEW
         themeEditorDraft = currentCustomDraft()
+        // Seed the editable Name row from the freshly-built draft so the
+        // editor opens with the field matching the draft it will commit.
+        seedThemeEditorNameText(themeEditorDraft?.name ?: "Custom", autoSelectAll = true)
+        // Construct transient ColorValue mirrors so each anchor's picker has a
+        // proper HSB state. None of them have their picker open on first open
+        // — the user must click a row to expand it.
+        refreshEditorColorValues()
+    }
+
+    /**
+     * Build the three transient [ColorValue] instances that back the editor's
+     * Accent / Background / Text anchors. Called when the editor opens and
+     * from [resetCustomTheme] so the pickers track the cached theme rather
+     * than lingering HSB math from a prior session.
+     */
+    private fun refreshEditorColorValues() {
+        val draft = themeEditorDraft ?: return
+        themeEditorAccentValue = ColorValue("ThemeEditorAccent", draft.accent)
+        themeEditorBackgroundValue = ColorValue("ThemeEditorBackground", draft.background)
+        themeEditorTextValue = ColorValue("ThemeEditorText", draft.text)
+    }
+
+    /**
+     * Construct / refresh the editable Name text field. When [autoSelectAll]
+     * is true (editor first open) we pre-select so the user can type a fresh
+     * name immediately. Subscribe uses [nameValidator] so disallowed
+     * characters (whitespace, leading `/`) never land in the draft.
+     */
+    private fun seedThemeEditorNameText(initial: String, autoSelectAll: Boolean) {
+        val editable = EditableText(
+            value = TextValue("ThemeEditorName", initial),
+            string = initial,
+            cursorIndex = initial.length,
+            validator = ::nameValidator,
+            onUpdate = { next ->
+                themeEditorDraft = themeEditorDraft?.copy(name = next)
+            }
+        )
+        if (autoSelectAll) editable.selectAll()
+        themeEditorNameText = editable
+    }
+
+    private fun nameValidator(input: String): Boolean {
+        if (input.length > MAX_THEME_NAME_LENGTH) return false
+        if (input.any { it.isWhitespace() }) return false
+        if (input.startsWith("/") || input.startsWith("\\")) return false
+        return true
+    }
+
+    private fun focusThemeEditorNameField() {
+        themeEditorNameFocused = true
+        themeEditorNameText?.selectAll()
     }
 
     private fun currentCustomDraft(): CustomTheme {
@@ -2469,6 +2895,14 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun closeThemeEditor() {
         themeEditorOpen = false
+        themeEditorDraft = null
+        themeEditorNameFocused = false
+        themeEditorNameText = null
+        // Drop the transient ColorValue mirrors so any stale HSB math from
+        // a half-finished picker isn't reused next time the editor opens.
+        themeEditorAccentValue = null
+        themeEditorBackgroundValue = null
+        themeEditorTextValue = null
     }
 
     private fun applyCustomTheme() {
@@ -2478,6 +2912,11 @@ object ModernClickGuiScreen : GuiScreen() {
 
         if (CustomTheme.isReservedName(sanitizedName)) {
             chat("§eTheme name '$sanitizedName' collides with a built-in; using '$sanitizedName (copy)'.")
+            HUD.addNotification(Notification(
+                "Theme",
+                "Reserved name '$sanitizedName' renamed to '${sanitizedName} (copy)'.",
+                severityType = Notifications.SeverityType.WARNING
+            ))
             val renamed = effective.copy(name = "$sanitizedName (copy)")
             upsertCustomTheme(renamed)
             applyCustomActive("custom:${renamed.name}")
@@ -2506,6 +2945,12 @@ object ModernClickGuiScreen : GuiScreen() {
 
     private fun resetCustomTheme() {
         themeEditorDraft = currentCustomDraft()
+        // Keep the Name row in sync with the freshly-built draft so the
+        // user sees the reset value rather than the previously-typed string.
+        seedThemeEditorNameText(themeEditorDraft?.name ?: "Custom", autoSelectAll = false)
+        // Rebuild the transient ColorValue mirrors so a Re-set picker (or
+        // one that wasn't visible at reset time) snaps to the cached theme.
+        refreshEditorColorValues()
     }
 
     private fun deleteCustomTheme() {
@@ -2717,6 +3162,11 @@ object ModernClickGuiScreen : GuiScreen() {
     private data class ThemeHitTarget(
         val rect: UiRect,
         val id: String
+    )
+
+    private data class ThemeEditorRowHitTarget(
+        val rect: UiRect,
+        val rowId: String
     )
 
     private enum class ThemeHitKind { CARD, NEW_THEME, APPLY, RESET, DELETE, CLOSE }

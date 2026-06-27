@@ -5,6 +5,7 @@
  */
 package net.ccbluex.liquidbounce.ui.client.hud.element.elements
 
+import net.ccbluex.liquidbounce.ui.client.clickgui.modern.theme.ThemeResolver
 import net.ccbluex.liquidbounce.ui.client.hud.element.Border
 import net.ccbluex.liquidbounce.ui.client.hud.element.Element
 import net.ccbluex.liquidbounce.ui.client.hud.element.ElementInfo
@@ -15,18 +16,32 @@ import net.ccbluex.liquidbounce.utils.extensions.safeDiv
 import net.ccbluex.liquidbounce.utils.render.ColorSettingsInteger
 import net.ccbluex.liquidbounce.utils.render.ColorUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
+import net.ccbluex.liquidbounce.utils.render.RenderUtils.withAlpha
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.withOutline
 import java.awt.Color
 import kotlin.math.nextDown
 
 @ElementInfo(name = "Keystrokes")
 class Keystrokes : Element("Keystrokes", 2.0, 34.0) {
+    // HUD ↔ theme propagation: ColorMode toggles between the user's Custom
+    // colors and the active `ThemeResolver.current` palette. Default Theme so
+    // existing layouts pick up the new system on first launch. Custom is the
+    // original behavior — the only changes are the picker UI hiding behind
+    // the choice and the rendered colors redirecting to the theme when
+    // "Theme" is selected.
+    private val mode by choices("ColorMode", arrayOf("Custom", "Theme"), "Theme")
     private val radius by float("RectangleRound-Radius", 3F, 0F..10F)
-    private val textColors = ColorSettingsInteger(this, "Text", applyMax = true)
-    private val rectColors = ColorSettingsInteger(this, "Rectangle").with(a = 150)
-    private val pressColors = ColorSettingsInteger(this, "Press").with(Color.BLUE)
+    private val textColors = ColorSettingsInteger(
+        this, "Text", applyMax = true
+    ) { mode == "Custom" }
+    private val rectColors = ColorSettingsInteger(
+        this, "Rectangle"
+    ).with(a = 150) { mode == "Custom" }
+    private val pressColors = ColorSettingsInteger(this, "Press").with(Color.BLUE) { mode == "Custom" }
     private val renderBorder by boolean("RenderBorder", false)
-    private val borderColors = ColorSettingsInteger(this, "Border") { renderBorder }.with(Color.BLUE)
+    private val borderColors = ColorSettingsInteger(
+        this, "Border"
+    ) { renderBorder }.with(Color.BLUE) { mode == "Custom" }
     private val borderWidth by float("BorderWidth", 1.5F, 0.5F..5F) { renderBorder }
     private val onPressAnimation by choices(
         "OnPressAnimationMode", arrayOf("None", "Shrink", "Fill", "ReverseFill"), "Fill"
@@ -37,17 +52,20 @@ class Keystrokes : Element("Keystrokes", 2.0, 34.0) {
     private var shadow by boolean("Text-Shadow", true)
     private val font by font("Font", Fonts.fontSemibold35)
 
+    // Getters resolve through the theme when ColorMode == "Theme" so the
+    // element reads as palette-driven chrome. The Custom branch preserves
+    // the user's pre-theme colors exactly.
     private val textColor
-        get() = textColors.color()
+        get() = if (mode == "Theme") ThemeResolver.current.textPrimary else textColors.color()
 
     private val rectColor
-        get() = rectColors.color()
+        get() = if (mode == "Theme") ThemeResolver.current.panelBackground.withAlpha(150) else rectColors.color()
 
     private val pressColor
-        get() = pressColors.color()
+        get() = if (mode == "Theme") ThemeResolver.current.accent else pressColors.color()
 
     private val borderColor
-        get() = borderColors.color()
+        get() = if (mode == "Theme") ThemeResolver.current.accent else borderColors.color()
 
     private val nonFillModes = arrayOf("None", "Shrink")
 
