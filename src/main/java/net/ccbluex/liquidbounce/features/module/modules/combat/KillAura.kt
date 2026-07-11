@@ -86,7 +86,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }
 
     // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = even-paced cycle)
-    private val clickMethod by choices("Method", arrayOf("Fatigue", "Stabilized"), "Fatigue")
+    private val clickMethod by choices("Method", arrayOf("Fatigue", "Stabilized"), "Fatigue").onChanged { _ ->
+        clickMode.reset()
+        clickMode = clickModeByName(clickMethod).create()
+    }
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }
 
@@ -327,13 +330,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private var clickMode: ClickMode = clickModeByName(clickMethod).create()
     private var clicks = 0
     private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
-
-    init {
-        clickMethod.onChanged { _ ->
-            clickMode.reset()
-            clickMode = clickModeByName(clickMethod).create()
-        }
-    }
 
     // Container Delay
     private var containerOpen = -1L
