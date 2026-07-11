@@ -11,6 +11,8 @@ import net.ccbluex.liquidbounce.event.UpdateEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isLookingOnEntities
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isSelected
 import net.ccbluex.liquidbounce.utils.client.EntityLookup
@@ -32,6 +34,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val simulateDoubleClicking by boolean("SimulateDoubleClicking", false)
     private val cps by intRange("CPS", 5..8, 1..50)
 
+    private val clickMethod by choices(
+        "Method", arrayOf("Fatigue", "Stabilized"), "Fatigue"
+    )
+
     private val hurtTime by int("HurtTime", 10, 0..10) { left }
 
     private val right by boolean("Right", true)
@@ -46,8 +52,17 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private val onlyBlocks by boolean("OnlyBlocks", true) { right }
 
-    private val leftClickPattern = ClickPattern()
-    private val rightClickPattern = ClickPattern()
+    private var leftClickMode: ClickMode = clickModeByName(clickMethod).create()
+    private var rightClickMode: ClickMode = clickModeByName(clickMethod).create()
+
+    init {
+        clickMethod.onChanged { _ ->
+            leftClickMode.reset()
+            rightClickMode.reset()
+            leftClickMode = clickModeByName(clickMethod).create()
+            rightClickMode = clickModeByName(clickMethod).create()
+        }
+    }
 
     private var lastBlocking = 0L
 
@@ -59,8 +74,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private var target: EntityLivingBase? = null
 
     override fun onDisable() {
-        leftClickPattern.reset()
-        rightClickPattern.reset()
+        leftClickMode.reset()
+        rightClickMode.reset()
         lastBlocking = 0L
         target = null
     }
@@ -80,12 +95,12 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                 mc.gameSettings.keyBindUseItem.pressTime = 0
             }
 
-            rightClickPattern.cacheClick(
+            rightClickMode.cacheClick(
                 right && mc.gameSettings.keyBindUseItem.isKeyDown && (!onlyBlocks || thePlayer.heldItem?.item is ItemBlock),
                 cps
             )
 
-            val rightClicks = rightClickPattern.consumeCachedClicks()
+            val rightClicks = rightClickMode.consumeClicks()
 
             if (rightClicks > 0) {
                 handleRightClick(rightClicks)
@@ -97,8 +112,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                         isLookingOnEntities(nearbyEntity, maxAngleDifference.toDouble()) &&
                         left && shouldAutoClick
 
-                leftClickPattern.cacheClick(canLeftClick, cps)
-                val leftClicks = leftClickPattern.consumeCachedClicks()
+                leftClickMode.cacheClick(canLeftClick, cps)
+                val leftClicks = leftClickMode.consumeClicks()
 
                 if (leftClicks > 0) {
                     handleLeftClick(leftClicks)
@@ -106,12 +121,12 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
                     handleBlock(time)
                 }
             } else {
-                leftClickPattern.cacheClick(
+                leftClickMode.cacheClick(
                     left && mc.gameSettings.keyBindAttack.isKeyDown && !mc.gameSettings.keyBindUseItem.isKeyDown && shouldAutoClick,
                     cps
                 )
 
-                val leftClicks = leftClickPattern.consumeCachedClicks()
+                val leftClicks = leftClickMode.consumeClicks()
 
                 if (leftClicks > 0) {
                     handleLeftClick(leftClicks)
@@ -178,64 +193,4 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     }
 
     private fun extraClicks() = if (simulateDoubleClicking) RandomUtils.nextInt(-1, 1) else 0
-
-    private class ClickPattern {
-
-        private val clickPattern = ArrayDeque<Int>()
-        private var patternUpdateTime = 0L
-        private var cachedClicks = 0
-
-        fun cacheClick(active: Boolean, cps: IntRange) {
-            if (!active) {
-                cachedClicks = 0
-                return
-            }
-
-            if (shouldClickThisTick(cps)) {
-                cachedClicks++
-            }
-        }
-
-        fun consumeCachedClicks(): Int {
-            val clicks = cachedClicks
-            cachedClicks = 0
-            return clicks
-        }
-
-        fun reset() {
-            clickPattern.clear()
-            patternUpdateTime = 0L
-            cachedClicks = 0
-        }
-
-        private fun shouldClickThisTick(cps: IntRange): Boolean {
-            if (clickPattern.isEmpty() || System.currentTimeMillis() - patternUpdateTime >= 1000L) {
-                generateClickPattern(cps)
-            }
-
-            return clickPattern.removeFirst() == 1
-        }
-
-        private fun generateClickPattern(cps: IntRange) {
-            clickPattern.clear()
-
-            val clicksPerSecond = Math.round(RandomUtils.nextDouble(cps.first.toDouble(), cps.last + 1.0)).toInt()
-            var clicksToDistribute = clicksPerSecond
-            val totalTicks = 20
-
-            for (tick in 0 until totalTicks) {
-                val probability = clicksToDistribute.toDouble() / (totalTicks - tick)
-
-                if (RandomUtils.nextDouble() < probability) {
-                    clickPattern.addLast(1)
-                    clicksToDistribute--
-                    continue
-                }
-
-                clickPattern.addLast(0)
-            }
-
-            patternUpdateTime = System.currentTimeMillis()
-        }
-    }
 }

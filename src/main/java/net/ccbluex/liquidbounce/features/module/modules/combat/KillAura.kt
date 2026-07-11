@@ -10,6 +10,8 @@ import net.ccbluex.liquidbounce.event.*
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.combat.Backtrack.runWithSimulatedPosition
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.features.module.modules.player.Blink
 import net.ccbluex.liquidbounce.features.module.modules.world.Fucker
 import net.ccbluex.liquidbounce.features.module.modules.world.Nuker
@@ -27,7 +29,6 @@ import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils.serverOpenInventory
 import net.ccbluex.liquidbounce.utils.inventory.ItemUtils.isConsumingItem
 import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
-import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextInt
 import net.ccbluex.liquidbounce.utils.render.ColorSettingsInteger
 import net.ccbluex.liquidbounce.utils.render.ColorUtils.withAlpha
@@ -83,6 +84,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     // CPS - Attack speed
     private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }
+
+    // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = even-paced cycle)
+    private val clickMethod by choices("Method", arrayOf("Fatigue", "Stabilized"), "Fatigue")
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }
 
@@ -320,9 +324,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val prevTargetEntities = mutableListOf<Int>()
 
     // Attack delay
-    private val clickPattern = ClickPattern()
+    private var clickMode: ClickMode = clickModeByName(clickMethod).create()
     private var clicks = 0
     private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
+
+    init {
+        clickMethod.onChanged { _ ->
+            clickMode.reset()
+            clickMode = clickModeByName(clickMethod).create()
+        }
+    }
 
     // Container Delay
     private var containerOpen = -1L
@@ -441,7 +452,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         }
 
         if (simulateCooldown && getAttackCooldownProgress() < 1f) {
-            clickPattern.cacheClick(target != null, cps)
+            clickMode.cacheClick(target != null, cps)
             clearClicks()
             return@handler
         }
@@ -489,8 +500,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                 }
             }
 
-            clickPattern.cacheClick(true, cps)
-            clicks = clickPattern.consumeCachedClicks()
+            clickMode.cacheClick(true, cps)
+            clicks = clickMode.consumeClicks()
 
             // Usually when you butterfly click, you end up clicking two (and possibly more) times in a single tick.
             // Sometimes you also do not click. The positives outweigh the negatives, however.
@@ -912,7 +923,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         val rotation = searchCenter(
             boundingBox,
             generateSpotBasedOnDistance,
-            outBorder && clickPattern.isWithinPostClickWindow(),
+            outBorder && clickMode.isWithinPostClickWindow(),
             randomization,
             predict = false,
             lookRange = range + scanRange,
@@ -937,89 +948,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     private fun clearClicks() {
         clicks = 0
-        clickPattern.clearCachedClicks()
+        clickMode.clearClicks()
     }
 
     private fun resetClicks() {
         clicks = 0
-        clickPattern.reset()
-    }
-
-    private class ClickPattern {
-
-        private val clickPattern = ArrayDeque<Int>()
-        private var patternUpdateTime = 0L
-        private var cachedClicks = 0
-        private var lastClickTime = 0L
-        private var clicksPerSecond = 0
-
-        fun cacheClick(active: Boolean, cps: IntRange) {
-            if (!active) {
-                cachedClicks = 0
-                return
-            }
-
-            if (shouldClickThisTick(cps)) {
-                cachedClicks++
-                lastClickTime = System.currentTimeMillis()
-            }
-        }
-
-        fun consumeCachedClicks(): Int {
-            val clicks = cachedClicks
-            cachedClicks = 0
-            return clicks
-        }
-
-        fun clearCachedClicks() {
-            cachedClicks = 0
-        }
-
-        fun reset() {
-            clickPattern.clear()
-            patternUpdateTime = 0L
-            cachedClicks = 0
-            lastClickTime = 0L
-            clicksPerSecond = 0
-        }
-
-        fun isWithinPostClickWindow(): Boolean {
-            if (lastClickTime == 0L || clicksPerSecond <= 0) {
-                return false
-            }
-
-            return System.currentTimeMillis() - lastClickTime < 1000L / max(1, clicksPerSecond) / 2L
-        }
-
-        private fun shouldClickThisTick(cps: IntRange): Boolean {
-            if (clickPattern.isEmpty() || System.currentTimeMillis() - patternUpdateTime >= 1000L) {
-                generateClickPattern(cps)
-            }
-
-            return clickPattern.removeFirst() == 1
-        }
-
-        private fun generateClickPattern(cps: IntRange) {
-            clickPattern.clear()
-
-            clicksPerSecond = Math.round(nextDouble(cps.first.toDouble(), cps.last + 1.0)).toInt()
-            var clicksToDistribute = clicksPerSecond
-            val totalTicks = 20
-
-            for (tick in 0 until totalTicks) {
-                val probability = clicksToDistribute.toDouble() / (totalTicks - tick)
-
-                if (nextDouble() < probability) {
-                    clickPattern.addLast(1)
-                    clicksToDistribute--
-                    continue
-                }
-
-                clickPattern.addLast(0)
-            }
-
-            patternUpdateTime = System.currentTimeMillis()
-        }
+        clickMode.reset()
     }
 
     private fun ticksSinceClick() = runTimeTicks - (attackTickTimes.lastOrNull()?.second ?: 0)
