@@ -6,27 +6,30 @@
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils
+import java.util.ArrayDeque
+import kotlin.math.max
 
 /**
- * The legacy click-scheduling algorithm: a 20-tick rolling cycle in which
- * `clicksPerSecond` 0/1 flags are drawn for each slot using a random
- * proportional draw. Renamed from the previous inline `ClickPattern` to
- * expose it as an end-user mode alongside [Stabilized].
+ * Token-bucket click scheduler that distributes a Poisson-style click pattern
+ * across a 20-tick window. Each tick, [cacheClick] consumes a 0/1 cell from the
+ * pre-generated deque; [consumeClicks] reports whether that cell was 1.
  *
- * Behaviour is identical to the pre-refactor implementation in:
- *   - `AutoClicker.kt` (token-bucket `ClickPattern`)
- *   - `KillAura.kt`  (same algorithm + `lastClickTime`/`clicksPerSecond`
- *     for the post-click window reported via [isWithinPostClickWindow])
+ * Renamed from the legacy in-module `ClickPattern` to `Fatigue` so users can pick
+ * it alongside [Stabilized] from the click-method choice in AutoClicker / KillAura.
+ *
+ * Includes last-click bookkeeping so [isWithinPostClickWindow] can be answered
+ * (AutoClicker doesn't need it, but KillAura does — kept on the shared class).
  */
 class Fatigue : ClickMode("Fatigue") {
 
-    private val clickCycle: ArrayDeque<Int> = ArrayDeque()
-    private var cycleUpdateTimeMs: Long = 0L
-    private var cachedClicks: Int = 0
-    private var lastClickTimeMs: Long = 0L
-    private var clicksPerSecond: Int = 0
+    private val patternLength = 20
+    private val pattern = ArrayDeque<Int>(patternLength)
+    private var patternUpdateTime = 0L
+    private var cachedClicks = 0
+    private var lastClickTime = 0L
+    private var clicksPerSecond = 0
 
-    override fun create(): ClickMode = Fatigue()
+    override fun create() = Fatigue()
 
     override fun cacheClick(active: Boolean, cps: IntRange) {
         if (!active) {
@@ -34,9 +37,13 @@ class Fatigue : ClickMode("Fatigue") {
             return
         }
 
-        if (shouldClickThisTick(cps)) {
+        if (pattern.isEmpty() || System.currentTimeMillis() - patternUpdateTime >= 1000L) {
+            generatePattern(cps)
+        }
+
+        if (!pattern.isEmpty() && pattern.removeFirst() == 1) {
             cachedClicks++
-            lastClickTimeMs = System.currentTimeMillis()
+            lastClickTime = System.currentTimeMillis()
         }
     }
 
@@ -51,54 +58,37 @@ class Fatigue : ClickMode("Fatigue") {
     }
 
     override fun isWithinPostClickWindow(): Boolean {
-        if (lastClickTimeMs == 0L || clicksPerSecond <= 0) {
-            return false
-        }
-        return System.currentTimeMillis() - lastClickTimeMs <
-            1000L / maxOf(1, clicksPerSecond) / 2L
+        if (lastClickTime == 0L || clicksPerSecond <= 0) return false
+        return System.currentTimeMillis() - lastClickTime < 1000L / max(1, clicksPerSecond) / 2L
     }
 
     override fun reset() {
-        clickCycle.clear()
-        cycleUpdateTimeMs = 0L
+        pattern.clear()
+        patternUpdateTime = 0L
         cachedClicks = 0
-        lastClickTimeMs = 0L
+        lastClickTime = 0L
         clicksPerSecond = 0
     }
 
-    private fun shouldClickThisTick(cps: IntRange): Boolean {
-        if (clickCycle.isEmpty() ||
-            System.currentTimeMillis() - cycleUpdateTimeMs >= 1000L
-        ) {
-            generateClickCycle(cps)
+    private fun generatePattern(cps: IntRange) {
+        pattern.clear()
+
+        clicksPerSecond = Math.round(RandomUtils.nextDouble(cps.first.toDouble(), cps.last + 1.0)).toInt()
+        if (clicksPerSecond <= 0) {
+            patternUpdateTime = System.currentTimeMillis()
+            return
         }
-        return clickCycle.removeFirst() == 1
-    }
 
-    private fun generateClickCycle(cps: IntRange) {
-        clickCycle.clear()
-
-        clicksPerSecond = Math.round(
-            RandomUtils.nextDouble(cps.first.toDouble(), cps.last + 1.0)
-        ).toInt()
-
-        var clicksToDistribute = clicksPerSecond
-        val totalTicks = TICKS_PER_SECOND
-
-        for (tick in 0 until totalTicks) {
-            val probability = clicksToDistribute.toDouble() / (totalTicks - tick)
+        var remaining = clicksPerSecond
+        for (tick in 0 until patternLength) {
+            val probability = remaining.toDouble() / (patternLength - tick)
             if (RandomUtils.nextDouble() < probability) {
-                clickCycle.addLast(1)
-                clicksToDistribute--
-                continue
+                pattern.addLast(1)
+                remaining--
+            } else {
+                pattern.addLast(0)
             }
-            clickCycle.addLast(0)
         }
-
-        cycleUpdateTimeMs = System.currentTimeMillis()
-    }
-
-    companion object {
-        private const val TICKS_PER_SECOND = 20
+        patternUpdateTime = System.currentTimeMillis()
     }
 }

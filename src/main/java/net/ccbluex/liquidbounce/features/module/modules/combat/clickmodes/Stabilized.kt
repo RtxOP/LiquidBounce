@@ -5,29 +5,26 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
-import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils
 import kotlin.math.max
+import kotlin.random.Random
 
 /**
- * Even-paced click cycle: `clicksPerSecond` 0..N clicks are placed into a
- * 20-tick window with deterministic equal spacing. Remainders are spread
- * one-by-one across the gaps so the cycle stays balanced under any CPS
- * value.
+ * Even-paced click scheduler. Distributes a random sample of clicks uniformly
+ * across a 20-tick window: `interval = window / clicks`, with each gap growing
+ * by 1 in turn until the remainder is consumed.
  *
- * Ported (interface adapted) from the nextgen branch's historical
- *   `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`
- * originally paired with the rolling-click-array ClickPattern API. Here it is
- * expressed via the [ClickMode.cacheClick] / [consumeClicks] interface so it
- * slots into the same pipeline as [Fatigue].
+ * Ported from the historical nextgen
+ * `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`.
  */
 class Stabilized : ClickMode("Stabilized") {
 
-    private val cycle = IntArray(CYCLE_LENGTH_TICKS)
-    private var cycleCursor: Int = 0
-    private var cycleUpdateTimeMs: Long = 0L
-    private var cachedClicks: Int = 0
+    private val patternLength = 20
+    private val cycle = IntArray(patternLength)
+    private var cycleCursor = 0
+    private var cycleUpdateTime = 0L
+    private var cachedClicks = 0
 
-    override fun create(): ClickMode = Stabilized()
+    override fun create() = Stabilized()
 
     override fun cacheClick(active: Boolean, cps: IntRange) {
         if (!active) {
@@ -35,19 +32,16 @@ class Stabilized : ClickMode("Stabilized") {
             return
         }
 
-        if (cycle.all { it == 0 } ||
-            System.currentTimeMillis() - cycleUpdateTimeMs >= 1000L
-        ) {
+        val now = System.currentTimeMillis()
+        if (cycleCursor == 0 || now - cycleUpdateTime >= 1000L) {
             refillCycle(cps)
-            cycleUpdateTimeMs = System.currentTimeMillis()
-            cycleCursor = 0
+            cycleUpdateTime = now
         }
 
-        if (cycle[cycleCursor] > 0) {
-            cycle[cycleCursor]--
-            cachedClicks++
-        }
-        cycleCursor = (cycleCursor + 1) % CYCLE_LENGTH_TICKS
+        val pending = cycle[cycleCursor]
+        cachedClicks = pending
+        if (pending > 0) cycle[cycleCursor] = 0
+        cycleCursor = (cycleCursor + 1) % patternLength
     }
 
     override fun consumeClicks(): Int {
@@ -63,36 +57,28 @@ class Stabilized : ClickMode("Stabilized") {
     override fun reset() {
         cycle.fill(0)
         cycleCursor = 0
-        cycleUpdateTimeMs = 0L
+        cycleUpdateTime = 0L
         cachedClicks = 0
     }
 
-    /**
-     * Distributes `clicks` flags evenly across [cycle]. Steps forward by
-     * `cycleLength / clicks`; the `cycleLength % clicks` remainder is
-     * scattered one extra slot at a time so the distribution stays balanced.
-     */
     private fun refillCycle(cps: IntRange) {
         cycle.fill(0)
+        cycleCursor = 0
 
-        val clicks = RandomUtils.nextInt(cps.first, cps.last + 1)
+        val clicks = Random.nextInt(cps.first, cps.last + 1)
         if (clicks <= 0) return
 
-        val interval = CYCLE_LENGTH_TICKS / clicks
-        var remainder = CYCLE_LENGTH_TICKS % clicks
-        var index = 0
+        val interval = patternLength / clicks
+        var remainder = patternLength % clicks
 
+        var currentIndex = 0
         repeat(clicks) {
-            cycle[index % CYCLE_LENGTH_TICKS]++
-            index += max(interval, 1)
+            cycle[currentIndex % patternLength]++
+            currentIndex += max(interval, 1)
             if (remainder > 0) {
-                index++
+                currentIndex++
                 remainder--
             }
         }
-    }
-
-    companion object {
-        private const val CYCLE_LENGTH_TICKS = 20
     }
 }
