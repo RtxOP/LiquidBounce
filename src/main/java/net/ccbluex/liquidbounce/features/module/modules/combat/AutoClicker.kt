@@ -34,14 +34,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val simulateDoubleClicking by boolean("SimulateDoubleClicking", false)
     private val cps by intRange("CPS", 5..8, 1..50)
 
-    private val clickMethod by choices(
+    private val clickMethodValue = choices(
         "Method", arrayOf("Fatigue", "Stabilized"), "Fatigue"
-    ).onChanged { _ ->
-        leftClickMode.reset()
-        rightClickMode.reset()
-        leftClickMode = clickModeByName(clickMethod).create()
-        rightClickMode = clickModeByName(clickMethod).create()
-    }
+    )
+    private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { left }
 
@@ -59,6 +55,16 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private var leftClickMode: ClickMode = clickModeByName(clickMethod).create()
     private var rightClickMode: ClickMode = clickModeByName(clickMethod).create()
+
+    init {
+        clickMethodValue.onChanged { newValue ->
+            val newMode = clickModeByName(newValue).create()
+            leftClickMode.reset()
+            rightClickMode.reset()
+            leftClickMode = newMode
+            rightClickMode = newMode
+        }
+    }
 
     private var lastBlocking = 0L
 
