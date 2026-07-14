@@ -85,8 +85,14 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     // CPS - Attack speed
     private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }
 
-    // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = even-paced cycle)
-    private val clickMethodValue = choices("Method", arrayOf("Fatigue", "Stabilized"), "Fatigue")
+    // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = nextgen even-paced cycle,
+    // plus the rest of the historical nextgen pattern set).
+    private val clickMethodValue = choices(
+        "Method", arrayOf(
+            "Fatigue", "Stabilized", "Spamming", "Efficient",
+            "DoubleClick", "Butterfly", "Drag", "NormalDistribution"
+        ), "Fatigue"
+    )
     private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }
@@ -325,15 +331,14 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val prevTargetEntities = mutableListOf<Int>()
 
     // Attack delay
-    private var clickMode: ClickMode = clickModeByName(clickMethod).create()
+    private var clickMode: ClickMode = clickModeByName(clickMethod)
     private var clicks = 0
     private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
 
     init {
         clickMethodValue.onChanged { newValue ->
-            val newMode = clickModeByName(newValue).create()
             clickMode.reset()
-            clickMode = newMode
+            clickMode = clickModeByName(newValue)
         }
     }
 
@@ -950,7 +955,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     private fun clearClicks() {
         clicks = 0
-        clickMode.clearClicks()
+        clickMode.consumeClicks()
     }
 
     private fun resetClicks() {

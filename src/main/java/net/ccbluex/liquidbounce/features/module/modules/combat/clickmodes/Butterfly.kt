@@ -5,18 +5,17 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
-import kotlin.math.max
 import kotlin.random.Random
 
 /**
- * Even-paced click scheduler. Distributes a random sample of clicks uniformly
- * across a 20-tick window: `interval = window / clicks`, with each gap growing
- * by 1 in turn until the remainder is consumed.
+ * Butterfly-clicking model: fill empty per-tick slots with 1-2 clicks each,
+ * falling back to randomly incrementing any slot once all are occupied.
+ * Mimics two-finger butterfly click on a sensitive switch.
  *
- * Ported from the historical nextgen
- * `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`.
+ * Ported from nextgen's
+ * `src/main/kotlin/.../utils/clicking/pattern/patterns/ButterflyPattern.kt`.
  */
-class Stabilized : ClickMode("Stabilized") {
+class Butterfly : ClickMode("Butterfly") {
 
     private val patternLength = 20
     private val cycle = IntArray(patternLength)
@@ -62,16 +61,20 @@ class Stabilized : ClickMode("Stabilized") {
         val clicks = Random.Default.nextInt(cps.first, cps.last + 1)
         if (clicks <= 0) return
 
-        val interval = patternLength / clicks
-        var remainder = patternLength % clicks
-
-        var currentIndex = 0
-        repeat(clicks) {
-            cycle[currentIndex % patternLength]++
-            currentIndex += max(interval, 1)
-            if (remainder > 0) {
-                currentIndex++
-                remainder--
+        // Mirror nextgen: loop until cumulative count meets target. Pick an
+        // unoccupied slot when any exists; otherwise bump any slot by 1.
+        var placed = 0
+        val indices = cycle.indices.toIntArray()
+        while (placed < clicks) {
+            val empty = indices.filter { cycle[it] == 0 }
+            if (empty.isNotEmpty()) {
+                val idx = empty[Random.Default.nextInt(empty.size)]
+                cycle[idx] = Random.Default.nextInt(1, 3)
+                placed += cycle[idx]
+            } else {
+                val idx = indices[Random.Default.nextInt(indices.size)]
+                cycle[idx]++
+                placed++
             }
         }
     }

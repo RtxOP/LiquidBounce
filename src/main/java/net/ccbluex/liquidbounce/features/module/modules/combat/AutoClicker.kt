@@ -35,7 +35,10 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val cps by intRange("CPS", 5..8, 1..50)
 
     private val clickMethodValue = choices(
-        "Method", arrayOf("Fatigue", "Stabilized"), "Fatigue"
+        "Method", arrayOf(
+            "Fatigue", "Stabilized", "Spamming", "Efficient",
+            "DoubleClick", "Butterfly", "Drag", "NormalDistribution"
+        ), "Fatigue"
     )
     private val clickMethod: String get() = clickMethodValue.get()
 
@@ -53,16 +56,15 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private val onlyBlocks by boolean("OnlyBlocks", true) { right }
 
-    private var leftClickMode: ClickMode = clickModeByName(clickMethod).create()
-    private var rightClickMode: ClickMode = clickModeByName(clickMethod).create()
+    private var leftClickMode: ClickMode = clickModeByName(clickMethod)
+    private var rightClickMode: ClickMode = clickModeByName(clickMethod)
 
     init {
         clickMethodValue.onChanged { newValue ->
-            val newMode = clickModeByName(newValue).create()
             leftClickMode.reset()
             rightClickMode.reset()
-            leftClickMode = newMode
-            rightClickMode = newMode
+            leftClickMode = clickModeByName(newValue)
+            rightClickMode = clickModeByName(newValue)
         }
     }
 

@@ -5,18 +5,21 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
-import kotlin.math.max
 import kotlin.random.Random
 
 /**
- * Even-paced click scheduler. Distributes a random sample of clicks uniformly
- * across a 20-tick window: `interval = window / clicks`, with each gap growing
- * by 1 in turn until the remainder is consumed.
+ * Random slot-fill — each click lands on a uniformly-picked tick in the 20-tick
+ * window. Inject clicks one at a time at random positions; no uniformity
+ * constraint.
  *
- * Ported from the historical nextgen
- * `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`.
+ * Ported from nextgen's
+ * `src/main/kotlin/.../utils/clicking/pattern/patterns/SpammingPattern.kt`.
+ *
+ * Distinct from [Fatigue], which uses Bernoulli sampling with a decreasing
+ * probability over the cycle window (Poisson-like). Spamming is just
+ * "sprinkle `n` units uniformly — no time-correlated structure."
  */
-class Stabilized : ClickMode("Stabilized") {
+class Spamming : ClickMode("Spamming") {
 
     private val patternLength = 20
     private val cycle = IntArray(patternLength)
@@ -62,17 +65,8 @@ class Stabilized : ClickMode("Stabilized") {
         val clicks = Random.Default.nextInt(cps.first, cps.last + 1)
         if (clicks <= 0) return
 
-        val interval = patternLength / clicks
-        var remainder = patternLength % clicks
-
-        var currentIndex = 0
         repeat(clicks) {
-            cycle[currentIndex % patternLength]++
-            currentIndex += max(interval, 1)
-            if (remainder > 0) {
-                currentIndex++
-                remainder--
-            }
+            cycle[Random.Default.nextInt(cycle.size)]++
         }
     }
 }

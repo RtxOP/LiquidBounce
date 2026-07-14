@@ -5,18 +5,18 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
-import kotlin.math.max
 import kotlin.random.Random
 
 /**
- * Even-paced click scheduler. Distributes a random sample of clicks uniformly
- * across a 20-tick window: `interval = window / clicks`, with each gap growing
- * by 1 in turn until the remainder is consumed.
+ * Drag clicking model — fits the cycle's click count into the first
+ * `travelTime` ticks (17 in nextgen's default) by repeatedly picking the
+ * lowest-count slot in that prefix and incrementing it. Mimics the
+ * top-to-bottom finger drag that produces friction clicks.
  *
- * Ported from the historical nextgen
- * `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`.
+ * Ported from nextgen's
+ * `src/main/kotlin/.../utils/clicking/pattern/patterns/DragPattern.kt`.
  */
-class Stabilized : ClickMode("Stabilized") {
+class Drag : ClickMode("Drag") {
 
     private val patternLength = 20
     private val cycle = IntArray(patternLength)
@@ -62,17 +62,23 @@ class Stabilized : ClickMode("Stabilized") {
         val clicks = Random.Default.nextInt(cps.first, cps.last + 1)
         if (clicks <= 0) return
 
-        val interval = patternLength / clicks
-        var remainder = patternLength % clicks
+        // next-gen default: travel-time window of 17 ticks. The remaining
+        // ticks in the 20-window are left at 0 (the "lift your finger back
+        // up" gap).
+        val travelTime = 17
 
-        var currentIndex = 0
-        repeat(clicks) {
-            cycle[currentIndex % patternLength]++
-            currentIndex += max(interval, 1)
-            if (remainder > 0) {
-                currentIndex++
-                remainder--
+        var placed = 0
+        while (placed < clicks) {
+            var lowestIndex = 0
+            var lowestValue = cycle[0]
+            for (i in 1 until travelTime) {
+                if (cycle[i] < lowestValue) {
+                    lowestValue = cycle[i]
+                    lowestIndex = i
+                }
             }
+            cycle[lowestIndex]++
+            placed++
         }
     }
 }

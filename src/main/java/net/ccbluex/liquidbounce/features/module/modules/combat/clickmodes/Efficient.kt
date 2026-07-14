@@ -9,14 +9,14 @@ import kotlin.math.max
 import kotlin.random.Random
 
 /**
- * Even-paced click scheduler. Distributes a random sample of clicks uniformly
- * across a 20-tick window: `interval = window / clicks`, with each gap growing
- * by 1 in turn until the remainder is consumed.
+ * Pace-clamped even spacing — click at every other tick (`i * 2 % 20`). At
+ * CPS below 10 the spacing produces wide gaps; falls back to [Stabilized]'s
+ * even-spacing fill in that case.
  *
- * Ported from the historical nextgen
- * `src/main/kotlin/.../utils/clicking/pattern/patterns/StabilizedPattern.kt`.
+ * Ported from nextgen's
+ * `src/main/kotlin/.../utils/clicking/pattern/patterns/EfficientPattern.kt`.
  */
-class Stabilized : ClickMode("Stabilized") {
+class Efficient : ClickMode("Efficient") {
 
     private val patternLength = 20
     private val cycle = IntArray(patternLength)
@@ -62,12 +62,25 @@ class Stabilized : ClickMode("Stabilized") {
         val clicks = Random.Default.nextInt(cps.first, cps.last + 1)
         if (clicks <= 0) return
 
-        val interval = patternLength / clicks
-        var remainder = patternLength % clicks
+        // Below 10 CPS, every-other-tick pacing opens wide gaps — fall back to
+        // the stabilized spacing layout instead.
+        if (clicks < 10) {
+            stabilizedFill(cycle, clicks)
+            return
+        }
 
+        for (i in 0 until clicks) {
+            cycle[i * 2 % patternLength]++
+        }
+    }
+
+    private fun stabilizedFill(target: IntArray, clicks: Int) {
+        if (clicks <= 0) return
+        val interval = target.size / clicks
+        var remainder = target.size % clicks
         var currentIndex = 0
         repeat(clicks) {
-            cycle[currentIndex % patternLength]++
+            target[currentIndex % target.size]++
             currentIndex += max(interval, 1)
             if (remainder > 0) {
                 currentIndex++

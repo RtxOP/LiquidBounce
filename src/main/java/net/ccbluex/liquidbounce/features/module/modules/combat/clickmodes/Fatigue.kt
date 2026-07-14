@@ -29,8 +29,6 @@ class Fatigue : ClickMode("Fatigue") {
     private var lastClickTime = 0L
     private var clicksPerSecond = 0
 
-    override fun create() = Fatigue()
-
     override fun cacheClick(active: Boolean, cps: IntRange) {
         if (!active) {
             cachedClicks = 0
@@ -51,10 +49,6 @@ class Fatigue : ClickMode("Fatigue") {
         val clicks = cachedClicks
         cachedClicks = 0
         return clicks
-    }
-
-    override fun clearClicks() {
-        cachedClicks = 0
     }
 
     override fun isWithinPostClickWindow(): Boolean {
