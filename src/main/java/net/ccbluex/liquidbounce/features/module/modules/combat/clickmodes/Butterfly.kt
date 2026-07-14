@@ -63,16 +63,16 @@ class Butterfly : ClickMode("Butterfly") {
 
         // Mirror nextgen: loop until cumulative count meets target. Pick an
         // unoccupied slot when any exists; otherwise bump any slot by 1.
+        // cycle.indices is IntRange; .filter yields List<Int> we can index.
         var placed = 0
-        val indices = cycle.indices.toIntArray()
         while (placed < clicks) {
-            val empty = indices.filter { cycle[it] == 0 }
+            val empty = cycle.indices.filter { cycle[it] == 0 }
             if (empty.isNotEmpty()) {
                 val idx = empty[Random.Default.nextInt(empty.size)]
                 cycle[idx] = Random.Default.nextInt(1, 3)
                 placed += cycle[idx]
             } else {
-                val idx = indices[Random.Default.nextInt(indices.size)]
+                val idx = Random.Default.nextInt(cycle.size)
                 cycle[idx]++
                 placed++
             }

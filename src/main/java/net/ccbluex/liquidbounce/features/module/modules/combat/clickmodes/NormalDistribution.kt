@@ -5,6 +5,7 @@
  */
 package net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes
 
+import java.util.Random as JdkRandom
 import kotlin.random.Random
 
 /**
@@ -40,6 +41,15 @@ class NormalDistribution : ClickMode("NormalDistribution") {
         Band(top = 10.0 / 110.0, mean = 179.5242718446602, std = 20.416937885616676),
         Band(top = 0.0, mean = 87.88, std = 13.420088130563776)
     )
+
+    /**
+     * `kotlin.random.Random` keeps the door closed on `nextGaussian()` even
+     * though the JVM default wraps `java.util.Random` underneath — the
+     * compiler resolves through the abstract Kotlin type, not the Java one.
+     * Hold a JDK `java.util.Random` directly so we can call its inherited
+     * Gaussian sampler.
+     */
+    private val gaussian = JdkRandom()
 
     override fun cacheClick(active: Boolean, cps: IntRange) {
         if (!active) {
@@ -87,7 +97,7 @@ class NormalDistribution : ClickMode("NormalDistribution") {
             val threshold = Random.Default.nextDouble()
             val band = frequencyBands.first { threshold >= it.top }
 
-            t += (band.mean + band.std * Random.Default.nextGaussian()) * 20.0 / 1000.0
+            t += (band.mean + band.std * gaussian.nextGaussian()) * 20.0 / 1000.0
 
             if (t > 20.0) break
             cycle[t.toInt()]++
