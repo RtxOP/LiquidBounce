@@ -51,6 +51,7 @@ class Fatigue : ClickMode("Fatigue") {
         pattern.clear()
         patternUpdateTime = 0L
         cachedClicks = 0
+        clearClickTracking()
     }
 
     private fun generatePattern(cps: IntRange) {

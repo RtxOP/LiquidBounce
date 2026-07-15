@@ -40,6 +40,12 @@ abstract class ClickMode(val modeName: String) {
     /** Drop all pattern/counter state (call on module disable). */
     abstract fun reset()
 
+    /** Subclasses call this from [reset] to also clear the post-click window state. */
+    protected fun clearClickTracking() {
+        lastClickTime = 0L
+        clicksPerSecond = 0
+    }
+
     // ---- shared post-click bookkeeping ----
     protected var lastClickTime = 0L
         private set
@@ -109,6 +115,7 @@ abstract class CycleClickMode(modeName: String) : ClickMode(modeName) {
         cycleCursor = 0
         cycleUpdateTime = 0L
         cachedClicks = 0
+        clearClickTracking()
     }
 
     /**
