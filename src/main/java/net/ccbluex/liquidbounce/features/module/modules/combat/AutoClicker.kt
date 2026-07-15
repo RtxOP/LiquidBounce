@@ -6,11 +6,14 @@
 package net.ccbluex.liquidbounce.features.module.modules.combat
 
 import net.ccbluex.liquidbounce.event.AttackEvent
-import net.ccbluex.liquidbounce.event.Render3DEvent
+import net.ccbluex.liquidbounce.event.GameTickEvent
 import net.ccbluex.liquidbounce.event.UpdateEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.CLICK_MODE_NAMES
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isLookingOnEntities
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isSelected
 import net.ccbluex.liquidbounce.utils.client.EntityLookup
@@ -20,7 +23,6 @@ import net.ccbluex.liquidbounce.utils.extensions.getDistanceToEntityBox
 import net.ccbluex.liquidbounce.utils.extensions.isBlock
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
-import net.ccbluex.liquidbounce.utils.timing.TimeUtils.randomClickDelay
 import net.minecraft.client.settings.KeyBinding
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
@@ -32,6 +34,9 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private val simulateDoubleClicking by boolean("SimulateDoubleClicking", false)
     private val cps by intRange("CPS", 5..8, 1..50)
+
+    private val clickMethodValue = choices("Method", CLICK_MODE_NAMES, "Stabilized")
+    private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { left }
 
@@ -47,10 +52,17 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private val onlyBlocks by boolean("OnlyBlocks", true) { right }
 
-    private var rightDelay = generateNewClickTime()
-    private var rightLastSwing = 0L
-    private var leftDelay = generateNewClickTime()
-    private var leftLastSwing = 0L
+    private var leftClickMode: ClickMode = clickModeByName(clickMethod)
+    private var rightClickMode: ClickMode = clickModeByName(clickMethod)
+
+    init {
+        clickMethodValue.onChanged { newValue ->
+            leftClickMode.reset()
+            rightClickMode.reset()
+            leftClickMode = clickModeByName(newValue)
+            rightClickMode = clickModeByName(newValue)
+        }
+    }
 
     private var lastBlocking = 0L
 
@@ -62,8 +74,8 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private var target: EntityLivingBase? = null
 
     override fun onDisable() {
-        rightLastSwing = 0L
-        leftLastSwing = 0L
+        leftClickMode.reset()
+        rightClickMode.reset()
         lastBlocking = 0L
         target = null
     }
@@ -75,33 +87,49 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         target = targetEntity
     }
 
-    val onRender3D = handler<Render3DEvent> {
+    val onGameTick = handler<GameTickEvent> {
         mc.thePlayer?.let { thePlayer ->
             val time = System.currentTimeMillis()
-            val doubleClick = if (simulateDoubleClicking) RandomUtils.nextInt(-1, 1) else 0
 
             if (block && thePlayer.swingProgress > 0 && !mc.gameSettings.keyBindUseItem.isKeyDown) {
                 mc.gameSettings.keyBindUseItem.pressTime = 0
             }
 
-            if (right && mc.gameSettings.keyBindUseItem.isKeyDown && time - rightLastSwing >= rightDelay) {
-                if (!onlyBlocks || thePlayer.heldItem?.item is ItemBlock) {
-                    handleRightClick(time, doubleClick)
-                }
+            rightClickMode.cacheClick(
+                right && mc.gameSettings.keyBindUseItem.isKeyDown && (!onlyBlocks || thePlayer.heldItem?.item is ItemBlock),
+                cps
+            )
+
+            val rightClicks = rightClickMode.consumeClicks()
+
+            if (rightClicks > 0) {
+                handleRightClick(rightClicks)
             }
 
             if (requiresNoInput) {
-                val nearbyEntity = getNearestEntityInRange() ?: return@handler
-                if (!isLookingOnEntities(nearbyEntity, maxAngleDifference.toDouble())) return@handler
+                val nearbyEntity = getNearestEntityInRange()
+                val canLeftClick = nearbyEntity != null &&
+                        isLookingOnEntities(nearbyEntity, maxAngleDifference.toDouble()) &&
+                        left && shouldAutoClick
 
-                if (left && shouldAutoClick && time - leftLastSwing >= leftDelay) {
-                    handleLeftClick(time, doubleClick)
+                leftClickMode.cacheClick(canLeftClick, cps)
+                val leftClicks = leftClickMode.consumeClicks()
+
+                if (leftClicks > 0) {
+                    handleLeftClick(leftClicks)
                 } else if (block && !mc.gameSettings.keyBindUseItem.isKeyDown && shouldAutoClick && shouldAutoRightClick() && mc.gameSettings.keyBindAttack.pressTime != 0) {
                     handleBlock(time)
                 }
             } else {
-                if (left && mc.gameSettings.keyBindAttack.isKeyDown && !mc.gameSettings.keyBindUseItem.isKeyDown && shouldAutoClick && time - leftLastSwing >= leftDelay) {
-                    handleLeftClick(time, doubleClick)
+                leftClickMode.cacheClick(
+                    left && mc.gameSettings.keyBindAttack.isKeyDown && !mc.gameSettings.keyBindUseItem.isKeyDown && shouldAutoClick,
+                    cps
+                )
+
+                val leftClicks = leftClickMode.consumeClicks()
+
+                if (leftClicks > 0) {
+                    handleLeftClick(leftClicks)
                 } else if (block && mc.gameSettings.keyBindAttack.isKeyDown && !mc.gameSettings.keyBindUseItem.isKeyDown && shouldAutoClick && shouldAutoRightClick() && mc.gameSettings.keyBindAttack.pressTime != 0) {
                     handleBlock(time)
                 }
@@ -138,23 +166,21 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
 
     private fun shouldAutoRightClick() = mc.thePlayer.heldItem?.itemUseAction in arrayOf(EnumAction.BLOCK)
 
-    private fun handleLeftClick(time: Long, doubleClick: Int) {
+    private fun handleLeftClick(clicks: Int) {
         if (target != null && target!!.hurtTime > hurtTime) return
 
-        repeat(1 + doubleClick) {
-            KeyBinding.onTick(mc.gameSettings.keyBindAttack.keyCode)
-
-            leftLastSwing = time
-            leftDelay = generateNewClickTime()
+        repeat(clicks) {
+            repeat(1 + extraClicks()) {
+                KeyBinding.onTick(mc.gameSettings.keyBindAttack.keyCode)
+            }
         }
     }
 
-    private fun handleRightClick(time: Long, doubleClick: Int) {
-        repeat(1 + doubleClick) {
-            KeyBinding.onTick(mc.gameSettings.keyBindUseItem.keyCode)
-
-            rightLastSwing = time
-            rightDelay = generateNewClickTime()
+    private fun handleRightClick(clicks: Int) {
+        repeat(clicks) {
+            repeat(1 + extraClicks()) {
+                KeyBinding.onTick(mc.gameSettings.keyBindUseItem.keyCode)
+            }
         }
     }
 
@@ -166,5 +192,5 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
         }
     }
 
-    fun generateNewClickTime() = randomClickDelay(cps.first, cps.last)
+    private fun extraClicks() = if (simulateDoubleClicking) RandomUtils.nextInt(-1, 1) else 0
 }

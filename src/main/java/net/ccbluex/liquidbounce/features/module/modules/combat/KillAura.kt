@@ -10,6 +10,9 @@ import net.ccbluex.liquidbounce.event.*
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.combat.Backtrack.runWithSimulatedPosition
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.CLICK_MODE_NAMES
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.features.module.modules.player.Blink
 import net.ccbluex.liquidbounce.features.module.modules.world.Fucker
 import net.ccbluex.liquidbounce.features.module.modules.world.Nuker
@@ -52,7 +55,6 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
-import net.ccbluex.liquidbounce.utils.timing.TimeUtils.randomClickDelay
 import net.minecraft.client.gui.inventory.GuiContainer
 import net.minecraft.enchantment.EnchantmentHelper
 import net.minecraft.entity.Entity
@@ -82,9 +84,12 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val simulateDoubleClicking by boolean("SimulateDoubleClicking", false) { !simulateCooldown }
 
     // CPS - Attack speed
-    private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }.onChanged {
-        attackDelay = randomClickDelay(it.first, it.last)
-    }
+    private val cps by intRange("CPS", 5..8, 1..50) { !simulateCooldown }
+
+    // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = nextgen even-paced cycle,
+    // plus the rest of the historical nextgen pattern set).
+    private val clickMethodValue = choices("Method", CLICK_MODE_NAMES, "Stabilized")
+    private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }
 
@@ -322,10 +327,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val prevTargetEntities = mutableListOf<Int>()
 
     // Attack delay
-    private val attackTimer = MSTimer()
-    private var attackDelay = 0
+    private var clickMode: ClickMode = clickModeByName(clickMethod)
     private var clicks = 0
     private var attackTickTimes = mutableListOf<Pair<MovingObjectPosition, Int>>()
+
+    init {
+        clickMethodValue.onChanged { newValue ->
+            clickMode.reset()
+            clickMode = clickModeByName(newValue)
+        }
+    }
 
     // Container Delay
     private var containerOpen = -1L
@@ -352,8 +363,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         hittable = false
         prevTargetEntities.clear()
         attackTickTimes.clear()
-        attackTimer.reset()
-        clicks = 0
+        resetClicks()
 
         if (blinkAutoBlock) {
             BlinkUtils.unblink()
@@ -388,6 +398,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     val onWorld = handler<WorldEvent> {
         attackTickTimes.clear()
+        resetClicks()
 
         if (blinkAutoBlock && BlinkUtils.isBlinking) BlinkUtils.unblink()
 
@@ -405,22 +416,24 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         if (blockStatus && player.heldItem?.item !is ItemSword) {
             blockStatus = false
             renderBlocking = false
+            clearClicks()
             return@handler
         }
 
         if (shouldPrioritize()) {
             target = null
             renderBlocking = false
+            clearClicks()
             return@handler
         }
 
         if (clickOnly && !mc.gameSettings.keyBindAttack.isKeyDown) {
-            clicks = 0
+            clearClicks()
             return@handler
         }
 
         if (blockStatus && autoBlock == "Packet" && releaseAutoBlock && !ignoreTickRule) {
-            clicks = 0
+            clearClicks()
             stopBlocking()
             return@handler
         }
@@ -429,6 +442,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             target = null
             hittable = false
             stopBlocking()
+            clearClicks()
             return@handler
         }
 
@@ -436,16 +450,20 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             target = null
             hittable = false
             if (mc.currentScreen is GuiContainer) containerOpen = System.currentTimeMillis()
+            clearClicks()
             return@handler
         }
 
         if (simulateCooldown && getAttackCooldownProgress() < 1f) {
+            clickMode.cacheClick(target != null, cps)
+            clearClicks()
             return@handler
         }
 
         if (target == null && !blockStopInDead) {
             blockStopInDead = true
             stopBlocking()
+            clearClicks()
             return@handler
         }
 
@@ -477,12 +495,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         if (target != null) {
             if (player.getDistanceToEntityBox(target!!) > blockMaxRange && blockStatus) {
                 stopBlocking(true)
+                clearClicks()
                 return@handler
             } else {
                 if (autoBlock != "Off" && !releaseAutoBlock) {
                     renderBlocking = true
                 }
             }
+
+            clickMode.cacheClick(true, cps)
+            clicks = clickMode.consumeClicks()
 
             // Usually when you butterfly click, you end up clicking two (and possibly more) times in a single tick.
             // Sometimes you also do not click. The positives outweigh the negatives, however.
@@ -516,6 +538,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             }
         } else {
             renderBlocking = false
+            clearClicks()
         }
     }
 
@@ -541,13 +564,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         }
 
         target ?: return@handler
-
-        if (attackTimer.hasTimePassed(attackDelay)) {
-            if (cps.last > 0) clicks++
-            attackTimer.reset()
-
-            attackDelay = randomClickDelay(cps.first, cps.last)
-        }
 
         val hittableColor = if (hittable) Color(37, 126, 255, 70) else Color(255, 0, 0, 70)
 
@@ -687,7 +703,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                             mc.sendClickBlockToController(false)
 
                             // Swings are sent a tick after stopping the block break progress.
-                            clicks = 0
+                            clearClicks()
 
                             // [manipulateInventory] could have been changed at that point, but it is okay because
                             // serverOpenInventory's backing fields check for same values.
@@ -910,7 +926,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         val rotation = searchCenter(
             boundingBox,
             generateSpotBasedOnDistance,
-            outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
+            outBorder && clickMode.isWithinPostClickWindow(),
             randomization,
             predict = false,
             lookRange = range + scanRange,
@@ -931,6 +947,16 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         player.setPosAndPrevPos(currPos, oldPos)
 
         return true
+    }
+
+    private fun clearClicks() {
+        clicks = 0
+        clickMode.consumeClicks()
+    }
+
+    private fun resetClicks() {
+        clicks = 0
+        clickMode.reset()
     }
 
     private fun ticksSinceClick() = runTimeTicks - (attackTickTimes.lastOrNull()?.second ?: 0)
@@ -1321,4 +1347,3 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 }
 
 data class SwingFailData(val vec3: Vec3, val startTime: Long)
-
