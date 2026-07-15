@@ -10,6 +10,7 @@ import net.ccbluex.liquidbounce.event.*
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.combat.Backtrack.runWithSimulatedPosition
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.CLICK_MODE_NAMES
 import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
 import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.features.module.modules.player.Blink
@@ -87,12 +88,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     // Click scheduling algorithm (Fatigue = legacy token-bucket, Stabilized = nextgen even-paced cycle,
     // plus the rest of the historical nextgen pattern set).
-    private val clickMethodValue = choices(
-        "Method", arrayOf(
-            "Fatigue", "Stabilized", "Spamming", "Efficient",
-            "DoubleClick", "Butterfly", "Drag", "NormalDistribution"
-        ), "Fatigue"
-    )
+    private val clickMethodValue = choices("Method", CLICK_MODE_NAMES, "Stabilized")
     private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { !simulateCooldown }

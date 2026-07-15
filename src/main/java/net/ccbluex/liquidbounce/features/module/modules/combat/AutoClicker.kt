@@ -11,6 +11,7 @@ import net.ccbluex.liquidbounce.event.UpdateEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
+import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.CLICK_MODE_NAMES
 import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.ClickMode
 import net.ccbluex.liquidbounce.features.module.modules.combat.clickmodes.clickModeByName
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isLookingOnEntities
@@ -34,12 +35,7 @@ object AutoClicker : Module("AutoClicker", Category.COMBAT) {
     private val simulateDoubleClicking by boolean("SimulateDoubleClicking", false)
     private val cps by intRange("CPS", 5..8, 1..50)
 
-    private val clickMethodValue = choices(
-        "Method", arrayOf(
-            "Fatigue", "Stabilized", "Spamming", "Efficient",
-            "DoubleClick", "Butterfly", "Drag", "NormalDistribution"
-        ), "Fatigue"
-    )
+    private val clickMethodValue = choices("Method", CLICK_MODE_NAMES, "Stabilized")
     private val clickMethod: String get() = clickMethodValue.get()
 
     private val hurtTime by int("HurtTime", 10, 0..10) { left }
