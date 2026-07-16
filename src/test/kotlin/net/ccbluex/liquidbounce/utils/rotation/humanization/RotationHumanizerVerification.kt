@@ -19,6 +19,7 @@ object RotationHumanizerVerification {
         deterministicReplay()
         shortestYawPath()
         respectsLimitsAndPitchBounds()
+        sensitivityQuantizationConservesMotion()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
@@ -68,6 +69,42 @@ object RotationHumanizerVerification {
             check(next.yaw.isFinite() && next.pitch.isFinite())
             current = next
         }
+    }
+
+    private fun sensitivityQuantizationConservesMotion() {
+        val quantizer = SensitivityQuantizer()
+        var current = AnglePoint(0.0, 0.0)
+
+        repeat(20) { tick ->
+            val next = quantizer.quantize(
+                current = current,
+                desired = AnglePoint((tick + 1) * 0.2, (tick + 1) * 0.1),
+                step = 1.0,
+            )
+
+            check(abs(next.yaw - current.yaw - (next.yaw - current.yaw).toInt()) <= 1.0e-9)
+            check(abs(next.pitch - current.pitch - (next.pitch - current.pitch).toInt()) <= 1.0e-9)
+            check(next.yaw >= current.yaw && next.pitch >= current.pitch) {
+                "Monotone planned motion must not oscillate after quantization"
+            }
+            current = next
+        }
+
+        check(current.yaw in 3.5..4.5) { "Sub-step yaw motion must not be rounded away forever: $current" }
+        check(current.pitch in 1.5..2.5) { "Sub-step pitch motion must not be rounded away forever: $current" }
+
+        repeat(5) {
+            val settled = quantizer.quantize(current, current, step = 1.0)
+            check(settled == current) { "A settled endpoint must not drift from stale quantization error" }
+        }
+
+        quantizer.reset()
+        val wrapped = quantizer.quantize(AnglePoint(179.0, 0.0), AnglePoint(-179.0, 0.0), step = 1.0)
+        check(wrapped.yaw == 181.0) { "Quantization must retain the shortest wrapped yaw path: $wrapped" }
+
+        quantizer.reset()
+        val pitchLimited = quantizer.quantize(AnglePoint(0.0, 89.4), AnglePoint(0.0, 100.0), step = 1.0)
+        check(pitchLimited.pitch == 89.4) { "Pitch bounds must not create a fractional mouse step: $pitchLimited" }
     }
 
     private fun movingTargetDoesNotRestartEveryTick() {

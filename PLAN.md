@@ -21,10 +21,12 @@ The first compatibility slice is now in progress:
 - migrated every rotation producer to rich requests and removed the bare `Rotation` compatibility overload;
 - attached stable block/face metadata and explicit purposes/validity to interaction, placement, projectile, combat, and reset requests;
 - moved immediate/instant execution flags from shared settings into individual requests;
+- made `Rotation` immutable so constants, requests, and historical samples cannot be mutated through shared references;
+- added stateful sensitivity quantization with incremental error diffusion, target-handoff resets, camera rebasing, pitch-safe whole steps, and endpoint drift suppression;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through Aimbot migration and legacy removal have passed maintainer-run compilation and
-  verification; the full request-migration checkpoint is awaiting the next maintainer-run build. The implementing
-  agent must not run Gradle.
+- all completed checkpoints through the full request migration have passed maintainer-run compilation and verification;
+  the immutable-rotation and sensitivity-quantization checkpoint is awaiting the next maintainer-run build. The
+  implementing agent must not run Gradle.
 
 ## Goal
 

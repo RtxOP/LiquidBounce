@@ -142,7 +142,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
 
         val playerRotation = player.rotation
 
-        val destinationRotation = if (center) {
+        var destinationRotation = if (center) {
             toRotation(boundingBox.center)
         } else {
             searchCenter(
@@ -171,7 +171,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
             // Calculate the pitch offset needed to shift the view one block up
             val pitchOffset = Math.toDegrees(atan((blockHeight + playerEyeHeight) / distance)).toFloat()
 
-            destinationRotation.pitch -= pitchOffset
+            destinationRotation = destinationRotation.copy(pitch = destinationRotation.pitch - pitchOffset)
         }
 
         // Figure out the best turn speed suitable for the distance and configured turn speed

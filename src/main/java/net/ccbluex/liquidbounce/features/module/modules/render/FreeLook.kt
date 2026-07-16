@@ -54,7 +54,7 @@ object FreeLook : Module("FreeLook", Category.RENDER) {
         prevRotation = currRotation
         currRotation += Rotation(event.yawDiff, -event.pitchDiff)
 
-        currRotation.withLimitedPitch()
+        currRotation = currRotation.withLimitedPitch()
     }
 
     fun useModifiedRotation() {

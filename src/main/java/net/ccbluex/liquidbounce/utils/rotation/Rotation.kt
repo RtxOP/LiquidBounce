@@ -22,7 +22,7 @@ import kotlin.math.*
 /**
  * Rotations
  */
-data class Rotation(var yaw: Float, var pitch: Float) : MinecraftInstance {
+data class Rotation(val yaw: Float, val pitch: Float) : MinecraftInstance {
 
     val abs
         get() = Rotation(abs(yaw), abs(pitch))
@@ -59,10 +59,10 @@ data class Rotation(var yaw: Float, var pitch: Float) : MinecraftInstance {
     fun toPlayer(player: EntityPlayer = mc.thePlayer, changeYaw: Boolean = true, changePitch: Boolean = true) {
         if (yaw.isNaN() || pitch.isNaN() || pitch > 90 || pitch < -90) return
 
-        fixedSensitivity()
+        val fixed = fixedSensitivity()
 
-        if (changeYaw) player.rotationYaw = yaw
-        if (changePitch) player.rotationPitch = pitch
+        if (changeYaw) player.rotationYaw = fixed.yaw
+        if (changePitch) player.rotationPitch = fixed.pitch
     }
 
     /**
@@ -80,10 +80,10 @@ data class Rotation(var yaw: Float, var pitch: Float) : MinecraftInstance {
         // Only calculate GCD once
         val gcd = getFixedAngleDelta(sensitivity)
 
-        yaw = getFixedSensitivityAngle(yaw, startRotation.yaw, gcd)
-        pitch = getFixedSensitivityAngle(pitch, startRotation.pitch, gcd)
-
-        return this.withLimitedPitch()
+        return Rotation(
+            getFixedSensitivityAngle(yaw, startRotation.yaw, gcd),
+            getFixedSensitivityAngle(pitch, startRotation.pitch, gcd),
+        ).withLimitedPitch()
     }
 
     /**
@@ -141,11 +141,7 @@ data class Rotation(var yaw: Float, var pitch: Float) : MinecraftInstance {
         }
     }
 
-    fun withLimitedPitch(value: Float = 90f): Rotation {
-        pitch = pitch.coerceIn(-value, value)
-
-        return this
-    }
+    fun withLimitedPitch(value: Float = 90f) = copy(pitch = pitch.coerceIn(-value, value))
 }
 
 /**

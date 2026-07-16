@@ -27,12 +27,10 @@ object Derp : Module("Derp", Category.FUN, subjective = true) {
         get() {
             val rotationToUse = currentRotation ?: serverRotation
 
-            val rot = Rotation(rotationToUse.yaw, nextFloat(-90f, 90f))
-
-            if (headless)
-                rot.pitch = 180F
-
-            rot.yaw += if (spinny) increment else nextFloat(-180f, 180f)
+            val rot = Rotation(
+                rotationToUse.yaw + if (spinny) increment else nextFloat(-180f, 180f),
+                if (headless) 180F else nextFloat(-90f, 90f),
+            )
 
             return rot.fixedSensitivity()
         }

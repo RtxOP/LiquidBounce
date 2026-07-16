@@ -20,6 +20,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
+import net.ccbluex.liquidbounce.utils.rotation.humanization.SensitivityQuantizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
@@ -37,6 +38,7 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     private val humanizationSeed = java.util.Random().nextLong()
     private val humanizer = RotationHumanizer(humanizationSeed)
+    private val sensitivityQuantizer = SensitivityQuantizer()
     private val targetPointTracker = TargetPointTracker(humanizationSeed xor 0x5DEECE66DL)
     private val targetMotionEstimator = TargetMotionEstimator()
 
@@ -50,6 +52,9 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     /** Prevents an immediate request from advancing twice in one logical rotation update. */
     private var skipNextRotationUpdate = false
+
+    /** True after quantization has handed off from target travel to camera reset travel. */
+    private var quantizingReset = false
 
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
@@ -524,6 +529,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                 )
         ) {
             humanizer.reset()
+            sensitivityQuantizer.reset()
         }
 
         if (!options.applyServerSide && activeSettings?.applyServerSide != false) {
@@ -563,7 +569,9 @@ object RotationUtils : MinecraftInstance, Listenable {
         currentRotation = null
         activeSettings = null
         skipNextRotationUpdate = false
+        quantizingReset = false
         humanizer.reset()
+        sensitivityQuantizer.reset()
         targetPointTracker.reset()
     }
 
@@ -596,6 +604,16 @@ object RotationUtils : MinecraftInstance, Listenable {
      */
     fun getFixedSensitivityAngle(targetAngle: Float, startAngle: Float = 0f, gcd: Float = getFixedAngleDelta()) =
         startAngle + ((targetAngle - startAngle) / gcd).roundToInt() * gcd
+
+    private fun quantizeRotation(current: Rotation, desired: Rotation): Rotation {
+        val quantized = sensitivityQuantizer.quantize(
+            current = AnglePoint(current.yaw.toDouble(), current.pitch.toDouble()),
+            desired = AnglePoint(desired.yaw.toDouble(), desired.pitch.toDouble()),
+            step = getFixedAngleDelta().toDouble(),
+        )
+
+        return Rotation(quantized.yaw.toFloat(), quantized.pitch.toFloat())
+    }
 
     /**
      * Creates a raytrace even when the target [blockPos] is not visible
@@ -649,11 +667,19 @@ object RotationUtils : MinecraftInstance, Listenable {
                 return
             }
 
-            currentRotation = limitAngleChange(
+            if (!quantizingReset) {
+                sensitivityQuantizer.reset()
+                quantizingReset = true
+            }
+
+            val limitedRotation = limitAngleChange(
                 sourceRotation, playerRotation, settings
-            ).fixedSensitivity()
+            )
+            currentRotation = quantizeRotation(sourceRotation, limitedRotation)
             return
         }
+
+        quantizingReset = false
 
         targetRotation?.let { target ->
             val request = activeRequest
@@ -663,13 +689,13 @@ object RotationUtils : MinecraftInstance, Listenable {
             )
 
             limitAngleChange(sourceRotation, effectiveTarget, settings, request).let { rotation ->
-                if (!settings.applyServerSide) {
-                    rotation.fixedSensitivity(startRotation = sourceRotation)
+                val quantizedRotation = quantizeRotation(sourceRotation, rotation)
 
-                    if (request?.changeYaw != false) player.rotationYaw = rotation.yaw
-                    if (request?.changePitch != false) player.rotationPitch = rotation.pitch
+                if (!settings.applyServerSide) {
+                    if (request?.changeYaw != false) player.rotationYaw = quantizedRotation.yaw
+                    if (request?.changePitch != false) player.rotationPitch = quantizedRotation.pitch
                 } else {
-                    currentRotation = rotation.fixedSensitivity()
+                    currentRotation = quantizedRotation
                 }
             }
         }
@@ -731,9 +757,11 @@ object RotationUtils : MinecraftInstance, Listenable {
         currentRotation = null
         activeSettings = null
         skipNextRotationUpdate = false
+        quantizingReset = false
         targetMotionEstimator.clear()
         targetPointTracker.reset()
         humanizer.reset()
+        sensitivityQuantizer.reset()
     }
 
     /**
