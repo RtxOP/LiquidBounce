@@ -307,6 +307,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                 horizontalRange = hMin..hMax,
                 verticalRange = min..max,
                 variation = targetPointVariation,
+                tick = runTimeTicks,
             )
         }?.let { bb.lerpWith(it.x, it.y, it.z) }
 

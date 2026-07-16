@@ -26,10 +26,11 @@ The first compatibility slice is now in progress:
 - added quantized validity checks for entity boxes, exact rotations, and block points/faces, including through-wall geometric validation versus exact world raycasts;
 - activated bounded deadline policy: reachable endpoints may consume at most one GCD of tolerance, while unreachable deadlines disable cosmetic pathing but retain configured speed limits;
 - sample configured yaw/pitch speed ranges once per movement handoff while allowing explicit request-local speed caps to refresh continuously;
+- added bounded per-owner/target point state with safe-region insets and slow correlated normalized drift; repeated resolution in one tick and moving world-space boxes retain the same point;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through quantized validity and deadline enforcement have passed maintainer-run compilation;
-  the movement-level speed sampling checkpoint is awaiting the next maintainer-run build and verification. The
-  implementing agent must not run Gradle.
+- all completed checkpoints through movement-level speed sampling have passed maintainer-run compilation; the bounded
+  target drift checkpoint is awaiting the next maintainer-run build and verification. The implementing agent must not
+  run Gradle.
 
 ## Goal
 

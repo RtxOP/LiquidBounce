@@ -196,17 +196,33 @@ object RotationHumanizerVerification {
         val key = TargetPointKey("combat", 12)
         val fallback = NormalizedTargetPoint(0.2, 0.8, 0.7)
 
-        val first = tracker.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04)
+        val first = tracker.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = 0)
         val refreshed = tracker.pointFor(
             key,
             NormalizedTargetPoint(0.8, 0.5, 0.1),
             0.1..0.9,
             0.5..0.9,
             variation = 0.04,
+            tick = 0,
         )
 
-        check(first == refreshed) { "A refreshed box must retain the same normalized target point" }
-        check(first.x in 0.1..0.9 && first.y in 0.5..0.9 && first.z in 0.1..0.9)
+        check(first == refreshed) { "Repeated resolution in one tick must retain the normalized target point" }
+        check(first.x in 0.125..0.875 && first.y in 0.525..0.875 && first.z in 0.125..0.875) {
+            "Humanized acquisition must stay inside the inset safe region"
+        }
+
+        val drifted = (1..100).fold(first) { _, tick ->
+            tracker.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = tick)
+        }
+        check(drifted != first) { "An active humanized target should drift slowly instead of remaining frozen" }
+        check(drifted.x in 0.1..0.9 && drifted.y in 0.5..0.9 && drifted.z in 0.1..0.9)
+
+        val replay = TargetPointTracker(91L)
+        var replayed = replay.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = 0)
+        repeat(100) { tick ->
+            replayed = replay.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = tick + 1)
+        }
+        check(replayed == drifted) { "Target drift must replay deterministically from its session seed" }
 
         val switched = tracker.pointFor(
             TargetPointKey("combat", 13),
@@ -214,8 +230,12 @@ object RotationHumanizerVerification {
             0.2..0.8,
             0.5..0.7,
             variation = 0.0,
+            tick = 100,
         )
         check(switched == NormalizedTargetPoint(0.5, 0.6, 0.5))
+
+        val retained = tracker.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = 100)
+        check(retained == drifted) { "Alternating producers must retain independent target-point state" }
     }
 
     private fun predictionBuildsConfidenceAndRejectsTeleports() {
