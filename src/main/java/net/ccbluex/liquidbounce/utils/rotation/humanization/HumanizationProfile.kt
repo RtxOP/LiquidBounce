@@ -27,12 +27,14 @@ data class HumanizationProfile(
     val pathVariation: Double,
     val driftScale: Double,
     val minimumCurveTicks: Int,
+    val correctionTendency: Double,
+    val overshootScale: Double,
 ) {
     val enabled: Boolean
         get() = mode != HumanizationMode.OFF
 
     companion object {
-        val OFF = HumanizationProfile(HumanizationMode.OFF, 1.0, 0.0, 0.0, 0)
+        val OFF = HumanizationProfile(HumanizationMode.OFF, 1.0, 0.0, 0.0, 0, 0.0, 0.0)
 
         fun subtle(responseScale: Double = 1.0) = HumanizationProfile(
             HumanizationMode.SUBTLE,
@@ -40,6 +42,8 @@ data class HumanizationProfile(
             pathVariation = 0.025,
             driftScale = 0.002,
             minimumCurveTicks = 3,
+            correctionTendency = 0.12,
+            overshootScale = 0.012,
         )
 
         fun balanced(responseScale: Double = 1.0) = HumanizationProfile(
@@ -48,6 +52,8 @@ data class HumanizationProfile(
             pathVariation = 0.06,
             driftScale = 0.004,
             minimumCurveTicks = 3,
+            correctionTendency = 0.28,
+            overshootScale = 0.025,
         )
 
         fun custom(responseScale: Double, pathVariation: Double) = HumanizationProfile(
@@ -56,6 +62,8 @@ data class HumanizationProfile(
             pathVariation = pathVariation.coerceIn(0.0, 0.2),
             driftScale = (pathVariation * 0.07).coerceAtMost(0.01),
             minimumCurveTicks = 3,
+            correctionTendency = (pathVariation * 4.0).coerceIn(0.0, 0.65),
+            overshootScale = (pathVariation * 0.4).coerceIn(0.0, 0.06),
         )
     }
 }

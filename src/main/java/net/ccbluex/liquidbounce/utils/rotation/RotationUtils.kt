@@ -420,6 +420,8 @@ object RotationUtils : MinecraftInstance, Listenable {
                 maxYawSpeed = hSpeed.toDouble(),
                 maxPitchSpeed = vSpeed.toDouble(),
                 requestedProfile = profile,
+                allowCorrections = request?.deadlineTick == null && request?.validity != RotationValidity.EXACT &&
+                    (request?.purpose == RotationPurpose.COMBAT_TRACK || request?.purpose == RotationPurpose.PROJECTILE),
             )
 
             lastMovementId = result.movementId

@@ -28,9 +28,11 @@ The first compatibility slice is now in progress:
 - sample configured yaw/pitch speed ranges once per movement handoff while allowing explicit request-local speed caps to refresh continuously;
 - added bounded per-owner/target point state with safe-region insets and slow correlated normalized drift; repeated resolution in one tick and moving world-space boxes retain the same point;
 - added a disabled-by-default bounded telemetry trace with seed, request context, phase, deadline strategy, raw/planned/quantized angles, validity, wrapped velocity, and acceleration; existing rotation debug output exposes live validity/phase;
+- added distance-conditioned overshoot and goal-directed correction phases under one movement ID; exact actions, reset travel, and deadline-bound requests never opt into corrections, and every phase retains the configured speed caps;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through bounded target drift have passed maintainer-run compilation; the bounded telemetry
-  checkpoint is awaiting the next maintainer-run build and verification. The implementing agent must not run Gradle.
+- all completed checkpoints through bounded telemetry have passed maintainer-run compilation; the contextual
+  overshoot/correction checkpoint is awaiting the next maintainer-run build and verification. The implementing agent
+  must not run Gradle.
 
 ## Goal
 

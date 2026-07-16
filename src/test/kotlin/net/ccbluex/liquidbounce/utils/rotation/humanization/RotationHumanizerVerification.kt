@@ -23,6 +23,7 @@ object RotationHumanizerVerification {
         deadlinePolicyHonorsLimits()
         movementSpeedSamplesOncePerHandoff()
         telemetryIsBoundedAndWrapAware()
+        overshootCorrectionIsBoundedAndContextual()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
@@ -201,6 +202,56 @@ object RotationHumanizerVerification {
 
         telemetry.clear()
         check(telemetry.snapshot().isEmpty() && telemetry.latest() == null)
+    }
+
+    private fun overshootCorrectionIsBoundedAndContextual() {
+        val profile = HumanizationProfile.balanced().copy(
+            pathVariation = 0.0,
+            driftScale = 0.0,
+            correctionTendency = 1.0,
+            overshootScale = 0.04,
+        )
+        val engine = RotationHumanizer(17L)
+        val phases = mutableSetOf<MovementPhase>()
+        val movementIds = mutableSetOf<Long>()
+        var current = AnglePoint(0.0, 0.0)
+
+        repeat(24) {
+            val next = engine.step(
+                current,
+                AnglePoint(60.0, 6.0),
+                maxYawSpeed = 8.0,
+                maxPitchSpeed = 4.0,
+                requestedProfile = profile,
+                allowCorrections = true,
+            )
+
+            check(abs(next.rotation.yaw - current.yaw) <= 8.0 + 1.0e-9)
+            check(abs(next.rotation.pitch - current.pitch) <= 4.0 + 1.0e-9)
+            phases += next.phase
+            movementIds += next.movementId
+            current = next.rotation
+        }
+
+        check(MovementPhase.OVERSHOOT in phases && MovementPhase.CORRECTION in phases)
+        check(MovementPhase.COMPLETE in phases)
+        check(movementIds.size == 1) { "Correction must remain part of the original movement" }
+        check(abs(current.yaw - 60.0) <= 1.0e-6 && abs(current.pitch - 6.0) <= 1.0e-6)
+
+        val exactActionEngine = RotationHumanizer(17L)
+        var exactCurrent = AnglePoint(0.0, 0.0)
+        repeat(16) {
+            val next = exactActionEngine.step(
+                exactCurrent,
+                AnglePoint(60.0, 6.0),
+                maxYawSpeed = 8.0,
+                maxPitchSpeed = 4.0,
+                requestedProfile = profile,
+                allowCorrections = false,
+            )
+            check(next.phase != MovementPhase.OVERSHOOT && next.phase != MovementPhase.CORRECTION)
+            exactCurrent = next.rotation
+        }
     }
 
     private fun movingTargetDoesNotRestartEveryTick() {
