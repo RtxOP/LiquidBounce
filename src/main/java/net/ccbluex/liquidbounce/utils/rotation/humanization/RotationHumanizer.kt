@@ -10,7 +10,10 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.hypot
+import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.sign
+import kotlin.math.sqrt
 import kotlin.math.sin
 
 /** A Minecraft-independent angle pair. Yaw is kept unwrapped internally. */
@@ -32,6 +35,7 @@ enum class MovementPhase {
     OVERSHOOT,
     CORRECTION,
     SETTLE,
+    TRACKING,
     COMPLETE,
 }
 
@@ -57,10 +61,19 @@ class RotationHumanizer(seed: Long) {
     private var finalGoal = start
     private var lastPlanned = start
     private var previousPlanned = start
+    private var previousInput: AnglePoint? = null
+    private var velocity = AnglePoint(0.0, 0.0)
+    private var targetVelocity = AnglePoint(0.0, 0.0)
+    private var lastTarget = start
+    private var stableTargetTicks = 0
     private var tick = 0
     private var durationTicks = 1
     private var plannedYawSpeed = 180.0
     private var plannedPitchSpeed = 180.0
+    private var preferredYawSpeed = 180.0
+    private var preferredPitchSpeed = 180.0
+    private var yawAcceleration = 180.0
+    private var pitchAcceleration = 180.0
     private var drift = 0.0
     private var profile = HumanizationProfile.OFF
     private var phase = MovementPhase.COMPLETE
@@ -71,6 +84,10 @@ class RotationHumanizer(seed: Long) {
         tick = 0
         drift = 0.0
         phase = MovementPhase.COMPLETE
+        previousInput = null
+        velocity = AnglePoint(0.0, 0.0)
+        targetVelocity = AnglePoint(0.0, 0.0)
+        stableTargetTicks = 0
     }
 
     fun step(
@@ -97,11 +114,33 @@ class RotationHumanizer(seed: Long) {
             return HumanizationStep(target, MovementPhase.COMPLETE, movementId, complete = true)
         }
 
-        if (!active || requestedProfile != profile || allowCorrections != correctionsAllowed ||
-            tick >= durationTicks && distanceBetween(target, finalGoal) > max(yawSpeed, pitchSpeed) * 0.25
-        ) {
+        synchronizeVelocity(current)
+
+        if (!active || requestedProfile != profile) {
             begin(current, target, yawSpeed, pitchSpeed, requestedProfile, allowCorrections)
         } else {
+            updateLimits(yawSpeed, pitchSpeed, requestedProfile)
+            correctionsAllowed = allowCorrections
+            val targetDelta = updateTargetMotion(target)
+
+            if (!allowCorrections && (phase == MovementPhase.OVERSHOOT || phase == MovementPhase.CORRECTION)) {
+                phase = MovementPhase.TRACKING
+            }
+
+            if (phase == MovementPhase.COMPLETE || phase == MovementPhase.TRACKING) {
+                if (phase == MovementPhase.COMPLETE && isStationary(targetDelta) &&
+                    distanceBetween(current, target) <= ENDPOINT_EPSILON
+                ) {
+                    velocity = AnglePoint(0.0, 0.0)
+                    lastPlanned = current
+                    previousPlanned = current
+                    return HumanizationStep(current, MovementPhase.COMPLETE, movementId, complete = true)
+                }
+
+                phase = MovementPhase.TRACKING
+                return track(current, target)
+            }
+
             retarget(target)
         }
 
@@ -120,8 +159,9 @@ class RotationHumanizer(seed: Long) {
             desired += normal * (drift * length * envelope)
         }
 
-        desired = limitFrom(current, desired, plannedYawSpeed, plannedPitchSpeed)
+        desired = advanceDynamics(current, desired)
         desired = AnglePoint(desired.yaw, desired.pitch.coerceIn(-90.0, 90.0))
+        velocity = desired - current
 
         previousPlanned = lastPlanned
         lastPlanned = desired
@@ -140,7 +180,14 @@ class RotationHumanizer(seed: Long) {
         val remaining = finalGoal - desired
         val complete = phaseGoalReached && abs(remaining.yaw) <= 1.0e-6 && abs(remaining.pitch) <= 1.0e-6
         val emittedPhase = when {
-            complete -> MovementPhase.COMPLETE
+            complete && stableTargetTicks >= STABLE_TARGET_TICKS -> {
+                phase = MovementPhase.COMPLETE
+                MovementPhase.COMPLETE
+            }
+            complete -> {
+                phase = MovementPhase.TRACKING
+                MovementPhase.TRACKING
+            }
             progress >= 1.0 && phase == MovementPhase.PRIMARY -> MovementPhase.SETTLE
             else -> phase
         }
@@ -156,7 +203,7 @@ class RotationHumanizer(seed: Long) {
         requestedProfile: HumanizationProfile,
         allowCorrections: Boolean,
     ) {
-        val incomingVelocity = if (active) lastPlanned - previousPlanned else AnglePoint(0.0, 0.0)
+        val incomingVelocity = velocity
 
         movementId++
         active = true
@@ -167,19 +214,18 @@ class RotationHumanizer(seed: Long) {
         goal = target
         lastPlanned = current
         previousPlanned = current
+        previousInput = current
         tick = 0
         drift = 0.0
-        plannedYawSpeed = maxYawSpeed
-        plannedPitchSpeed = maxPitchSpeed
+        lastTarget = target
+        targetVelocity = AnglePoint(0.0, 0.0)
+        stableTargetTicks = 1
+        updateLimits(maxYawSpeed, maxPitchSpeed, requestedProfile)
         phase = MovementPhase.PRIMARY
 
         var delta = goal - start
         val distance = hypot(delta.yaw, delta.pitch)
-        val speedTicks = max(abs(delta.yaw) / maxYawSpeed, abs(delta.pitch) / maxPitchSpeed)
-        durationTicks = max(
-            requestedProfile.minimumCurveTicks,
-            ceil(speedTicks * requestedProfile.responseScale).toInt(),
-        ).coerceAtMost(40)
+        durationTicks = planDuration(delta, requestedProfile.minimumCurveTicks, 40)
 
         val correctionProbability = if (requestedProfile.correctionTendency >= 1.0) {
             1.0
@@ -215,7 +261,7 @@ class RotationHumanizer(seed: Long) {
         control2 = start + delta * (2.0 / 3.0) + normal * (variation * (0.35 + random.nextDouble() * 0.25))
     }
 
-    /** Update mostly the terminal part of an active curve to avoid a full path restart for moving targets. */
+    /** Update the terminal geometry without changing elapsed curve time or restarting velocity. */
     private fun retarget(target: AnglePoint) {
         val delta = target - finalGoal
         if (abs(delta.yaw) < 1.0e-6 && abs(delta.pitch) < 1.0e-6) return
@@ -224,11 +270,6 @@ class RotationHumanizer(seed: Long) {
         control2 += delta * 0.65
         finalGoal = target
         goal += delta
-
-        val requiredTicks = ceil(
-            max(abs((goal - lastPlanned).yaw) / plannedYawSpeed, abs((goal - lastPlanned).pitch) / plannedPitchSpeed)
-        ).toInt()
-        durationTicks = max(durationTicks, tick + requiredTicks).coerceAtMost(tick + 40)
     }
 
     private fun beginCorrection(current: AnglePoint) {
@@ -240,23 +281,148 @@ class RotationHumanizer(seed: Long) {
         phase = MovementPhase.CORRECTION
 
         val delta = goal - start
-        val requiredTicks = ceil(
-            max(abs(delta.yaw) / plannedYawSpeed, abs(delta.pitch) / plannedPitchSpeed)
-        ).toInt()
-        durationTicks = max(2, requiredTicks).coerceAtMost(8)
+        durationTicks = planDuration(delta, minimumTicks = 2, maximumTicks = 8)
         control1 = start + delta * (1.0 / 3.0) + incomingVelocity * 0.35
         control2 = start + delta * (2.0 / 3.0)
         previousPlanned = current
         lastPlanned = current
     }
 
-    private fun limitFrom(current: AnglePoint, desired: AnglePoint, yawSpeed: Double, pitchSpeed: Double): AnglePoint {
-        val delta = desired - current
+    private fun track(current: AnglePoint, target: AnglePoint): HumanizationStep {
+        val error = target - current
+        val desiredVelocity = AnglePoint(
+            trackingVelocity(error.yaw, targetVelocity.yaw, preferredYawSpeed),
+            trackingVelocity(error.pitch, targetVelocity.pitch, preferredPitchSpeed),
+        )
+        val targetIsStable = stableTargetTicks >= STABLE_TARGET_TICKS &&
+            abs(targetVelocity.yaw) <= TARGET_MOTION_EPSILON &&
+            abs(targetVelocity.pitch) <= TARGET_MOTION_EPSILON
+        val nextVelocity = AnglePoint(
+            approachTrackingAxis(error.yaw, velocity.yaw, desiredVelocity.yaw, yawAcceleration, plannedYawSpeed,
+                targetIsStable),
+            approachTrackingAxis(error.pitch, velocity.pitch, desiredVelocity.pitch, pitchAcceleration,
+                plannedPitchSpeed, targetIsStable),
+        )
+        var next = AnglePoint(current.yaw + nextVelocity.yaw, current.pitch + nextVelocity.pitch)
+        next = AnglePoint(next.yaw, next.pitch.coerceIn(-90.0, 90.0))
+        velocity = next - current
+
+        previousPlanned = lastPlanned
+        lastPlanned = next
+
+        val complete = targetIsStable && distanceBetween(next, target) <= ENDPOINT_EPSILON &&
+            abs(velocity.yaw) <= ENDPOINT_EPSILON && abs(velocity.pitch) <= ENDPOINT_EPSILON
+
+        phase = if (complete) MovementPhase.COMPLETE else MovementPhase.TRACKING
+        if (complete) velocity = AnglePoint(0.0, 0.0)
+        return HumanizationStep(next, phase, movementId, complete)
+    }
+
+    private fun synchronizeVelocity(current: AnglePoint) {
+        previousInput?.let { previous ->
+            velocity = AnglePoint(
+                unwrapYaw(current.yaw, previous.yaw) - previous.yaw,
+                current.pitch - previous.pitch,
+            )
+        }
+        previousInput = current
+    }
+
+    private fun updateTargetMotion(target: AnglePoint): AnglePoint {
+        val delta = target - lastTarget
+        targetVelocity = AnglePoint(
+            targetVelocity.yaw * TARGET_VELOCITY_MEMORY + delta.yaw * (1.0 - TARGET_VELOCITY_MEMORY),
+            targetVelocity.pitch * TARGET_VELOCITY_MEMORY + delta.pitch * (1.0 - TARGET_VELOCITY_MEMORY),
+        )
+        lastTarget = target
+
+        if (isStationary(delta)) stableTargetTicks++ else stableTargetTicks = 0
+        return delta
+    }
+
+    private fun updateLimits(maxYawSpeed: Double, maxPitchSpeed: Double, requestedProfile: HumanizationProfile) {
+        plannedYawSpeed = maxYawSpeed
+        plannedPitchSpeed = maxPitchSpeed
+
+        val (profileYawSpeed, profilePitchSpeed, accelerationRatio) = when (requestedProfile.mode) {
+            HumanizationMode.SUBTLE -> Triple(42.0, 30.0, 0.34)
+            HumanizationMode.BALANCED -> Triple(28.0, 20.0, 0.26)
+            HumanizationMode.CUSTOM -> Triple(28.0, 20.0, 0.26)
+            HumanizationMode.OFF -> Triple(maxYawSpeed, maxPitchSpeed, 1.0)
+        }
+        preferredYawSpeed = minOf(maxYawSpeed, profileYawSpeed / requestedProfile.responseScale)
+        preferredPitchSpeed = minOf(maxPitchSpeed, profilePitchSpeed / requestedProfile.responseScale)
+        yawAcceleration = minOf(maxYawSpeed, max(0.25, preferredYawSpeed * accelerationRatio))
+        pitchAcceleration = minOf(maxPitchSpeed, max(0.2, preferredPitchSpeed * accelerationRatio))
+    }
+
+    private fun planDuration(delta: AnglePoint, minimumTicks: Int, maximumTicks: Int): Int {
+        val distance = hypot(delta.yaw, delta.pitch)
+        val speedTicks = max(
+            abs(delta.yaw) * MINIMUM_JERK_PEAK / preferredYawSpeed,
+            abs(delta.pitch) * MINIMUM_JERK_PEAK / preferredPitchSpeed,
+        )
+        val distanceTicks = 2.0 + ln(1.0 + distance / DURATION_DISTANCE_SCALE) / LN_2
+        return max(minimumTicks, ceil(max(speedTicks, distanceTicks)).toInt()).coerceAtMost(maximumTicks)
+    }
+
+    private fun advanceDynamics(current: AnglePoint, desired: AnglePoint): AnglePoint {
+        val error = desired - current
+        val nextYawVelocity = approachAxis(
+            error.yaw, velocity.yaw, preferredYawSpeed, plannedYawSpeed, yawAcceleration
+        )
+        val nextPitchVelocity = approachAxis(
+            error.pitch, velocity.pitch, preferredPitchSpeed, plannedPitchSpeed, pitchAcceleration
+        )
+
         return AnglePoint(
-            current.yaw + delta.yaw.coerceIn(-yawSpeed, yawSpeed),
-            current.pitch + delta.pitch.coerceIn(-pitchSpeed, pitchSpeed),
+            current.yaw + nextYawVelocity,
+            current.pitch + nextPitchVelocity,
         )
     }
+
+    private fun approachAxis(
+        error: Double,
+        currentVelocity: Double,
+        preferredSpeed: Double,
+        hardSpeed: Double,
+        acceleration: Double,
+    ): Double {
+        val brakingSpeed = sqrt(2.0 * acceleration * abs(error))
+        val desiredVelocity = sign(error) * minOf(preferredSpeed, brakingSpeed)
+        val nextVelocity = currentVelocity +
+            (desiredVelocity - currentVelocity).coerceIn(-acceleration, acceleration)
+        val boundedVelocity = nextVelocity.coerceIn(-hardSpeed, hardSpeed)
+
+        return if (abs(error - currentVelocity) <= acceleration && abs(error) <= acceleration) {
+            error
+        } else {
+            boundedVelocity
+        }
+    }
+
+    private fun trackingVelocity(error: Double, targetMotion: Double, speed: Double): Double =
+        (targetMotion + error * TRACKING_GAIN).coerceIn(-speed, speed)
+
+    private fun approachTrackingAxis(
+        error: Double,
+        currentVelocity: Double,
+        desiredVelocity: Double,
+        acceleration: Double,
+        hardSpeed: Double,
+        targetIsStable: Boolean,
+    ): Double {
+        if (targetIsStable && abs(error) <= acceleration && abs(error - currentVelocity) <= acceleration) {
+            return error
+        }
+
+        return (currentVelocity +
+            (desiredVelocity - currentVelocity).coerceIn(-acceleration, acceleration))
+            .coerceIn(-hardSpeed, hardSpeed)
+    }
+
+    private fun isStationary(delta: AnglePoint) =
+        abs(delta.yaw) <= TARGET_MOTION_EPSILON && abs(delta.pitch) <= TARGET_MOTION_EPSILON
 
     private fun minimumJerk(value: Double): Double {
         val t2 = value * value
@@ -280,6 +446,15 @@ class RotationHumanizer(seed: Long) {
     }
 
     companion object {
+        private const val MINIMUM_JERK_PEAK = 1.875
+        private const val DURATION_DISTANCE_SCALE = 8.0
+        private const val LN_2 = 0.6931471805599453
+        private const val TARGET_VELOCITY_MEMORY = 0.72
+        private const val TRACKING_GAIN = 0.42
+        private const val TARGET_MOTION_EPSILON = 0.02
+        private const val ENDPOINT_EPSILON = 1.0e-6
+        private const val STABLE_TARGET_TICKS = 3
+
         fun unwrapYaw(target: Double, reference: Double): Double {
             var difference = (target - reference) % 360.0
             if (difference <= -180.0) difference += 360.0

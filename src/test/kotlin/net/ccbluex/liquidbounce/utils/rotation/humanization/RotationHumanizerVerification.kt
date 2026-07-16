@@ -26,6 +26,9 @@ object RotationHumanizerVerification {
         telemetryIsBoundedAndWrapAware()
         overshootCorrectionIsBoundedAndContextual()
         movingTargetDoesNotRestartEveryTick()
+        balancedAcquisitionIsDistanceAware()
+        completedMovementTransitionsToTracking()
+        retargetingKeepsAccelerationBounded()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
         projectileInterceptionHandlesMotionAndFailure()
@@ -214,6 +217,7 @@ object RotationHumanizerVerification {
         check(samples.size == 3 && samples.first().tick == 1) { "Telemetry must evict its oldest bounded sample" }
         check(samples.first().yawVelocity == 2.0) { "Telemetry yaw velocity must use wrapped differences" }
         check(samples.last().yawVelocity == 1.0 && samples.last().yawAcceleration == 0.0)
+        check(samples.last().yawJerk == 1.0)
         check(telemetry.latest() == samples.last())
 
         telemetry.clear()
@@ -286,6 +290,84 @@ object RotationHumanizerVerification {
 
             if (movementId == -1L) movementId = result.movementId
             check(result.movementId == movementId) { "Small target updates must retarget the active movement" }
+            current = result.rotation
+        }
+    }
+
+    private fun balancedAcquisitionIsDistanceAware() {
+        val engine = RotationHumanizer(71L)
+        var current = AnglePoint(0.0, 0.0)
+
+        repeat(3) {
+            val result = engine.step(
+                current,
+                AnglePoint(60.0, 0.0),
+                maxYawSpeed = 180.0,
+                maxPitchSpeed = 180.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            check(!result.complete) { "A 60-degree Balanced acquisition must not use the old three-tick template" }
+            current = result.rotation
+        }
+    }
+
+    private fun completedMovementTransitionsToTracking() {
+        val engine = RotationHumanizer(72L)
+        var current = AnglePoint(0.0, 0.0)
+        var completed: HumanizationStep? = null
+
+        repeat(40) {
+            val result = engine.step(
+                current,
+                AnglePoint(30.0, 4.0),
+                maxYawSpeed = 180.0,
+                maxPitchSpeed = 180.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            current = result.rotation
+            if (result.complete) {
+                completed = result
+                return@repeat
+            }
+        }
+
+        val settled = completed ?: error("Stationary acquisition did not complete")
+        val tracked = engine.step(
+            current,
+            AnglePoint(50.0, 4.0),
+            maxYawSpeed = 180.0,
+            maxPitchSpeed = 180.0,
+            requestedProfile = HumanizationProfile.balanced(),
+        )
+
+        check(tracked.movementId == settled.movementId)
+        check(tracked.phase == MovementPhase.TRACKING && !tracked.complete)
+        check(tracked.rotation.yaw > current.yaw && tracked.rotation.yaw < 50.0) {
+            "A refreshed moving endpoint must be tracked continuously instead of snapped to: $tracked"
+        }
+    }
+
+    private fun retargetingKeepsAccelerationBounded() {
+        val engine = RotationHumanizer(73L)
+        var current = AnglePoint(0.0, 0.0)
+        var previousVelocity = AnglePoint(0.0, 0.0)
+
+        repeat(30) { tick ->
+            val target = if (tick % 2 == 0) AnglePoint(80.0, 35.0) else AnglePoint(-80.0, -35.0)
+            val result = engine.step(
+                current,
+                target,
+                maxYawSpeed = 180.0,
+                maxPitchSpeed = 180.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            val velocity = result.rotation - current
+            val acceleration = velocity - previousVelocity
+
+            check(abs(acceleration.yaw) <= 7.3) { "Yaw acceleration was not bounded: $acceleration" }
+            check(abs(acceleration.pitch) <= 5.3) { "Pitch acceleration was not bounded: $acceleration" }
+
+            previousVelocity = velocity
             current = result.rotation
         }
     }

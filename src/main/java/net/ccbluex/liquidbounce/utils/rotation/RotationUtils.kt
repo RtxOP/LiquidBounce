@@ -986,7 +986,11 @@ object RotationUtils : MinecraftInstance, Listenable {
             val sample = telemetry.latest()
             chat(
                 "PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}, " +
-                    "VALID: ${sample?.valid}, PHASE: ${sample?.phase}"
+                    "VALID: ${sample?.valid}, PHASE: ${sample?.phase}, " +
+                    "MOVE: ${sample?.movementId}, PURPOSE: ${sample?.purpose}, " +
+                    "VEL: ${sample?.yawVelocity}/${sample?.pitchVelocity}, " +
+                    "ACC: ${sample?.yawAcceleration}/${sample?.pitchAcceleration}, " +
+                    "JERK: ${sample?.yawJerk}/${sample?.pitchJerk}"
             )
         }
 

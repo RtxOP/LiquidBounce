@@ -24,6 +24,8 @@ data class RotationTelemetrySample(
     val pitchVelocity: Double,
     val yawAcceleration: Double,
     val pitchAcceleration: Double,
+    val yawJerk: Double,
+    val pitchJerk: Double,
 )
 
 /** Bounded in-memory trace used only when the rotations debug option requests samples. */
@@ -32,6 +34,7 @@ class RotationTelemetry(private val capacity: Int = 512) {
     private val samples = ArrayDeque<RotationTelemetrySample>()
     private var previousRotation: AnglePoint? = null
     private var previousVelocity = AnglePoint(0.0, 0.0)
+    private var previousAcceleration = AnglePoint(0.0, 0.0)
 
     init {
         require(capacity > 0) { "Telemetry capacity must be positive" }
@@ -55,6 +58,7 @@ class RotationTelemetry(private val capacity: Int = 512) {
             AnglePoint(wrappedDifference(quantized.yaw, it.yaw), quantized.pitch - it.pitch)
         } ?: AnglePoint(0.0, 0.0)
         val acceleration = velocity - previousVelocity
+        val jerk = acceleration - previousAcceleration
 
         if (samples.size == capacity) samples.removeFirst()
         samples.addLast(
@@ -75,11 +79,14 @@ class RotationTelemetry(private val capacity: Int = 512) {
                 velocity.pitch,
                 acceleration.yaw,
                 acceleration.pitch,
+                jerk.yaw,
+                jerk.pitch,
             )
         )
 
         previousRotation = quantized
         previousVelocity = velocity
+        previousAcceleration = acceleration
     }
 
     fun snapshot(): List<RotationTelemetrySample> = samples.toList()
@@ -90,6 +97,7 @@ class RotationTelemetry(private val capacity: Int = 512) {
         samples.clear()
         previousRotation = null
         previousVelocity = AnglePoint(0.0, 0.0)
+        previousAcceleration = AnglePoint(0.0, 0.0)
     }
 
     private fun wrappedDifference(target: Double, current: Double): Double {
