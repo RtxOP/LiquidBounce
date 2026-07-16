@@ -1,6 +1,7 @@
 package net.ccbluex.liquidbounce.utils.rotation.humanization
 
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
+import net.ccbluex.liquidbounce.utils.rotation.prediction.ProjectileInterceptSolver
 import net.ccbluex.liquidbounce.utils.rotation.prediction.TargetMotionEstimator
 import kotlin.math.abs
 
@@ -21,6 +22,7 @@ object RotationHumanizerVerification {
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
+        projectileInterceptionHandlesMotionAndFailure()
     }
 
     private fun deterministicReplay() {
@@ -148,6 +150,37 @@ object RotationHumanizerVerification {
         )
         check(afterTeleport.confidence == 0.0)
         check(afterTeleport.offset == MotionVector.ZERO)
+    }
+
+    private fun projectileInterceptionHandlesMotionAndFailure() {
+        val stationary = ProjectileInterceptSolver.solve(
+            relativePosition = MotionVector(10.0, 0.0, 0.0),
+            relativeVelocity = MotionVector.ZERO,
+            projectileSpeed = 1.0,
+            gravity = 0.006,
+        ) ?: error("A nearby stationary target must have a ballistic solution")
+
+        check(stationary.yaw in -90.01..-89.99)
+        check(stationary.pitch < 0.0)
+        check(stationary.flightTicks > 10.0)
+
+        val movingAway = ProjectileInterceptSolver.solve(
+            relativePosition = MotionVector(10.0, 0.0, 0.0),
+            relativeVelocity = MotionVector(0.1, 0.0, 0.0),
+            projectileSpeed = 1.0,
+            gravity = 0.006,
+        ) ?: error("A slowly moving target must have an intercept solution")
+
+        check(movingAway.relativeIntercept.x > stationary.relativeIntercept.x)
+        check(movingAway.flightTicks > stationary.flightTicks)
+
+        val unreachable = ProjectileInterceptSolver.solve(
+            relativePosition = MotionVector(10.0, 100.0, 0.0),
+            relativeVelocity = MotionVector.ZERO,
+            projectileSpeed = 1.0,
+            gravity = 0.006,
+        )
+        check(unreachable == null)
     }
 
     private fun collect(seed: Long): List<HumanizationStep> {

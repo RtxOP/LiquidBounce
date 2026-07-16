@@ -51,8 +51,6 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
     private val gravityType by choices("GravityType", arrayOf("None", "Projectile"), "Projectile")
 
     private val predict by boolean("Predict", true) { gravityType == "Projectile" }
-    private val predictSize by float("PredictSize", 2F, 0.1F..5F)
-    { predict && gravityType == "Projectile" }
 
     private val options = RotationSettings(this).withoutKeepRotation()
 
@@ -104,7 +102,7 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
 
                 target = getTarget(throughWalls, priority)
 
-                faceTrajectory(target ?: return@handler, predict, predictSize)
+                faceTrajectory(target ?: return@handler, predict)
             }
 
             is Item -> {
@@ -115,7 +113,7 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
 
                 target = getTarget(throughWalls, priority)
 
-                faceTrajectory(target ?: return@handler, predict, predictSize, gravity = 0.03f, velocity = 0.5f)
+                faceTrajectory(target ?: return@handler, predict, gravity = 0.03f, velocity = 0.5f)
             }
 
             else -> return@handler

@@ -14,6 +14,7 @@ The first compatibility slice is now in progress:
 - added bounded per-entity motion history with confidence-aware prediction and teleport/staleness resets;
 - migrated KillAura, Aimbot, and TimerRange from hard-coded prediction multipliers to an explicit 0–5 tick horizon;
 - removed the ineffective Boolean observer-prediction argument from `toRotation`/`searchCenter` and their callers;
+- replaced `PredictSize` with iterative projectile interception using confidence-weighted relative target/shooter motion;
 - added a dependency-free pure-math verification harness;
 - compilation is awaiting the maintainer-run build checkpoint; no Gradle command should be run by the implementing agent.
 

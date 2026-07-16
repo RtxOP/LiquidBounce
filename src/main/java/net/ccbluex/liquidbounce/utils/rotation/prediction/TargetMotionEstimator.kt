@@ -59,8 +59,9 @@ class TargetMotionEstimator(
     ): MotionPrediction {
         val horizon = horizonTicks.coerceIn(0.0, 5.0)
         if (horizon == 0.0) {
-            observe(entityId, current, previous, tick)
-            return MotionPrediction(MotionVector.ZERO, MotionVector.ZERO, 1.0)
+            val track = observe(entityId, current, previous, tick)
+            val confidence = (track.samples / 4.0).coerceIn(0.0, 1.0)
+            return MotionPrediction(MotionVector.ZERO, track.velocity, confidence)
         }
 
         val track = observe(entityId, current, previous, tick)

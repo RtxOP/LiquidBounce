@@ -25,6 +25,8 @@ import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
+import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionPrediction
+import net.ccbluex.liquidbounce.utils.rotation.prediction.ProjectileInterceptSolver
 import net.ccbluex.liquidbounce.utils.rotation.prediction.TargetMotionEstimator
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
@@ -170,44 +172,52 @@ object RotationUtils : MinecraftInstance, Listenable {
      * by specifying `gravity` and `velocity` parameters
      *
      * @param target      your enemy
-     * @param predict     predict new enemy position
-     * @param predictSize predict size of predict
+     * @param predict     account for target and shooter motion during projectile flight
      * @param gravity     how much gravity does the projectile have, arrow by default
      * @param velocity    with what velocity will the projectile be released, velocity for arrow is calculated when null
      */
     fun faceTrajectory(
         target: Entity,
         predict: Boolean,
-        predictSize: Float,
         gravity: Float = 0.05f,
         velocity: Float? = null,
     ): Rotation {
         val player = mc.thePlayer
 
-        val posX =
-            target.posX + (if (predict) (target.posX - target.prevPosX) * predictSize else .0) - (player.posX + if (predict) player.posX - player.prevPosX else .0)
-        val posY =
-            target.entityBoundingBox.minY + (if (predict) (target.entityBoundingBox.minY - target.prevPosY) * predictSize else .0) + target.eyeHeight - 0.15 - (player.entityBoundingBox.minY + (if (predict) player.posY - player.prevPosY else .0)) - player.getEyeHeight()
-        val posZ =
-            target.posZ + (if (predict) (target.posZ - target.prevPosZ) * predictSize else .0) - (player.posZ + if (predict) player.posZ - player.prevPosZ else .0)
-        val posSqrt = sqrt(posX * posX + posZ * posZ)
+        val targetPoint = Vec3(
+            target.posX,
+            target.entityBoundingBox.minY + target.eyeHeight - 0.15,
+            target.posZ,
+        )
+        val eyes = player.eyes
+        val relativePosition = MotionVector(
+            targetPoint.xCoord - eyes.xCoord,
+            targetPoint.yCoord - eyes.yCoord,
+            targetPoint.zCoord - eyes.zCoord,
+        )
 
-        var finalVelocity = velocity
-
-        if (finalVelocity == null) {
-            finalVelocity = if (FastBow.handleEvents()) 1f else player.itemInUseDuration / 20f
-            finalVelocity = ((finalVelocity * finalVelocity + finalVelocity * 2) / 3).coerceAtMost(1f)
+        val projectileVelocity = velocity ?: run {
+            val charge = if (FastBow.handleEvents()) 1f else player.itemInUseDuration / 20f
+            ((charge * charge + charge * 2) / 3).coerceAtMost(1f)
         }
 
         val gravityModifier = 0.12f * gravity
+        val targetMotion = estimateEntityMotion(target)
+        val targetVelocity = if (predict) targetMotion.velocity * targetMotion.confidence else MotionVector.ZERO
+        val shooterVelocity = if (predict) MotionVector(
+            player.posX - player.prevPosX,
+            player.posY - player.prevPosY,
+            player.posZ - player.prevPosZ,
+        ) else MotionVector.ZERO
 
-        return Rotation(
-            atan2(posZ, posX).toDegreesF() - 90f, -atan(
-                (finalVelocity * finalVelocity - sqrt(
-                    finalVelocity * finalVelocity * finalVelocity * finalVelocity - gravityModifier * (gravityModifier * posSqrt * posSqrt + 2 * posY * finalVelocity * finalVelocity)
-                )) / (gravityModifier * posSqrt)
-            ).toDegreesF()
+        val solution = ProjectileInterceptSolver.solve(
+            relativePosition = relativePosition,
+            relativeVelocity = targetVelocity - shooterVelocity,
+            projectileSpeed = projectileVelocity.toDouble(),
+            gravity = gravityModifier.toDouble(),
         )
+
+        return solution?.let { Rotation(it.yaw.toFloat(), it.pitch.toFloat()) } ?: toRotation(targetPoint)
     }
 
     /**
@@ -231,15 +241,19 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     /** Predicts an entity box from bounded motion history without mutating either entity involved. */
     fun predictEntityBox(entity: Entity, horizonTicks: Double): AxisAlignedBB {
-        val prediction = targetMotionEstimator.predict(
+        val prediction = estimateEntityMotion(entity, horizonTicks)
+        val offset = prediction.offset
+        return entity.hitBox.offset(offset.x, offset.y, offset.z)
+    }
+
+    fun estimateEntityMotion(entity: Entity, horizonTicks: Double = 0.0): MotionPrediction {
+        return targetMotionEstimator.predict(
             entityId = entity.entityId,
             current = MotionVector(entity.posX, entity.posY, entity.posZ),
             previous = MotionVector(entity.prevPosX, entity.prevPosY, entity.prevPosZ),
             tick = runTimeTicks,
             horizonTicks = horizonTicks,
         )
-        val offset = prediction.offset
-        return entity.hitBox.offset(offset.x, offset.y, offset.z)
     }
 
     /**
