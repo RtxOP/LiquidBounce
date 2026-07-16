@@ -15,10 +15,12 @@ The first compatibility slice is now in progress:
 - migrated KillAura, Aimbot, and TimerRange from hard-coded prediction multipliers to an explicit 0–5 tick horizon;
 - removed the ineffective Boolean observer-prediction argument from `toRotation`/`searchCenter` and their callers;
 - replaced `PredictSize` with iterative projectile interception using confidence-weighted relative target/shooter motion;
+- migrated Aimbot's camera-side rotation onto the shared request coordinator with per-axis controls and request-local speed caps;
+- removed `Legitimize`, iid limiter jitter, Aimbot Jitter, minimum-difference slowdown, and rotation short-stop settings/state;
+- made client-side request refreshes retain humanizer state and quantize against the camera rotation;
 - added a dependency-free pure-math verification harness;
-- compilation is awaiting the maintainer-run build checkpoint; no Gradle command should be run by the implementing agent.
-
-Legacy prediction remains temporarily in place until the target-persistence slice compiles and its behavior is confirmed.
+- all completed checkpoints through projectile interception have passed maintainer-run compilation and verification; the
+  Aimbot/legacy-removal checkpoint is awaiting the next maintainer-run build. The implementing agent must not run Gradle.
 
 ## Goal
 
@@ -37,12 +39,12 @@ This is a rotation-quality project, not a promise that generated input is indist
 
 Minecraft 1.8.9 normally exposes one meaningful rotation update per game tick (20 Hz), not the hundreds or thousands of samples available to desktop cursor libraries or USB firmware. A direct port of pixel-space mouse algorithms would therefore alias into a few large samples and lose most of its intended behavior. The engine must operate in unwrapped yaw/pitch angle space and treat ticks as its sampling interval.
 
-The current flow is:
+The pre-implementation flow was:
 
 1. A module finds a point/rotation, commonly through `RotationUtils.searchCenter`.
 2. The module calls `RotationUtils.setTargetRotation(rotation, settings)`.
 3. The global `RotationUtils` singleton owns one `targetRotation`, one `currentRotation`, and one `activeSettings` request.
-4. On `RotationUpdateEvent`, `update()` calls `limitAngleChange`/`performAngleChange`, then sensitivity-quantizes the result.
+4. On `RotationUpdateEvent`, `update()` called `limitAngleChange`/`performAngleChange`, then sensitivity-quantized the result.
 5. `MixinEntityPlayerSP` uses `currentRotation` when choosing C05/C06 packet yaw and pitch, and updates `serverRotation` after sending.
 6. `RotationUtils.onPacket` replaces a rotating C03 packet's rotation and records short-stop state.
 7. When the request expires, the same limiter moves back toward the player's camera until the reset threshold is satisfied.
@@ -313,7 +315,8 @@ Update consumers in this order:
 4. AutoPot, AntiFireball, MLG, Fireball, NoRotateSet (urgent/special requests).
 5. Reset-to-camera and render/strafe adapters.
 
-Aimbot currently edits player camera rotation directly and calls `performAngleChange`; migrate it to the same request coordinator in client-side mode. This removes the second rotation implementation and allows one set of tests.
+Aimbot originally edited player camera rotation directly and called `performAngleChange`; it is now routed through the
+same request coordinator in client-side mode, removing the second rotation implementation.
 
 Do not mutate `Rotation` instances passed by callers. `Rotation.ZERO` is currently a mutable singleton, which is unsafe; make rotations immutable or ensure constants/copies cannot be mutated as part of the refactor.
 

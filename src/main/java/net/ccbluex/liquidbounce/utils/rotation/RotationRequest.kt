@@ -57,4 +57,8 @@ data class RotationRequest(
     val deadlineTick: Int? = null,
     val validity: RotationValidity = RotationValidity.NONE,
     val priority: Int = 0,
+    val horizontalSpeed: Float? = null,
+    val verticalSpeed: Float? = null,
+    val changeYaw: Boolean = true,
+    val changePitch: Boolean = true,
 )

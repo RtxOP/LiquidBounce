@@ -12,7 +12,6 @@ import net.ccbluex.liquidbounce.utils.extensions.random
 import net.ccbluex.liquidbounce.utils.extensions.withGCD
 import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationMode
 import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationProfile
-import kotlin.math.abs
 
 // TODO: refactor them all
 
@@ -27,20 +26,12 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
 
     open val rotationsValue = boolean("Rotations", true) { generalApply() }
     open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
-    open val simulateShortStopValue = boolean("SimulateShortStop", false) { rotationsActive && generalApply() }
-    open val rotationDiffBuildUpToStopValue = float("RotationDiffBuildUpToStop", 180f, 50f..720f) { simulateShortStop }
-    open val maxThresholdAttemptsToStopValue = int("MaxThresholdAttemptsToStop", 1, 0..5) { simulateShortStop }
-    open val shortStopDurationValue = intRange("ShortStopDuration", 1..2, 1..5) { simulateShortStop }
     open val strafeValue = boolean("Strafe", false) { rotationsActive && applyServerSide && generalApply() }
     open val strictValue = boolean("Strict", false) { strafeValue.isActive() && generalApply() }
     open val keepRotationValue = boolean("KeepRotation", true) { rotationsActive && applyServerSide && generalApply() }
 
     open val resetTicksValue = int("ResetTicks", 1, 1..20) {
         rotationsActive && applyServerSide && generalApply()
-    }
-
-    open val legitimizeValue = boolean("Legitimize", false) {
-        rotationsActive && humanizationMode == "Off" && generalApply()
     }
 
     open val humanizationModeValue = choices(
@@ -62,41 +53,23 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
         rotationsActive && applyServerSide && generalApply()
     }
 
-    open val minRotationDifferenceValue = float(
-        "MinRotationDifference", 2f, 0f..4f
-    ) { rotationsActive && generalApply() }
-
-    open val minRotationDifferenceResetTimingValue = choices(
-        "MinRotationDifferenceResetTiming", arrayOf("OnStart", "OnSlowDown", "Always"), "OnStart"
-    ) { rotationsActive && generalApply() }
-
     // Variables for easier access
     val rotations by rotationsValue
     val applyServerSide by applyServerSideValue
-    val simulateShortStop by simulateShortStopValue
-    val rotationDiffBuildUpToStop by rotationDiffBuildUpToStopValue
-    val maxThresholdAttemptsToStop by maxThresholdAttemptsToStopValue
-    val shortStopDuration by shortStopDurationValue
     val strafe by strafeValue
     val strict by strictValue
     val keepRotation by keepRotationValue
     val resetTicks by resetTicksValue
-    val legitimize by legitimizeValue
     val humanizationMode by humanizationModeValue
     val humanizationResponse by humanizationResponseValue
     val humanizationPathVariation by humanizationPathVariationValue
     val horizontalAngleChange by horizontalAngleChangeValue
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
-    val minRotationDifference by minRotationDifferenceValue
-    val minRotationDifferenceResetTiming by minRotationDifferenceResetTimingValue
 
     var prioritizeRequest = false
     var immediate = false
     var instant = false
-
-    var rotDiffBuildUp = 0f
-    var maxThresholdReachAttempts = 0
 
     open val rotationsActive
         get() = rotations
@@ -120,26 +93,6 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
 
     fun withoutKeepRotation() = apply {
         keepRotationValue.excludeWithState()
-    }
-
-    fun updateSimulateShortStopData(diff: Float) {
-        rotDiffBuildUp += diff
-    }
-
-    fun resetSimulateShortStopData() {
-        rotDiffBuildUp = 0f
-        maxThresholdReachAttempts = 0
-    }
-
-    fun shouldPerformShortStop(): Boolean {
-        if (abs(rotDiffBuildUp) < rotationDiffBuildUpToStop || !simulateShortStop) return false
-
-        if (maxThresholdReachAttempts < maxThresholdAttemptsToStop) {
-            maxThresholdReachAttempts++
-            return false
-        }
-
-        return true
     }
 
     init {

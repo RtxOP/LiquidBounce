@@ -36,8 +36,8 @@ object NoRotateSet : Module("NoRotateSet", Category.MISC, gameDetecting = false)
 
         currentRotation = player.rotation
 
-        WaitTickUtils.schedule(ticksUntilStart.random, this)
-
-        setTargetRotation(savedRotation, options = options)
+        WaitTickUtils.schedule(ticksUntilStart.random, this) {
+            setTargetRotation(savedRotation, options = options)
+        }
     }
 }

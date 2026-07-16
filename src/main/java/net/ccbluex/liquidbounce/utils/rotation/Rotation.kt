@@ -70,15 +70,18 @@ data class Rotation(var yaw: Float, var pitch: Float) : MinecraftInstance {
      *
      * @see net.minecraft.client.renderer.EntityRenderer.updateCameraAndRender
      */
-    fun fixedSensitivity(sensitivity: Float = mc.gameSettings.mouseSensitivity): Rotation {
+    fun fixedSensitivity(
+        sensitivity: Float = mc.gameSettings.mouseSensitivity,
+        startRotation: Rotation = serverRotation,
+    ): Rotation {
         // Previous implementation essentially floored the subtraction.
         // This way it returns rotations closer to the original.
 
         // Only calculate GCD once
         val gcd = getFixedAngleDelta(sensitivity)
 
-        yaw = getFixedSensitivityAngle(yaw, serverRotation.yaw, gcd)
-        pitch = getFixedSensitivityAngle(pitch, serverRotation.pitch, gcd)
+        yaw = getFixedSensitivityAngle(yaw, startRotation.yaw, gcd)
+        pitch = getFixedSensitivityAngle(pitch, startRotation.pitch, gcd)
 
         return this.withLimitedPitch()
     }
