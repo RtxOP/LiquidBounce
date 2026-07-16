@@ -20,13 +20,17 @@ import net.ccbluex.liquidbounce.utils.client.realZ
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils.serverOpenContainer
 import net.ccbluex.liquidbounce.utils.kotlin.StringUtils.contains
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performRayTrace
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performRaytrace
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.minecraft.block.BlockChest
 import net.minecraft.block.BlockEnderChest
@@ -153,7 +157,16 @@ object ChestAura : Module("ChestAura", Category.WORLD) {
                 tileTarget = it
 
                 if (options.rotationsActive) {
-                    setTargetRotation(toRotation(it.clickPoint), options = options)
+                    setTargetRotation(
+                        RotationRequest(
+                            owner = this,
+                            desired = toRotation(it.clickPoint),
+                            settings = options,
+                            target = RotationTarget.WorldPoint(it.clickPoint, it.entity.pos),
+                            purpose = RotationPurpose.BLOCK_INTERACT,
+                            validity = RotationValidity.RAYCAST,
+                        )
+                    )
                 }
             }
     }

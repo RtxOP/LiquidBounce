@@ -13,9 +13,13 @@ import net.ccbluex.liquidbounce.utils.block.block
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPackets
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawBlockBox
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.minecraft.init.Blocks.air
 import net.minecraft.init.Blocks.bedrock
 import net.minecraft.network.play.client.C07PacketPlayerDigging
@@ -59,7 +63,16 @@ object CivBreak : Module("CivBreak", Category.WORLD) {
         if (options.rotationsActive) {
             val spot = faceBlock(pos) ?: return@handler
 
-            setTargetRotation(spot.rotation, options = options)
+            setTargetRotation(
+                RotationRequest(
+                    owner = this,
+                    desired = spot.rotation,
+                    settings = options,
+                    target = RotationTarget.WorldPoint(spot.vec, pos),
+                    purpose = RotationPurpose.BLOCK_INTERACT,
+                    validity = RotationValidity.RAYCAST,
+                )
+            )
         }
     }
 

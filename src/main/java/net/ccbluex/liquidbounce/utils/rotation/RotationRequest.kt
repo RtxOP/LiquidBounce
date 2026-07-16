@@ -6,6 +6,8 @@
 package net.ccbluex.liquidbounce.utils.rotation
 
 import net.minecraft.util.AxisAlignedBB
+import net.minecraft.util.BlockPos
+import net.minecraft.util.EnumFacing
 import net.minecraft.util.Vec3
 
 /**
@@ -40,7 +42,11 @@ sealed class RotationTarget {
         val horizontalRange: ClosedFloatingPointRange<Double>,
     ) : RotationTarget()
 
-    data class WorldPoint(val point: Vec3) : RotationTarget()
+    data class WorldPoint(
+        val point: Vec3,
+        val blockPos: BlockPos? = null,
+        val face: EnumFacing? = null,
+    ) : RotationTarget()
 
     data class ExactRotation(val rotation: Rotation) : RotationTarget()
 }
@@ -57,6 +63,8 @@ data class RotationRequest(
     val deadlineTick: Int? = null,
     val validity: RotationValidity = RotationValidity.NONE,
     val priority: Int = 0,
+    val immediate: Boolean = false,
+    val instant: Boolean = false,
     val horizontalSpeed: Float? = null,
     val verticalSpeed: Float? = null,
     val changeYaw: Boolean = true,

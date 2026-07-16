@@ -10,8 +10,12 @@ import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.extensions.rotation
 import net.ccbluex.liquidbounce.utils.rotation.AlwaysRotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.player.EntityPlayer
 
@@ -37,7 +41,16 @@ object NoRotateSet : Module("NoRotateSet", Category.MISC, gameDetecting = false)
         currentRotation = player.rotation
 
         WaitTickUtils.schedule(ticksUntilStart.random, this) {
-            setTargetRotation(savedRotation, options = options)
+            setTargetRotation(
+                RotationRequest(
+                    owner = NoRotateSet,
+                    desired = savedRotation,
+                    settings = options,
+                    target = RotationTarget.ExactRotation(savedRotation.copy()),
+                    purpose = RotationPurpose.RESET,
+                    validity = RotationValidity.EXACT,
+                )
+            )
         }
     }
 }

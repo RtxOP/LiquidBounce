@@ -20,10 +20,14 @@ import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
 import net.ccbluex.liquidbounce.utils.inventory.inventorySlot
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
 import net.minecraft.block.BlockBush
@@ -128,7 +132,17 @@ object BedDefender : Module("BedDefender", Category.WORLD) {
             val raytrace = performBlockRaytrace(rotation, mc.playerController.blockReachDistance) ?: return@handler
 
             if (options.rotationsActive) {
-                setTargetRotation(rotation, options, if (options.keepRotation) options.resetTicks else 1)
+                setTargetRotation(
+                    RotationRequest(
+                        owner = this,
+                        desired = rotation,
+                        settings = options,
+                        target = RotationTarget.WorldPoint(raytrace.hitVec, raytrace.blockPos, raytrace.sideHit),
+                        purpose = RotationPurpose.PLACE,
+                        validity = RotationValidity.EXACT,
+                    ),
+                    if (options.keepRotation) options.resetTicks else 1,
+                )
             }
 
             blockPosition = blockPos

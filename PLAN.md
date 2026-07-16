@@ -18,9 +18,13 @@ The first compatibility slice is now in progress:
 - migrated Aimbot's camera-side rotation onto the shared request coordinator with per-axis controls and request-local speed caps;
 - removed `Legitimize`, iid limiter jitter, Aimbot Jitter, minimum-difference slowdown, and rotation short-stop settings/state;
 - made client-side request refreshes retain humanizer state and quantize against the camera rotation;
+- migrated every rotation producer to rich requests and removed the bare `Rotation` compatibility overload;
+- attached stable block/face metadata and explicit purposes/validity to interaction, placement, projectile, combat, and reset requests;
+- moved immediate/instant execution flags from shared settings into individual requests;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through projectile interception have passed maintainer-run compilation and verification; the
-  Aimbot/legacy-removal checkpoint is awaiting the next maintainer-run build. The implementing agent must not run Gradle.
+- all completed checkpoints through Aimbot migration and legacy removal have passed maintainer-run compilation and
+  verification; the full request-migration checkpoint is awaiting the next maintainer-run build. The implementing
+  agent must not run Gradle.
 
 ## Goal
 

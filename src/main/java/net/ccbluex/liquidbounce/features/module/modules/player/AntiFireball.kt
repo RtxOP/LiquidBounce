@@ -13,11 +13,15 @@ import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.ui.font.Fonts
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isRotationFaced
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.minecraft.client.gui.ScaledResolution
@@ -72,7 +76,21 @@ object AntiFireball : Module("AntiFireball", Category.PLAYER) {
             }
 
             if (options.rotationsActive) {
-                setTargetRotation(toRotation(nearestPoint), options = options)
+                setTargetRotation(
+                    RotationRequest(
+                        owner = this,
+                        desired = toRotation(nearestPoint),
+                        settings = options,
+                        target = RotationTarget.EntityRegion(
+                            entityId = entity.entityId,
+                            box = entity.hitBox,
+                            bodyRange = 0.0..1.0,
+                            horizontalRange = 0.0..1.0,
+                        ),
+                        purpose = RotationPurpose.COMBAT_TRACK,
+                        validity = RotationValidity.RAYCAST,
+                    )
+                )
             }
 
             target = entity

@@ -89,7 +89,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         strafeValue.excludeWithState(false)
         horizontalAngleChangeValue.excludeWithState(180f..180f)
         verticalAngleChangeValue.excludeWithState(180f..180f)
-        immediate = true
     }
 
     val onMotion = handler<MotionEvent> { event ->
@@ -191,8 +190,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         val minBodyPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget).range.start
 
         player.setPosAndPrevPos(currPos, oldPos)
-        options.immediate = true
-
         setTargetRotation(
             RotationRequest(
                 owner = this,
@@ -207,6 +204,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 ),
                 purpose = RotationPurpose.COMBAT_TRACK,
                 validity = RotationValidity.RAYCAST,
+                immediate = true,
                 horizontalSpeed = turnSpeed,
                 verticalSpeed = turnSpeed,
                 changeYaw = horizontalAim,

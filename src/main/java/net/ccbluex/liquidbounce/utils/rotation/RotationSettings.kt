@@ -67,10 +67,6 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
 
-    var prioritizeRequest = false
-    var immediate = false
-    var instant = false
-
     open val rotationsActive
         get() = rotations
 

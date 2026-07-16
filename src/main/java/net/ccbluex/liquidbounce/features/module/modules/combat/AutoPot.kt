@@ -19,9 +19,13 @@ import net.ccbluex.liquidbounce.utils.inventory.isSplashPotion
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
 import net.ccbluex.liquidbounce.utils.movement.FallingPlayer
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
 import net.minecraft.client.gui.inventory.GuiInventory
@@ -49,8 +53,6 @@ object AutoPot : Module("AutoPot", Category.COMBAT) {
 
     private val options = RotationSettings(this).withoutKeepRotation().apply {
         resetTicksValue.excludeWithState()
-
-        immediate = true
     }
 
     private val msTimer = MSTimer()
@@ -84,7 +86,19 @@ object AutoPot : Module("AutoPot", Category.COMBAT) {
             potion = potionInHotbar
 
             if (player.rotationPitch <= 80F) {
-                setTargetRotation(Rotation(player.rotationYaw, nextFloat(80F, 90F)).fixedSensitivity(), options)
+                val rotation = Rotation(player.rotationYaw, nextFloat(80F, 90F)).fixedSensitivity()
+
+                setTargetRotation(
+                    RotationRequest(
+                        owner = this,
+                        desired = rotation,
+                        settings = options,
+                        target = RotationTarget.ExactRotation(rotation.copy()),
+                        purpose = RotationPurpose.PROJECTILE,
+                        validity = RotationValidity.EXACT,
+                        immediate = true,
+                    )
+                )
             }
 
             nextTick {

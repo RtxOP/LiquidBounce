@@ -22,7 +22,10 @@ import net.ccbluex.liquidbounce.utils.movement.MovementUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.ccbluex.liquidbounce.utils.rotation.PlaceRotation
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettingsWithRotationModes
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.canUpdateRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getFixedAngleDelta
@@ -30,6 +33,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotatio
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.*
 import net.minecraft.block.BlockBush
@@ -160,6 +164,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         strictValue.excludeWithState()
         resetTicksValue.setSupport { it && scaffoldMode != "Telly" }
     }
+    private var instantRotation = false
 
     // Search options
     val searchMode by choices("SearchMode", arrayOf("Area", "Center"), "Area") { scaffoldMode != "GodBridge" }
@@ -566,7 +571,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
         findBlock(scaffoldMode == "Expand" && expandLength > 1, searchMode == "Area")
     }
 
-    private fun setRotation(rotation: Rotation, ticks: Int) {
+    private fun setRotation(rotation: Rotation, ticks: Int, placeInfo: PlaceInfo? = placeRotation?.placeInfo) {
         val player = mc.thePlayer ?: return
 
         if (scaffoldMode == "Telly" && player.isMoving) {
@@ -575,7 +580,20 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             }
         }
 
-        setTargetRotation(rotation, options, ticks)
+        setTargetRotation(
+            RotationRequest(
+                owner = this,
+                desired = rotation,
+                settings = options,
+                target = placeInfo?.let {
+                    RotationTarget.WorldPoint(it.vec3, it.blockPos, it.enumFacing)
+                } ?: RotationTarget.ExactRotation(rotation.copy()),
+                purpose = RotationPurpose.PLACE,
+                validity = if (placeInfo != null) RotationValidity.EXACT else RotationValidity.NONE,
+                instant = instantRotation,
+            ),
+            ticks,
+        )
     }
 
     // Search for new target block
@@ -761,7 +779,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         SilentHotbar.resetSlot(this)
 
-        options.instant = false
+        instantRotation = false
     }
 
     // Entity movement event
@@ -849,7 +867,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
     ): Boolean {
         val player = mc.thePlayer ?: return false
 
-        options.instant = false
+        instantRotation = false
 
         if (!blockPosition.isReplaceable) {
             if (autoF5) mc.gameSettings.thirdPersonView = 0
@@ -907,10 +925,14 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             simPlayer.tick()
 
             // We don't want to use block safe all the time, so we check if it's not needed.
-            options.instant =
+            instantRotation =
                 blockSafe && simPlayer.fallDistance > player.fallDistance + 0.05 && rotationDifference > rotationDifference2 / 2
 
-            setRotation(placeRotation.rotation, if (scaffoldMode == "Telly") 1 else options.resetTicks)
+            setRotation(
+                placeRotation.rotation,
+                if (scaffoldMode == "Telly") 1 else options.resetTicks,
+                placeRotation.placeInfo,
+            )
         }
 
         this.placeRotation = placeRotation

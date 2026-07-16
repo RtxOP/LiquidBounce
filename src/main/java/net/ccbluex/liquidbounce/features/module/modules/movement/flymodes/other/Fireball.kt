@@ -21,7 +21,11 @@ import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
 import net.ccbluex.liquidbounce.utils.inventory.hotBarSlot
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
 import net.minecraft.init.Items
 import net.minecraft.network.play.client.C0APacketAnimation
@@ -56,11 +60,26 @@ object Fireball : FlyMode("Fireball") {
             Fly.firePosition = BlockPos(player.posX, player.posY - 1, player.posZ)
         }
 
-        val smartRotation = Fly.firePosition?.center?.let { RotationUtils.toRotation(it, player) }
+        val smartTarget = Fly.firePosition?.center
+        val smartRotation = smartTarget?.let { RotationUtils.toRotation(it, player) }
         val rotation = if (Fly.pitchMode == "Custom") customRotation else smartRotation
 
         if (options.rotationsActive && rotation != null) {
-            RotationUtils.setTargetRotation(rotation, options, if (options.keepRotation) options.resetTicks else 1)
+            RotationUtils.setTargetRotation(
+                RotationRequest(
+                    owner = this,
+                    desired = rotation,
+                    settings = options,
+                    target = if (Fly.pitchMode == "Custom") {
+                        RotationTarget.ExactRotation(rotation.copy())
+                    } else {
+                        RotationTarget.WorldPoint(smartTarget ?: return, Fly.firePosition)
+                    },
+                    purpose = RotationPurpose.PROJECTILE,
+                    validity = RotationValidity.EXACT,
+                ),
+                if (options.keepRotation) options.resetTicks else 1,
+            )
         }
 
         if (Fly.fireBallThrowMode == "Edge" && !player.isNearEdge(Fly.edgeThreshold))

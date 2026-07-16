@@ -20,12 +20,16 @@ import net.ccbluex.liquidbounce.utils.extensions.onPlayerRightClick
 import net.ccbluex.liquidbounce.utils.extensions.rotation
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawBlockBox
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawBlockDamageText
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performRaytrace
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
 import net.minecraft.block.Block
@@ -199,7 +203,16 @@ object Fucker : Module("Fucker", Category.WORLD) {
 
         // Face block
         if (options.rotationsActive) {
-            setTargetRotation(spot.rotation, options = options)
+            setTargetRotation(
+                RotationRequest(
+                    owner = this,
+                    desired = spot.rotation,
+                    settings = options,
+                    target = RotationTarget.WorldPoint(spot.vec, currentPos),
+                    purpose = RotationPurpose.BLOCK_INTERACT,
+                    validity = RotationValidity.RAYCAST,
+                )
+            )
         }
     }
 

@@ -48,6 +48,9 @@ object RotationUtils : MinecraftInstance, Listenable {
     /** The rich request currently owning the global rotation pipeline. */
     private var activeRequest: RotationRequest? = null
 
+    /** Prevents an immediate request from advancing twice in one logical rotation update. */
+    private var skipNextRotationUpdate = false
+
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
      */
@@ -383,7 +386,8 @@ object RotationUtils : MinecraftInstance, Listenable {
         settings: RotationSettings,
         request: RotationRequest? = null,
     ): Rotation {
-        val (hSpeed, vSpeed) = if (settings.instant) {
+        val instant = request?.instant == true
+        val (hSpeed, vSpeed) = if (instant) {
             180f to 180f
         } else {
             (request?.horizontalSpeed ?: settings.horizontalSpeed) to
@@ -391,7 +395,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         val profile = settings.humanizationProfile
-        if (!settings.instant && profile.enabled) {
+        if (!instant && profile.enabled) {
             val result = humanizer.step(
                 current = AnglePoint(currentRotation.yaw.toDouble(), currentRotation.pitch.toDouble()),
                 requestedTarget = AnglePoint(targetRotation.yaw.toDouble(), targetRotation.pitch.toDouble()),
@@ -497,27 +501,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         entity.renderBoundingBox.center.withY(entity.renderBoundingBox.minY)
     ).any { isVisible(it) }
 
-    /**
-     * Set your target rotation
-     *
-     * @param rotation your target rotation
-     */
-    fun setTargetRotation(rotation: Rotation, options: RotationSettings, ticks: Int = options.resetTicks) {
-        setTargetRotation(
-            RotationRequest(
-                owner = options.moduleOwner,
-                desired = rotation.copy(),
-                settings = options,
-                priority = if (options.prioritizeRequest) 1 else 0,
-            ),
-            ticks,
-        )
-    }
-
-    /**
-     * Set a context-rich rotation request. The compatibility overload above keeps existing modules working while they
-     * are migrated to stable target metadata and explicit purposes.
-     */
+    /** Set a context-rich rotation request with stable ownership and target metadata. */
     fun setTargetRotation(request: RotationRequest, ticks: Int = request.settings.resetTicks) {
         val rotation = request.desired
         val options = request.settings
@@ -527,9 +511,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         val previousRequest = activeRequest
-        if (request.priority < (previousRequest?.priority ?: 0) ||
-            !options.prioritizeRequest && activeSettings?.prioritizeRequest == true
-        ) {
+        if (request.priority < (previousRequest?.priority ?: 0)) {
             return
         }
 
@@ -560,8 +542,11 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         activeSettings = options
 
-        if (options.immediate) {
+        if (request.immediate) {
             update()
+            skipNextRotationUpdate = true
+        } else {
+            skipNextRotationUpdate = false
         }
     }
 
@@ -577,6 +562,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         activeRequest = null
         currentRotation = null
         activeSettings = null
+        skipNextRotationUpdate = false
         humanizer.reset()
         targetPointTracker.reset()
     }
@@ -587,7 +573,12 @@ object RotationUtils : MinecraftInstance, Listenable {
         return when {
             first is RotationTarget.EntityRegion && second is RotationTarget.EntityRegion ->
                 first.entityId == second.entityId
-            first is RotationTarget.WorldPoint && second is RotationTarget.WorldPoint -> first.point == second.point
+            first is RotationTarget.WorldPoint && second is RotationTarget.WorldPoint ->
+                if (first.blockPos != null && second.blockPos != null) {
+                    first.blockPos == second.blockPos && first.face == second.face
+                } else {
+                    first.point == second.point
+                }
             first is RotationTarget.ExactRotation && second is RotationTarget.ExactRotation ->
                 rotationDifference(first.rotation, second.rotation) < getFixedAngleDelta()
             else -> false
@@ -725,12 +716,9 @@ object RotationUtils : MinecraftInstance, Listenable {
      * Handle rotation update
      */
     val onRotationUpdate = handler<RotationUpdateEvent>(priority = -1) {
-        activeSettings?.let {
-            // Was the rotation update immediate? Allow updates the next tick.
-            if (it.immediate) {
-                it.immediate = false
-                return@handler
-            }
+        if (skipNextRotationUpdate) {
+            skipNextRotationUpdate = false
+            return@handler
         }
 
         update()
@@ -742,6 +730,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         activeRequest = null
         currentRotation = null
         activeSettings = null
+        skipNextRotationUpdate = false
         targetMotionEstimator.clear()
         targetPointTracker.reset()
         humanizer.reset()

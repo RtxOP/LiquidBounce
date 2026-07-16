@@ -24,10 +24,14 @@ import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
 import net.ccbluex.liquidbounce.utils.inventory.hotBarSlot
 import net.ccbluex.liquidbounce.utils.inventory.inventorySlot
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.init.Blocks
@@ -56,10 +60,18 @@ object MLG : NoFallMode("MLG") {
                 return@let
             }
 
+            val rotation = toRotation(it)
+
             RotationUtils.setTargetRotation(
-                toRotation(it),
-                options,
-                if (options.keepRotation) options.resetTicks else 1
+                RotationRequest(
+                    owner = MLG,
+                    desired = rotation,
+                    settings = options,
+                    target = RotationTarget.WorldPoint(it),
+                    purpose = RotationPurpose.BLOCK_INTERACT,
+                    validity = RotationValidity.RAYCAST,
+                ),
+                if (options.keepRotation) options.resetTicks else 1,
             )
         }
 
@@ -128,7 +140,15 @@ object MLG : NoFallMode("MLG") {
 
                 faceBlock(pos, targetUpperFace = true, hRange = 0.3 + inc..0.701 - inc)?.run {
                     RotationUtils.setTargetRotation(
-                        rotation, options, if (options.keepRotation) options.resetTicks else 1
+                        RotationRequest(
+                            owner = MLG,
+                            desired = rotation,
+                            settings = options,
+                            target = RotationTarget.WorldPoint(vec, pos, EnumFacing.UP),
+                            purpose = RotationPurpose.PLACE,
+                            validity = RotationValidity.EXACT,
+                        ),
+                        if (options.keepRotation) options.resetTicks else 1,
                     )
                 }
             }
