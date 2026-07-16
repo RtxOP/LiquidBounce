@@ -25,9 +25,10 @@ The first compatibility slice is now in progress:
 - added stateful sensitivity quantization with incremental error diffusion, target-handoff resets, camera rebasing, pitch-safe whole steps, and endpoint drift suppression;
 - added quantized validity checks for entity boxes, exact rotations, and block points/faces, including through-wall geometric validation versus exact world raycasts;
 - activated bounded deadline policy: reachable endpoints may consume at most one GCD of tolerance, while unreachable deadlines disable cosmetic pathing but retain configured speed limits;
+- sample configured yaw/pitch speed ranges once per movement handoff while allowing explicit request-local speed caps to refresh continuously;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through immutable rotations and sensitivity quantization have passed maintainer-run
-  compilation and verification; the validity/deadline checkpoint is awaiting the next maintainer-run build. The
+- all completed checkpoints through quantized validity and deadline enforcement have passed maintainer-run compilation;
+  the movement-level speed sampling checkpoint is awaiting the next maintainer-run build and verification. The
   implementing agent must not run Gradle.
 
 ## Goal

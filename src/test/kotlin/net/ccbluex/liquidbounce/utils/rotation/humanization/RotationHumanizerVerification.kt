@@ -21,6 +21,7 @@ object RotationHumanizerVerification {
         respectsLimitsAndPitchBounds()
         sensitivityQuantizationConservesMotion()
         deadlinePolicyHonorsLimits()
+        movementSpeedSamplesOncePerHandoff()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
@@ -141,6 +142,33 @@ object RotationHumanizerVerification {
                 deadlineReached = true,
             ) == DeadlineStrategy.DETERMINISTIC
         ) { "An unreachable deadline must fall back to bounded deterministic travel" }
+    }
+
+    private fun movementSpeedSamplesOncePerHandoff() {
+        val sampler = MovementSpeedSampler()
+        var yawSamples = 0
+        var pitchSamples = 0
+
+        fun resolve(override: Double? = null) = sampler.resolve(
+            baseYaw = { (++yawSamples).toDouble() * 10.0 },
+            basePitch = { (++pitchSamples).toDouble() * 20.0 },
+            overrideYaw = override,
+            overridePitch = override,
+        )
+
+        val first = resolve()
+        val refreshed = resolve()
+        check(first == refreshed)
+        check(yawSamples == 1 && pitchSamples == 1) { "A request refresh must retain movement-level speed samples" }
+
+        sampler.reset()
+        val switched = resolve()
+        check(switched != first)
+        check(yawSamples == 2 && pitchSamples == 2) { "A target handoff must sample a new movement bundle" }
+
+        val overridden = resolve(37.0)
+        check(overridden == AngularSpeedLimits(37.0, 37.0))
+        check(yawSamples == 2 && pitchSamples == 2) { "Explicit request speeds must not consume range samples" }
     }
 
     private fun movingTargetDoesNotRestartEveryTick() {

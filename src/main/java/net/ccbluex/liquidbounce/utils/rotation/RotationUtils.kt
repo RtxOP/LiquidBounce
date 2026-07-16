@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.DeadlineStrategy
+import net.ccbluex.liquidbounce.utils.rotation.humanization.MovementSpeedSampler
 import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationDeadlinePolicy
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
@@ -41,6 +42,7 @@ object RotationUtils : MinecraftInstance, Listenable {
     private val humanizationSeed = java.util.Random().nextLong()
     private val humanizer = RotationHumanizer(humanizationSeed)
     private val sensitivityQuantizer = SensitivityQuantizer()
+    private val movementSpeedSampler = MovementSpeedSampler()
     private val targetPointTracker = TargetPointTracker(humanizationSeed xor 0x5DEECE66DL)
     private val targetMotionEstimator = TargetMotionEstimator()
 
@@ -430,11 +432,14 @@ object RotationUtils : MinecraftInstance, Listenable {
     }
 
     private fun resolveSpeedLimits(settings: RotationSettings, request: RotationRequest?): RotationSpeedLimits {
-        if (request?.instant == true) return RotationSpeedLimits(180f, 180f)
-
-        val horizontal = request?.horizontalSpeed ?: settings.horizontalSpeed
-        val vertical = request?.verticalSpeed ?: request?.horizontalSpeed ?: settings.verticalSpeed
-        return RotationSpeedLimits(abs(horizontal), abs(vertical))
+        val sampled = movementSpeedSampler.resolve(
+            baseYaw = { settings.horizontalSpeed.toDouble() },
+            basePitch = { settings.verticalSpeed.toDouble() },
+            overrideYaw = request?.horizontalSpeed?.toDouble(),
+            overridePitch = request?.verticalSpeed?.toDouble(),
+            instant = request?.instant == true,
+        )
+        return RotationSpeedLimits(sampled.yaw.toFloat(), sampled.pitch.toFloat())
     }
 
     private data class RotationSpeedLimits(val horizontal: Float, val vertical: Float)
@@ -536,6 +541,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         val requestChanged = previousRequest == null ||
             previousRequest.owner !== request.owner ||
             previousRequest.purpose != request.purpose ||
+            previousRequest.settings !== request.settings ||
             previousRequest.changeYaw != request.changeYaw ||
             previousRequest.changePitch != request.changePitch ||
             !sameTarget(previousRequest.target, request.target)
@@ -543,6 +549,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         if (requestChanged) {
             humanizer.reset()
             sensitivityQuantizer.reset()
+            movementSpeedSampler.reset()
             activeRotationValid = false
         }
 
@@ -587,6 +594,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         quantizingReset = false
         humanizer.reset()
         sensitivityQuantizer.reset()
+        movementSpeedSampler.reset()
         targetPointTracker.reset()
     }
 
@@ -857,6 +865,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         targetPointTracker.reset()
         humanizer.reset()
         sensitivityQuantizer.reset()
+        movementSpeedSampler.reset()
     }
 
     /**
