@@ -22,6 +22,7 @@ object RotationHumanizerVerification {
         sensitivityQuantizationConservesMotion()
         deadlinePolicyHonorsLimits()
         movementSpeedSamplesOncePerHandoff()
+        telemetryIsBoundedAndWrapAware()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
@@ -169,6 +170,37 @@ object RotationHumanizerVerification {
         val overridden = resolve(37.0)
         check(overridden == AngularSpeedLimits(37.0, 37.0))
         check(yawSamples == 2 && pitchSamples == 2) { "Explicit request speeds must not consume range samples" }
+    }
+
+    private fun telemetryIsBoundedAndWrapAware() {
+        val telemetry = RotationTelemetry(capacity = 3)
+
+        listOf(179.0, -179.0, -178.0, -177.0).forEachIndexed { tick, yaw ->
+            val point = AnglePoint(yaw, tick.toDouble())
+            telemetry.record(
+                tick = tick,
+                seed = 7L,
+                owner = "verification",
+                purpose = "GENERIC",
+                movementId = 1L,
+                phase = MovementPhase.PRIMARY,
+                deadlineStrategy = DeadlineStrategy.NORMAL,
+                source = point,
+                target = point,
+                planned = point,
+                quantized = point,
+                valid = true,
+            )
+        }
+
+        val samples = telemetry.snapshot()
+        check(samples.size == 3 && samples.first().tick == 1) { "Telemetry must evict its oldest bounded sample" }
+        check(samples.first().yawVelocity == 2.0) { "Telemetry yaw velocity must use wrapped differences" }
+        check(samples.last().yawVelocity == 1.0 && samples.last().yawAcceleration == 0.0)
+        check(telemetry.latest() == samples.last())
+
+        telemetry.clear()
+        check(telemetry.snapshot().isEmpty() && telemetry.latest() == null)
     }
 
     private fun movingTargetDoesNotRestartEveryTick() {

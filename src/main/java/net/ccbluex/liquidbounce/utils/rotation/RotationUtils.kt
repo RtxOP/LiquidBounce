@@ -19,10 +19,13 @@ import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.DeadlineStrategy
+import net.ccbluex.liquidbounce.utils.rotation.humanization.MovementPhase
 import net.ccbluex.liquidbounce.utils.rotation.humanization.MovementSpeedSampler
 import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationDeadlinePolicy
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
+import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationTelemetry
+import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationTelemetrySample
 import net.ccbluex.liquidbounce.utils.rotation.humanization.SensitivityQuantizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
@@ -43,6 +46,7 @@ object RotationUtils : MinecraftInstance, Listenable {
     private val humanizer = RotationHumanizer(humanizationSeed)
     private val sensitivityQuantizer = SensitivityQuantizer()
     private val movementSpeedSampler = MovementSpeedSampler()
+    private val telemetry = RotationTelemetry()
     private val targetPointTracker = TargetPointTracker(humanizationSeed xor 0x5DEECE66DL)
     private val targetMotionEstimator = TargetMotionEstimator()
 
@@ -59,6 +63,9 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     /** True after quantization has handed off from target travel to camera reset travel. */
     private var quantizingReset = false
+
+    private var lastMovementId = 0L
+    private var lastMovementPhase = MovementPhase.COMPLETE
 
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
@@ -415,12 +422,18 @@ object RotationUtils : MinecraftInstance, Listenable {
                 requestedProfile = profile,
             )
 
+            lastMovementId = result.movementId
+            lastMovementPhase = result.phase
+
             return Rotation(result.rotation.yaw.toFloat(), result.rotation.pitch.toFloat())
         }
 
         val (yawDiff, pitchDiff) = angleDifferences(targetRotation, currentRotation)
         val difference = hypot(yawDiff, pitchDiff)
-        if (difference <= 1.0e-6f) return currentRotation.copy()
+        if (difference <= 1.0e-6f) {
+            lastMovementPhase = MovementPhase.COMPLETE
+            return currentRotation.copy()
+        }
 
         val yawLimit = abs(yawDiff safeDiv difference) * abs(hSpeed)
         val pitchLimit = abs(pitchDiff safeDiv difference) * abs(vSpeed)
@@ -429,7 +442,13 @@ object RotationUtils : MinecraftInstance, Listenable {
                 yawDiff.coerceIn(-yawLimit, yawLimit),
                 pitchDiff.coerceIn(-pitchLimit, pitchLimit),
             )
-        )
+        ).also {
+            lastMovementPhase = if (rotationDifference(it, targetRotation) <= getFixedAngleDelta()) {
+                MovementPhase.COMPLETE
+            } else {
+                MovementPhase.PRIMARY
+            }
+        }
     }
 
     private fun resolveSpeedLimits(settings: RotationSettings, request: RotationRequest?): RotationSpeedLimits {
@@ -681,6 +700,40 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
     }
 
+    fun telemetrySnapshot(): List<RotationTelemetrySample> = telemetry.snapshot()
+
+    private fun recordTelemetry(
+        request: RotationRequest?,
+        source: Rotation,
+        target: Rotation,
+        planned: Rotation,
+        quantized: Rotation,
+        valid: Boolean,
+        deadlineStrategy: DeadlineStrategy,
+        resetting: Boolean = false,
+    ) {
+        if (!Rotations.debugRotations) return
+
+        telemetry.record(
+            tick = runTimeTicks,
+            seed = humanizationSeed,
+            owner = request?.owner?.javaClass?.simpleName ?: "RotationUtils",
+            purpose = if (resetting) {
+                RotationPurpose.RESET.name
+            } else {
+                request?.purpose?.name ?: RotationPurpose.GENERIC.name
+            },
+            movementId = lastMovementId,
+            phase = lastMovementPhase,
+            deadlineStrategy = deadlineStrategy,
+            source = AnglePoint(source.yaw.toDouble(), source.pitch.toDouble()),
+            target = AnglePoint(target.yaw.toDouble(), target.pitch.toDouble()),
+            planned = AnglePoint(planned.yaw.toDouble(), planned.pitch.toDouble()),
+            quantized = AnglePoint(quantized.yaw.toDouble(), quantized.pitch.toDouble()),
+            valid = valid,
+        )
+    }
+
     /**
      * Creates a raytrace even when the target [blockPos] is not visible
      */
@@ -744,6 +797,16 @@ object RotationUtils : MinecraftInstance, Listenable {
                 sourceRotation, playerRotation, settings
             )
             currentRotation = quantizeRotation(sourceRotation, limitedRotation)
+            recordTelemetry(
+                activeRequest,
+                sourceRotation,
+                playerRotation,
+                limitedRotation,
+                currentRotation!!,
+                valid = false,
+                deadlineStrategy = DeadlineStrategy.NORMAL,
+                resetting = true,
+            )
             return
         }
 
@@ -771,6 +834,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             val plannedRotation = when (deadlineStrategy) {
                 DeadlineStrategy.DIRECT -> {
                     sensitivityQuantizer.reset()
+                    lastMovementPhase = MovementPhase.COMPLETE
                     effectiveTarget
                 }
                 DeadlineStrategy.DETERMINISTIC -> limitAngleChange(
@@ -793,6 +857,15 @@ object RotationUtils : MinecraftInstance, Listenable {
             plannedRotation.let { rotation ->
                 val quantizedRotation = quantizeRotation(sourceRotation, rotation)
                 activeRotationValid = request?.let { isRotationValid(it, quantizedRotation) } ?: true
+                recordTelemetry(
+                    request,
+                    sourceRotation,
+                    effectiveTarget,
+                    rotation,
+                    quantizedRotation,
+                    activeRotationValid,
+                    deadlineStrategy,
+                )
 
                 if (!settings.applyServerSide) {
                     if (request?.changeYaw != false) player.rotationYaw = quantizedRotation.yaw
@@ -867,6 +940,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         humanizer.reset()
         sensitivityQuantizer.reset()
         movementSpeedSampler.reset()
+        telemetry.clear()
     }
 
     /**
@@ -902,7 +976,11 @@ object RotationUtils : MinecraftInstance, Listenable {
         val diffs = angleDifferences(packet.rotation, serverRotation)
 
         if (Rotations.debugRotations && currentRotation != null) {
-            chat("PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}")
+            val sample = telemetry.latest()
+            chat(
+                "PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}, " +
+                    "VALID: ${sample?.valid}, PHASE: ${sample?.phase}"
+            )
         }
 
     }
