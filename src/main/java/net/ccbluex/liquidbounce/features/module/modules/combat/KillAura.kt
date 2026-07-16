@@ -34,7 +34,6 @@ import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawCircle
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawEntityBox
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawPlatform
-import net.ccbluex.liquidbounce.utils.rotation.RandomizationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.runWithModifiedRaycastResult
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
@@ -53,6 +52,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
@@ -222,7 +222,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     private val generateSpotBasedOnDistance by boolean("GenerateSpotBasedOnDistance", false) { options.rotationsActive }
 
-    private val randomization = RandomizationSettings(this) { options.rotationsActive }
     private val outBorder by boolean("OutBorder", false) { options.rotationsActive }
 
     private val highestBodyPointToTargetValue = choices(
@@ -912,16 +911,17 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         player.setPosAndPrevPos(pos)
 
         val rotation = searchCenter(
-            boundingBox,
-            generateSpotBasedOnDistance,
-            outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
-            randomization,
+            bb = boundingBox,
+            distanceBasedSpot = generateSpotBasedOnDistance,
+            outborder = outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
             predict = false,
             lookRange = range + scanRange,
             attackRange = range,
             throughWallsRange = throughWallsRange,
             bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
-            horizontalSearch = horizontalBodySearchRange
+            horizontalSearch = horizontalBodySearchRange,
+            targetKey = TargetPointKey(this, entity.entityId),
+            targetPointVariation = options.humanizationProfile.pathVariation,
         )
 
         if (rotation == null) {

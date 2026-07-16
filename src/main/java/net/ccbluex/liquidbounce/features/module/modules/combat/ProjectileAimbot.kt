@@ -14,7 +14,6 @@ import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isSelected
 import net.ccbluex.liquidbounce.utils.extensions.getDistanceToEntityBox
 import net.ccbluex.liquidbounce.utils.inventory.isEmpty
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawPlatform
-import net.ccbluex.liquidbounce.utils.rotation.RandomizationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceTrajectory
@@ -25,6 +24,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.*
@@ -55,8 +55,6 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
     { predict && gravityType == "Projectile" }
 
     private val options = RotationSettings(this).withoutKeepRotation()
-
-    private val randomization = RandomizationSettings(this) { options.rotationsActive }
 
     private val highestBodyPointToTargetValue = choices(
         "HighestBodyPointToTarget", arrayOf("Head", "Body", "Feet"), "Head"
@@ -123,21 +121,22 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
             else -> return@handler
         }
 
-        val normalRotation = target?.entityBoundingBox?.let {
+        val currentTarget = target ?: return@handler
+        val normalRotation = currentTarget.entityBoundingBox.let {
             searchCenter(
                 it,
                 outborder = false,
-                randomization = this.randomization,
                 predict = true,
                 lookRange = range,
                 attackRange = range,
                 throughWallsRange = throughWallsRange,
                 bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
-                horizontalSearch = horizontalBodySearchRange
+                horizontalSearch = horizontalBodySearchRange,
+                targetKey = TargetPointKey(this, currentTarget.entityId),
+                targetPointVariation = options.humanizationProfile.pathVariation,
             )
         } ?: return@handler
 
-        val currentTarget = target ?: return@handler
         val maxBodyPoint = RotationUtils.BodyPoint.fromString(highestBodyPointToTarget).range.endInclusive
         val minBodyPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget).range.start
 

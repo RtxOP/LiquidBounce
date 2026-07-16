@@ -19,7 +19,10 @@ import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
+import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
 import net.minecraft.network.play.client.C03PacketPlayer
@@ -32,6 +35,7 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     private val humanizationSeed = java.util.Random().nextLong()
     private val humanizer = RotationHumanizer(humanizationSeed)
+    private val targetPointTracker = TargetPointTracker(humanizationSeed xor 0x5DEECE66DL)
 
     /**
      * Our final rotation point, which [currentRotation] follows.
@@ -228,7 +232,6 @@ object RotationUtils : MinecraftInstance, Listenable {
      *
      * @param bb                entity box to search rotation for
      * @param outborder         outborder option
-     * @param random            random option
      * @param predict           predict, offsets rotation by player's motion
      * @param lookRange         look range
      * @param attackRange       attack range, rotations in attack range will be prioritized
@@ -237,9 +240,10 @@ object RotationUtils : MinecraftInstance, Listenable {
      */
     fun searchCenter(
         bb: AxisAlignedBB, distanceBasedSpot: Boolean = false, outborder: Boolean,
-        randomization: RandomizationSettings? = null, predict: Boolean,
+        predict: Boolean,
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
+        targetKey: TargetPointKey? = null, targetPointVariation: Double = 0.0,
     ): Rotation? {
         val scanRange = lookRange.coerceAtLeast(attackRange)
 
@@ -254,20 +258,27 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         val eyes = mc.thePlayer.eyes
 
-        val preferredRotation = toRotation(getNearestPointBB(eyes, bb), predict).takeIf {
-            distanceBasedSpot
-        } ?: currentRotation ?: mc.thePlayer.rotation
+        val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
+        val nearestPoint = getNearestPointBB(eyes, bb)
+        val stickyPoint = targetKey?.let {
+            targetPointTracker.pointFor(
+                key = it,
+                fallback = normalizePoint(bb, nearestPoint),
+                horizontalRange = hMin..hMax,
+                verticalRange = min..max,
+                variation = targetPointVariation,
+            )
+        }?.let { bb.lerpWith(it.x, it.y, it.z) }
+
+        val preferredRotation = stickyPoint?.let { toRotation(it, predict) }
+            ?: toRotation(nearestPoint, predict).takeIf { distanceBasedSpot }
+            ?: currentRotation
+            ?: mc.thePlayer.rotation
 
         val currRotation = Rotation.ZERO.plus(preferredRotation)
 
         var attackRotation: Pair<Rotation, Float>? = null
         var lookRotation: Pair<Rotation, Float>? = null
-
-        randomization?.takeIf { it.randomizationChosen }?.run {
-            processNextSpot(bb, currRotation, eyes, scanRange.toDouble())
-        }
-
-        val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
 
         for (x in hMin..hMax) {
             for (y in min..max) {
@@ -310,6 +321,17 @@ object RotationUtils : MinecraftInstance, Listenable {
             if (dist <= scanRange && (dist <= throughWallsRange || isVisible(vec))) toRotation(vec, predict)
             else null
         }
+    }
+
+    private fun normalizePoint(box: AxisAlignedBB, point: Vec3): NormalizedTargetPoint {
+        fun normalize(value: Double, min: Double, max: Double) =
+            if (max - min <= 1.0e-9) 0.5 else ((value - min) / (max - min)).coerceIn(0.0, 1.0)
+
+        return NormalizedTargetPoint(
+            normalize(point.xCoord, box.minX, box.maxX),
+            normalize(point.yCoord, box.minY, box.maxY),
+            normalize(point.zCoord, box.minZ, box.maxZ),
+        )
     }
 
     /**
@@ -638,6 +660,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         currentRotation = null
         activeSettings = null
         humanizer.reset()
+        targetPointTracker.reset()
     }
 
     private fun sameTarget(first: RotationTarget?, second: RotationTarget?): Boolean {

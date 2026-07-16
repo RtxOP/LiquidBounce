@@ -9,10 +9,12 @@ The first compatibility slice is now in progress:
 - added `Off`, `Subtle`, `Balanced`, and `Custom` settings while keeping `Off` as the compatibility default;
 - routed the new engine through the central server/client rotation limiter;
 - migrated KillAura and ProjectileAimbot to attach stable entity target metadata;
+- replaced Zig-Zag/LazyFlick candidate perturbation with a seeded sticky normalized target point;
+- removed `RandomizationSettings` and its combat-module configuration surface;
 - added a dependency-free pure-math verification harness;
 - compilation is awaiting the maintainer-run build checkpoint; no Gradle command should be run by the implementing agent.
 
-Legacy randomization and prediction remain temporarily in place until this slice compiles and its off-mode behavior is confirmed.
+Legacy prediction remains temporarily in place until the target-persistence slice compiles and its behavior is confirmed.
 
 ## Goal
 
