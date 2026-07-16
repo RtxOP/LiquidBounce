@@ -143,7 +143,7 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     }
 
     init {
-        owner.addValues(this.values)
+        moduleOwner.addValues(this.values)
     }
 }
 
