@@ -156,3 +156,11 @@ task copyZipInclude(type: Copy) {
 }
 
 build.dependsOn copyZipInclude
+
+task verifyRotationHumanizer(type: JavaExec) {
+    group = "verification"
+    description = "Runs dependency-free invariants for the pure rotation humanization engine."
+    dependsOn testClasses
+    classpath = sourceSets.test.runtimeClasspath
+    main = "net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizerVerification"
+}

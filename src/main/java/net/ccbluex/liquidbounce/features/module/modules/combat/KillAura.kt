@@ -48,6 +48,10 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.searchCenter
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.serverRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
@@ -926,7 +930,24 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return false
         }
 
-        setTargetRotation(rotation, options = options)
+        val maxBodyPoint = RotationUtils.BodyPoint.fromString(highestBodyPointToTarget).range.endInclusive
+        val minBodyPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget).range.start
+
+        setTargetRotation(
+            RotationRequest(
+                owner = this,
+                desired = rotation,
+                settings = options,
+                target = RotationTarget.EntityRegion(
+                    entityId = entity.entityId,
+                    box = boundingBox,
+                    bodyRange = minBodyPoint..maxBodyPoint,
+                    horizontalRange = horizontalBodySearchRange.start.toDouble()..horizontalBodySearchRange.endInclusive.toDouble(),
+                ),
+                purpose = RotationPurpose.COMBAT_TRACK,
+                validity = RotationValidity.RAYCAST,
+            )
+        )
 
         player.setPosAndPrevPos(currPos, oldPos)
 
@@ -1321,4 +1342,3 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 }
 
 data class SwingFailData(val vec3: Vec3, val startTime: Long)
-

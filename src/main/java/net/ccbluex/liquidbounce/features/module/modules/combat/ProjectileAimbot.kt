@@ -21,6 +21,10 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceTrajectory
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.searchCenter
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
+import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
+import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.*
@@ -133,7 +137,25 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
             )
         } ?: return@handler
 
-        setTargetRotation(if (gravityType == "Projectile") targetRotation else normalRotation, options = options)
+        val currentTarget = target ?: return@handler
+        val maxBodyPoint = RotationUtils.BodyPoint.fromString(highestBodyPointToTarget).range.endInclusive
+        val minBodyPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget).range.start
+
+        setTargetRotation(
+            RotationRequest(
+                owner = this,
+                desired = if (gravityType == "Projectile") targetRotation else normalRotation,
+                settings = options,
+                target = RotationTarget.EntityRegion(
+                    entityId = currentTarget.entityId,
+                    box = currentTarget.entityBoundingBox,
+                    bodyRange = minBodyPoint..maxBodyPoint,
+                    horizontalRange = horizontalBodySearchRange.start.toDouble()..horizontalBodySearchRange.endInclusive.toDouble(),
+                ),
+                purpose = RotationPurpose.PROJECTILE,
+                validity = RotationValidity.RAYCAST,
+            )
+        )
     }
 
     val onRender3D = handler<Render3DEvent> {

@@ -10,6 +10,8 @@ import net.ccbluex.liquidbounce.config.ListValue
 import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.extensions.random
 import net.ccbluex.liquidbounce.utils.extensions.withGCD
+import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationMode
+import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationProfile
 import kotlin.math.abs
 
 // TODO: refactor them all
@@ -21,7 +23,7 @@ class AlwaysRotationSettings(owner: Module, generalApply: () -> Boolean = { true
 }
 
 @Suppress("MemberVisibilityCanBePrivate")
-open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
+open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
 
     open val rotationsValue = boolean("Rotations", true) { generalApply() }
     open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
@@ -37,7 +39,19 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         rotationsActive && applyServerSide && generalApply()
     }
 
-    open val legitimizeValue = boolean("Legitimize", false) { rotationsActive && generalApply() }
+    open val legitimizeValue = boolean("Legitimize", false) {
+        rotationsActive && humanizationMode == "Off" && generalApply()
+    }
+
+    open val humanizationModeValue = choices(
+        "Humanization", arrayOf("Off", "Subtle", "Balanced", "Custom"), "Off"
+    ) { rotationsActive && generalApply() }
+    open val humanizationResponseValue = int(
+        "HumanizationResponse", 100, 50..150, suffix = "%"
+    ) { rotationsActive && humanizationMode != "Off" && generalApply() }
+    open val humanizationPathVariationValue = int(
+        "HumanizationPathVariation", 6, 0..20, suffix = "%"
+    ) { rotationsActive && humanizationMode == "Custom" && generalApply() }
 
     open val horizontalAngleChangeValue =
         floatRange("HorizontalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
@@ -68,6 +82,9 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     val keepRotation by keepRotationValue
     val resetTicks by resetTicksValue
     val legitimize by legitimizeValue
+    val humanizationMode by humanizationModeValue
+    val humanizationResponse by humanizationResponseValue
+    val humanizationPathVariation by humanizationPathVariationValue
     val horizontalAngleChange by horizontalAngleChangeValue
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
@@ -89,6 +106,17 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
 
     val verticalSpeed
         get() = verticalAngleChange.random()
+
+    val humanizationProfile: HumanizationProfile
+        get() {
+            val response = humanizationResponse / 100.0
+            return when (HumanizationMode.fromName(humanizationMode)) {
+                HumanizationMode.OFF -> HumanizationProfile.OFF
+                HumanizationMode.SUBTLE -> HumanizationProfile.subtle(response)
+                HumanizationMode.BALANCED -> HumanizationProfile.balanced(response)
+                HumanizationMode.CUSTOM -> HumanizationProfile.custom(response, humanizationPathVariation / 100.0)
+            }
+        }
 
     fun withoutKeepRotation() = apply {
         keepRotationValue.excludeWithState()

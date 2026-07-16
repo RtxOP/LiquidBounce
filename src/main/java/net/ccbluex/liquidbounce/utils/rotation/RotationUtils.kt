@@ -18,6 +18,8 @@ import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
+import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
+import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
 import net.minecraft.network.play.client.C03PacketPlayer
@@ -28,10 +30,16 @@ import kotlin.math.*
 
 object RotationUtils : MinecraftInstance, Listenable {
 
+    private val humanizationSeed = java.util.Random().nextLong()
+    private val humanizer = RotationHumanizer(humanizationSeed)
+
     /**
      * Our final rotation point, which [currentRotation] follows.
      */
     private var targetRotation: Rotation? = null
+
+    /** The rich request currently owning the global rotation pipeline. */
+    private var activeRequest: RotationRequest? = null
 
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
@@ -330,6 +338,19 @@ object RotationUtils : MinecraftInstance, Listenable {
             180f to 180f
         } else settings.horizontalSpeed to settings.verticalSpeed
 
+        val profile = settings.humanizationProfile
+        if (!settings.instant && profile.enabled) {
+            val result = humanizer.step(
+                current = AnglePoint(currentRotation.yaw.toDouble(), currentRotation.pitch.toDouble()),
+                requestedTarget = AnglePoint(targetRotation.yaw.toDouble(), targetRotation.pitch.toDouble()),
+                maxYawSpeed = hSpeed.toDouble(),
+                maxPitchSpeed = vSpeed.toDouble(),
+                requestedProfile = profile,
+            )
+
+            return Rotation(result.rotation.yaw.toFloat(), result.rotation.pitch.toFloat())
+        }
+
         return performAngleChange(
             currentRotation,
             targetRotation,
@@ -544,12 +565,43 @@ object RotationUtils : MinecraftInstance, Listenable {
      * @param rotation your target rotation
      */
     fun setTargetRotation(rotation: Rotation, options: RotationSettings, ticks: Int = options.resetTicks) {
+        setTargetRotation(
+            RotationRequest(
+                owner = options.moduleOwner,
+                desired = rotation.copy(),
+                settings = options,
+                priority = if (options.prioritizeRequest) 1 else 0,
+            ),
+            ticks,
+        )
+    }
+
+    /**
+     * Set a context-rich rotation request. The compatibility overload above keeps existing modules working while they
+     * are migrated to stable target metadata and explicit purposes.
+     */
+    fun setTargetRotation(request: RotationRequest, ticks: Int = request.settings.resetTicks) {
+        val rotation = request.desired
+        val options = request.settings
+
         if (rotation.yaw.isNaN() || rotation.pitch.isNaN() || rotation.pitch > 90 || rotation.pitch < -90) {
             return
         }
 
-        if (!options.prioritizeRequest && activeSettings?.prioritizeRequest == true) {
+        val previousRequest = activeRequest
+        if (request.priority < (previousRequest?.priority ?: 0) ||
+            !options.prioritizeRequest && activeSettings?.prioritizeRequest == true
+        ) {
             return
+        }
+
+        if (previousRequest != null && (
+                previousRequest.owner !== request.owner ||
+                    previousRequest.purpose != request.purpose ||
+                    !sameTarget(previousRequest.target, request.target)
+                )
+        ) {
+            humanizer.reset()
         }
 
         if (!options.applyServerSide) {
@@ -561,7 +613,8 @@ object RotationUtils : MinecraftInstance, Listenable {
             resetRotation()
         }
 
-        targetRotation = rotation
+        activeRequest = request.copy(desired = rotation.copy())
+        targetRotation = activeRequest?.desired
 
         resetTicks = if (!options.applyServerSide || !options.resetTicksValue.isSupported()) 1 else ticks
 
@@ -581,8 +634,23 @@ object RotationUtils : MinecraftInstance, Listenable {
             }
         }
         targetRotation = null
+        activeRequest = null
         currentRotation = null
         activeSettings = null
+        humanizer.reset()
+    }
+
+    private fun sameTarget(first: RotationTarget?, second: RotationTarget?): Boolean {
+        if (first == null || second == null) return first == second
+
+        return when {
+            first is RotationTarget.EntityRegion && second is RotationTarget.EntityRegion ->
+                first.entityId == second.entityId
+            first is RotationTarget.WorldPoint && second is RotationTarget.WorldPoint -> first.point == second.point
+            first is RotationTarget.ExactRotation && second is RotationTarget.ExactRotation ->
+                rotationDifference(first.rotation, second.rotation) < getFixedAngleDelta()
+            else -> false
+        }
     }
 
     /**
