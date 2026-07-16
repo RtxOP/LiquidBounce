@@ -2,7 +2,7 @@
 
 ## Implementation status
 
-The first compatibility slice is now in progress:
+The planned core and migration work is feature-complete; maintainer verification and gameplay calibration remain:
 
 - added rich, owner-aware rotation request/target/purpose/validity models;
 - added an opt-in deterministic trajectory core with cubic geometry, minimum-jerk timing, bounded retargeting, and correlated drift;
@@ -30,10 +30,11 @@ The first compatibility slice is now in progress:
 - added a disabled-by-default bounded telemetry trace with seed, request context, phase, deadline strategy, raw/planned/quantized angles, validity, wrapped velocity, and acceleration; existing rotation debug output exposes live validity/phase;
 - added distance-conditioned overshoot and goal-directed correction phases under one movement ID; exact actions, reset travel, and deadline-bound requests never opt into corrections, and every phase retains the configured speed caps;
 - completed the profile surface: Response is shared by presets, while Custom independently controls PathVariation, CorrectionTendency, and TargetDrift instead of coupling all imperfections to one slider;
+- removed live-player position mutation from client-movement prediction by passing simulated observer-eye coordinates into target search and visibility checks;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through contextual overshoot/correction have passed maintainer-run compilation; the final
-  profile-surface checkpoint is awaiting the next maintainer-run build and verification. The implementing agent must
-  not run Gradle.
+- all checkpoints through the final profile surface have passed maintainer-run compilation; the closing observer-eye
+  isolation checkpoint is awaiting its maintainer-run build and verification. The implementing agent must not run
+  Gradle.
 
 ## Goal
 
@@ -132,11 +133,12 @@ Its nearest-hitbox-point behavior is useful for reach and visibility, but it sho
 
 ### Prediction: keep the capability, replace the implementations
 
-Prediction improves correctness for moving targets and projectiles; it is not randomization and should not be removed wholesale. The current implementations should be removed because they are duplicated and inconsistent:
+Prediction improves correctness for moving targets and projectiles; it is not randomization and should not be removed
+wholesale. The pre-implementation paths were duplicated and inconsistent:
 
 - `toRotation(vec, predict)` calls immutable `Vec3.addVector(...)` without assigning the result, so this prediction flag currently has no effect.
 - KillAura, Aimbot, and TimerRange offset the target box with one-tick displacement multiplied by `2 + PredictEnemyPosition`; setting the option to zero still predicts two ticks, and a negative setting is allowed.
-- Client prediction mutates the real player's current/previous positions temporarily around `searchCenter`, which is fragile and obscures coordinate ownership.
+- Client prediction mutated the real player's current/previous positions temporarily around `searchCenter`, which was fragile and obscured coordinate ownership.
 - `faceTrajectory` projects the target by `predictSize`, the player by only one tick, and uses a single velocity sample. It does not solve target time-of-flight iteratively or handle acceleration/teleports robustly.
 - `searchCenter(..., predict)` means “offset the observer,” while module fields named prediction mean target extrapolation, producing ambiguous APIs.
 

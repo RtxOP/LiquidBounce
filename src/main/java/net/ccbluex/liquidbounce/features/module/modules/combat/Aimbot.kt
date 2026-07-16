@@ -128,7 +128,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         }
 
         val boundingBox = predictEntityBox(entity, predictionHorizon.toDouble())
-        val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
 
@@ -138,12 +137,11 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
             simPlayer.tick()
         }
 
-        player.setPosAndPrevPos(simPlayer.pos)
-
         val playerRotation = player.rotation
+        val observerEyes = simPlayer.pos.addVector(0.0, player.eyeHeight.toDouble(), 0.0)
 
         var destinationRotation = if (center) {
-            toRotation(boundingBox.center)
+            toRotation(boundingBox.center, observerEyes)
         } else {
             searchCenter(
                 boundingBox,
@@ -155,17 +153,17 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 horizontalSearch = horizontalBodySearchRange,
                 targetKey = TargetPointKey(this, entity.entityId),
                 targetPointVariation = options.humanizationProfile.targetDrift,
+                observerEyes = observerEyes,
             )
         }
 
         if (destinationRotation == null) {
-            player.setPosAndPrevPos(currPos, oldPos)
             return false
         }
 
         // look headLockBlockHeight higher
         if (headLock && center && lock) {
-            val distance = player.getDistanceToEntityBox(entity)
+            val distance = observerEyes.distanceTo(getNearestPointBB(observerEyes, entity.hitBox))
             val playerEyeHeight = player.eyeHeight
             val blockHeight = headLockBlockHeight
 
@@ -190,7 +188,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         val maxBodyPoint = RotationUtils.BodyPoint.fromString(highestBodyPointToTarget).range.endInclusive
         val minBodyPoint = RotationUtils.BodyPoint.fromString(lowestBodyPointToTarget).range.start
 
-        player.setPosAndPrevPos(currPos, oldPos)
         setTargetRotation(
             RotationRequest(
                 owner = this,

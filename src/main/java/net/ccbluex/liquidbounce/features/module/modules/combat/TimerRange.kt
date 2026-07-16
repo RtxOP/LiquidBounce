@@ -223,7 +223,6 @@ object TimerRange : Module("TimerRange", Category.COMBAT) {
         val player = mc.thePlayer ?: return false
 
         val boundingBox = predictEntityBox(entity, predictionHorizon.toDouble())
-        val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(player.movementInput)
 
@@ -231,23 +230,17 @@ object TimerRange : Module("TimerRange", Category.COMBAT) {
             simPlayer.tick()
         }
 
-        player.setPosAndPrevPos(simPlayer.pos)
+        val observerEyes = simPlayer.pos.addVector(0.0, player.eyeHeight.toDouble(), 0.0)
 
         val distance = searchCenter(
             boundingBox,
             outborder = false,
             lookRange = if (timerBoostMode == "Normal") rangeValue else randomRange,
             attackRange = if (Reach.handleEvents()) Reach.combatReach else 3f,
+            observerEyes = observerEyes,
         )
 
-        if (distance == null) {
-            player.setPosAndPrevPos(currPos, oldPos)
-            return false
-        }
-
-        player.setPosAndPrevPos(currPos, oldPos)
-
-        return true
+        return distance != null
     }
 
     /**

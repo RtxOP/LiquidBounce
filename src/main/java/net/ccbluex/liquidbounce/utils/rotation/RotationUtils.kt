@@ -247,9 +247,12 @@ object RotationUtils : MinecraftInstance, Listenable {
      * @return rotation
      */
     fun toRotation(vec: Vec3, fromEntity: Entity = mc.thePlayer): Rotation {
-        val eyesPos = fromEntity.eyes
+        return toRotation(vec, fromEntity.eyes)
+    }
 
-        val (diffX, diffY, diffZ) = vec - eyesPos
+    /** Translate a world-space point to a rotation from explicit observer-eye coordinates. */
+    fun toRotation(vec: Vec3, observerEyes: Vec3): Rotation {
+        val (diffX, diffY, diffZ) = vec - observerEyes
         return Rotation(
             MathHelper.wrapAngleTo180_float(
                 atan2(diffZ, diffX).toDegreesF() - 90f
@@ -291,6 +294,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
         targetKey: TargetPointKey? = null, targetPointVariation: Double = 0.0,
+        observerEyes: Vec3 = mc.thePlayer.eyes,
     ): Rotation? {
         val scanRange = lookRange.coerceAtLeast(attackRange)
 
@@ -300,10 +304,10 @@ object RotationUtils : MinecraftInstance, Listenable {
         if (outborder) {
             val vec3 = bb.lerpWith(nextDouble(0.5, 1.3), nextDouble(0.9, 1.3), nextDouble(0.5, 1.3))
 
-            return toRotation(vec3).fixedSensitivity()
+            return toRotation(vec3, observerEyes).fixedSensitivity()
         }
 
-        val eyes = mc.thePlayer.eyes
+        val eyes = observerEyes
 
         val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
         val nearestPoint = getNearestPointBB(eyes, bb)
@@ -318,8 +322,8 @@ object RotationUtils : MinecraftInstance, Listenable {
             )
         }?.let { bb.lerpWith(it.x, it.y, it.z) }
 
-        val preferredRotation = stickyPoint?.let { toRotation(it) }
-            ?: toRotation(nearestPoint).takeIf { distanceBasedSpot }
+        val preferredRotation = stickyPoint?.let { toRotation(it, eyes) }
+            ?: toRotation(nearestPoint, eyes).takeIf { distanceBasedSpot }
             ?: currentRotation
             ?: mc.thePlayer.rotation
 
@@ -333,7 +337,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                 for (z in hMin..hMax) {
                     val vec = bb.lerpWith(x, y, z)
 
-                    val rotation = toRotation(vec).fixedSensitivity()
+                    val rotation = toRotation(vec, eyes).fixedSensitivity()
 
                     // Calculate actual hit vec after applying fixed sensitivity to rotation
                     val gcdVec = bb.calculateIntercept(
@@ -347,7 +351,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                     if (distance > scanRange || (attackRotation != null && distance > attackRange)) continue
 
                     // Check if vec is reachable through walls
-                    if (!isVisible(gcdVec) && distance > throughWallsRange) continue
+                    if (!isVisible(gcdVec, eyes) && distance > throughWallsRange) continue
 
                     val rotationWithDiff = rotation to rotationDifference(rotation, currRotation)
 
@@ -366,7 +370,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             val vec = getNearestPointBB(eyes, bb)
             val dist = eyes.distanceTo(vec)
 
-            if (dist <= scanRange && (dist <= throughWallsRange || isVisible(vec))) toRotation(vec)
+            if (dist <= scanRange && (dist <= throughWallsRange || isVisible(vec, eyes))) toRotation(vec, eyes)
             else null
         }
     }
@@ -535,7 +539,8 @@ object RotationUtils : MinecraftInstance, Listenable {
     /**
      * Allows you to check if your enemy is behind a wall
      */
-    fun isVisible(vec3: Vec3) = mc.theWorld.rayTraceBlocks(mc.thePlayer.eyes, vec3) == null
+    fun isVisible(vec3: Vec3, observerEyes: Vec3 = mc.thePlayer.eyes) =
+        mc.theWorld.rayTraceBlocks(observerEyes, vec3) == null
 
     fun isEntityHeightVisible(entity: Entity) = arrayOf(
         entity.hitBox.center.withY(entity.hitBox.maxY), entity.hitBox.center.withY(entity.hitBox.minY)

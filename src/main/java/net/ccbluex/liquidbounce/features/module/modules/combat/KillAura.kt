@@ -874,40 +874,32 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
         }
 
         val boundingBox = predictEntityBox(entity, predictionHorizon.toDouble())
-        val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
 
         simPlayer.rotationYaw = (currentRotation ?: player.rotation).yaw
 
-        var pos = currPos
+        var pos = player.currPos
 
-        repeat(predictClientMovement) {
+        for (tick in 0 until predictClientMovement) {
             val previousPos = simPlayer.pos
 
             simPlayer.tick()
+            pos = simPlayer.pos
 
             if (predictOnlyWhenOutOfRange) {
-                player.setPosAndPrevPos(simPlayer.pos)
-
-                val currDist = player.getDistanceToEntityBox(entity)
-
-                player.setPosAndPrevPos(previousPos)
-
-                val prevDist = player.getDistanceToEntityBox(entity)
-
-                player.setPosAndPrevPos(currPos, oldPos)
-                pos = simPlayer.pos
+                val currentEyes = simPlayer.pos.addVector(0.0, player.eyeHeight.toDouble(), 0.0)
+                val previousEyes = previousPos.addVector(0.0, player.eyeHeight.toDouble(), 0.0)
+                val currDist = currentEyes.distanceTo(getNearestPointBB(currentEyes, entity.hitBox))
+                val prevDist = previousEyes.distanceTo(getNearestPointBB(previousEyes, entity.hitBox))
 
                 if (currDist <= range && currDist <= prevDist) {
-                    return@repeat
+                    break
                 }
             }
-
-            pos = previousPos
         }
 
-        player.setPosAndPrevPos(pos)
+        val observerEyes = pos.addVector(0.0, player.eyeHeight.toDouble(), 0.0)
 
         val rotation = searchCenter(
             bb = boundingBox,
@@ -920,11 +912,10 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             horizontalSearch = horizontalBodySearchRange,
             targetKey = TargetPointKey(this, entity.entityId),
             targetPointVariation = options.humanizationProfile.targetDrift,
+            observerEyes = observerEyes,
         )
 
         if (rotation == null) {
-            player.setPosAndPrevPos(currPos, oldPos)
-
             return false
         }
 
@@ -946,8 +937,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                 validity = RotationValidity.RAYCAST,
             )
         )
-
-        player.setPosAndPrevPos(currPos, oldPos)
 
         return true
     }
