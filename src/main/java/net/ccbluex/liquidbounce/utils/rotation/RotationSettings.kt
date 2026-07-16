@@ -43,6 +43,12 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     open val humanizationPathVariationValue = int(
         "HumanizationPathVariation", 6, 0..20, suffix = "%"
     ) { rotationsActive && humanizationMode == "Custom" && generalApply() }
+    open val humanizationCorrectionValue = choices(
+        "HumanizationCorrection", arrayOf("Off", "Low", "Medium", "High"), "Medium"
+    ) { rotationsActive && humanizationMode == "Custom" && generalApply() }
+    open val humanizationTargetDriftValue = int(
+        "HumanizationTargetDrift", 4, 0..20, suffix = "%"
+    ) { rotationsActive && humanizationMode == "Custom" && generalApply() }
 
     open val horizontalAngleChangeValue =
         floatRange("HorizontalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
@@ -63,6 +69,8 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     val humanizationMode by humanizationModeValue
     val humanizationResponse by humanizationResponseValue
     val humanizationPathVariation by humanizationPathVariationValue
+    val humanizationCorrection by humanizationCorrectionValue
+    val humanizationTargetDrift by humanizationTargetDriftValue
     val horizontalAngleChange by horizontalAngleChangeValue
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
@@ -79,11 +87,22 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     val humanizationProfile: HumanizationProfile
         get() {
             val response = humanizationResponse / 100.0
+            val correctionTendency = when (humanizationCorrection) {
+                "Low" -> 0.15
+                "Medium" -> 0.35
+                "High" -> 0.65
+                else -> 0.0
+            }
             return when (HumanizationMode.fromName(humanizationMode)) {
                 HumanizationMode.OFF -> HumanizationProfile.OFF
                 HumanizationMode.SUBTLE -> HumanizationProfile.subtle(response)
                 HumanizationMode.BALANCED -> HumanizationProfile.balanced(response)
-                HumanizationMode.CUSTOM -> HumanizationProfile.custom(response, humanizationPathVariation / 100.0)
+                HumanizationMode.CUSTOM -> HumanizationProfile.custom(
+                    response,
+                    humanizationPathVariation / 100.0,
+                    correctionTendency,
+                    humanizationTargetDrift / 100.0,
+                )
             }
         }
 

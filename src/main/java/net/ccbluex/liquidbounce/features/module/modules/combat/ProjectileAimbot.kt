@@ -130,7 +130,7 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
                 bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
                 horizontalSearch = horizontalBodySearchRange,
                 targetKey = TargetPointKey(this, currentTarget.entityId),
-                targetPointVariation = options.humanizationProfile.pathVariation,
+                targetPointVariation = options.humanizationProfile.targetDrift,
             )
         } ?: return@handler
 

@@ -17,6 +17,7 @@ object RotationHumanizerVerification {
     @JvmStatic
     fun main(args: Array<String>) {
         deterministicReplay()
+        customProfileControlsAreIndependent()
         shortestYawPath()
         respectsLimitsAndPitchBounds()
         sensitivityQuantizationConservesMotion()
@@ -35,6 +36,21 @@ object RotationHumanizerVerification {
         val second = collect(seed = 1234L)
 
         check(first == second) { "The same seed and inputs must produce identical trajectories" }
+    }
+
+    private fun customProfileControlsAreIndependent() {
+        val profile = HumanizationProfile.custom(
+            responseScale = 2.0,
+            pathVariation = 0.08,
+            correctionTendency = 0.6,
+            targetDrift = 0.03,
+        )
+
+        check(profile.responseScale == 1.5)
+        check(profile.pathVariation == 0.08)
+        check(profile.correctionTendency == 0.6)
+        check(profile.targetDrift == 0.03)
+        check(abs(profile.overshootScale - 0.032) <= 1.0e-12)
     }
 
     private fun shortestYawPath() {

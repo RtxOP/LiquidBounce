@@ -154,7 +154,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
                 horizontalSearch = horizontalBodySearchRange,
                 targetKey = TargetPointKey(this, entity.entityId),
-                targetPointVariation = options.humanizationProfile.pathVariation,
+                targetPointVariation = options.humanizationProfile.targetDrift,
             )
         }
 

@@ -919,7 +919,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
             horizontalSearch = horizontalBodySearchRange,
             targetKey = TargetPointKey(this, entity.entityId),
-            targetPointVariation = options.humanizationProfile.pathVariation,
+            targetPointVariation = options.humanizationProfile.targetDrift,
         )
 
         if (rotation == null) {

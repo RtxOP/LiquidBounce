@@ -29,10 +29,11 @@ The first compatibility slice is now in progress:
 - added bounded per-owner/target point state with safe-region insets and slow correlated normalized drift; repeated resolution in one tick and moving world-space boxes retain the same point;
 - added a disabled-by-default bounded telemetry trace with seed, request context, phase, deadline strategy, raw/planned/quantized angles, validity, wrapped velocity, and acceleration; existing rotation debug output exposes live validity/phase;
 - added distance-conditioned overshoot and goal-directed correction phases under one movement ID; exact actions, reset travel, and deadline-bound requests never opt into corrections, and every phase retains the configured speed caps;
+- completed the profile surface: Response is shared by presets, while Custom independently controls PathVariation, CorrectionTendency, and TargetDrift instead of coupling all imperfections to one slider;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through bounded telemetry have passed maintainer-run compilation; the contextual
-  overshoot/correction checkpoint is awaiting the next maintainer-run build and verification. The implementing agent
-  must not run Gradle.
+- all completed checkpoints through contextual overshoot/correction have passed maintainer-run compilation; the final
+  profile-surface checkpoint is awaiting the next maintainer-run build and verification. The implementing agent must
+  not run Gradle.
 
 ## Goal
 
