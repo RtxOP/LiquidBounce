@@ -12,6 +12,7 @@ import net.ccbluex.liquidbounce.features.module.modules.movement.Fly.autoFirebal
 import net.ccbluex.liquidbounce.features.module.modules.movement.Fly.options
 import net.ccbluex.liquidbounce.features.module.modules.movement.flymodes.FlyMode
 import net.ccbluex.liquidbounce.utils.block.center
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
 import net.ccbluex.liquidbounce.utils.extensions.isMoving
 import net.ccbluex.liquidbounce.utils.extensions.isNearEdge
@@ -76,6 +77,7 @@ object Fireball : FlyMode("Fireball") {
                         RotationTarget.WorldPoint(smartTarget ?: return, Fly.firePosition)
                     },
                     purpose = RotationPurpose.PROJECTILE,
+                    deadlineTick = runTimeTicks + 1,
                     validity = RotationValidity.EXACT,
                 ),
                 if (options.keepRotation) options.resetTicks else 1,

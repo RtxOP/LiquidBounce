@@ -23,9 +23,11 @@ The first compatibility slice is now in progress:
 - moved immediate/instant execution flags from shared settings into individual requests;
 - made `Rotation` immutable so constants, requests, and historical samples cannot be mutated through shared references;
 - added stateful sensitivity quantization with incremental error diffusion, target-handoff resets, camera rebasing, pitch-safe whole steps, and endpoint drift suppression;
+- added quantized validity checks for entity boxes, exact rotations, and block points/faces, including through-wall geometric validation versus exact world raycasts;
+- activated bounded deadline policy: reachable endpoints may consume at most one GCD of tolerance, while unreachable deadlines disable cosmetic pathing but retain configured speed limits;
 - added a dependency-free pure-math verification harness;
-- all completed checkpoints through the full request migration have passed maintainer-run compilation and verification;
-  the immutable-rotation and sensitivity-quantization checkpoint is awaiting the next maintainer-run build. The
+- all completed checkpoints through immutable rotations and sensitivity quantization have passed maintainer-run
+  compilation and verification; the validity/deadline checkpoint is awaiting the next maintainer-run build. The
   implementing agent must not run Gradle.
 
 ## Goal

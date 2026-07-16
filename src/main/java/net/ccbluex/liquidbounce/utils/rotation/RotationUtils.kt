@@ -18,7 +18,9 @@ import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
+import net.ccbluex.liquidbounce.utils.rotation.humanization.DeadlineStrategy
 import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
+import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationDeadlinePolicy
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.SensitivityQuantizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
@@ -60,6 +62,10 @@ object RotationUtils : MinecraftInstance, Listenable {
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
      */
     var currentRotation: Rotation? = null
+
+    /** Whether the latest quantized output satisfies the active request's declared validity policy. */
+    var activeRotationValid = false
+        private set
 
     /**
      * The last rotation that the server has received.
@@ -390,17 +396,14 @@ object RotationUtils : MinecraftInstance, Listenable {
         targetRotation: Rotation,
         settings: RotationSettings,
         request: RotationRequest? = null,
+        speedLimits: RotationSpeedLimits = resolveSpeedLimits(settings, request),
+        forceDeterministic: Boolean = false,
     ): Rotation {
         val instant = request?.instant == true
-        val (hSpeed, vSpeed) = if (instant) {
-            180f to 180f
-        } else {
-            (request?.horizontalSpeed ?: settings.horizontalSpeed) to
-                (request?.verticalSpeed ?: request?.horizontalSpeed ?: settings.verticalSpeed)
-        }
+        val (hSpeed, vSpeed) = speedLimits
 
         val profile = settings.humanizationProfile
-        if (!instant && profile.enabled) {
+        if (!instant && !forceDeterministic && profile.enabled) {
             val result = humanizer.step(
                 current = AnglePoint(currentRotation.yaw.toDouble(), currentRotation.pitch.toDouble()),
                 requestedTarget = AnglePoint(targetRotation.yaw.toDouble(), targetRotation.pitch.toDouble()),
@@ -425,6 +428,16 @@ object RotationUtils : MinecraftInstance, Listenable {
             )
         )
     }
+
+    private fun resolveSpeedLimits(settings: RotationSettings, request: RotationRequest?): RotationSpeedLimits {
+        if (request?.instant == true) return RotationSpeedLimits(180f, 180f)
+
+        val horizontal = request?.horizontalSpeed ?: settings.horizontalSpeed
+        val vertical = request?.verticalSpeed ?: request?.horizontalSpeed ?: settings.verticalSpeed
+        return RotationSpeedLimits(abs(horizontal), abs(vertical))
+    }
+
+    private data class RotationSpeedLimits(val horizontal: Float, val vertical: Float)
 
     /**
      * Calculate difference between two angle points
@@ -520,16 +533,17 @@ object RotationUtils : MinecraftInstance, Listenable {
             return
         }
 
-        if (previousRequest != null && (
-                previousRequest.owner !== request.owner ||
-                    previousRequest.purpose != request.purpose ||
-                    previousRequest.changeYaw != request.changeYaw ||
-                    previousRequest.changePitch != request.changePitch ||
-                    !sameTarget(previousRequest.target, request.target)
-                )
-        ) {
+        val requestChanged = previousRequest == null ||
+            previousRequest.owner !== request.owner ||
+            previousRequest.purpose != request.purpose ||
+            previousRequest.changeYaw != request.changeYaw ||
+            previousRequest.changePitch != request.changePitch ||
+            !sameTarget(previousRequest.target, request.target)
+
+        if (requestChanged) {
             humanizer.reset()
             sensitivityQuantizer.reset()
+            activeRotationValid = false
         }
 
         if (!options.applyServerSide && activeSettings?.applyServerSide != false) {
@@ -568,6 +582,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         activeRequest = null
         currentRotation = null
         activeSettings = null
+        activeRotationValid = false
         skipNextRotationUpdate = false
         quantizingReset = false
         humanizer.reset()
@@ -613,6 +628,48 @@ object RotationUtils : MinecraftInstance, Listenable {
         )
 
         return Rotation(quantized.yaw.toFloat(), quantized.pitch.toFloat())
+    }
+
+    private fun isRotationValid(request: RotationRequest, rotation: Rotation): Boolean {
+        if (request.validity == RotationValidity.NONE) return true
+
+        val player = mc.thePlayer ?: return false
+        val world = mc.theWorld ?: return false
+        val eyes = player.eyes
+        val direction = getVectorForRotation(rotation)
+
+        return when (val target = request.target) {
+            is RotationTarget.EntityRegion -> {
+                val box = target.box
+                val width = box.maxX - box.minX
+                val height = box.maxY - box.minY
+                val depth = box.maxZ - box.minZ
+                val reach = eyes.distanceTo(box.center) + sqrt(width * width + height * height + depth * depth) + 1.0
+                box.calculateIntercept(eyes, eyes + direction * reach) != null
+            }
+
+            is RotationTarget.WorldPoint -> {
+                val blockPos = target.blockPos
+                if (blockPos == null) {
+                    rotationDifference(rotation, toRotation(target.point)) <= getFixedAngleDelta()
+                } else {
+                    val reach = eyes.distanceTo(target.point) + 1.0
+                    val end = eyes + direction * reach
+                    val raytrace = if (request.validity == RotationValidity.EXACT) {
+                        world.rayTraceBlocks(eyes, end, false, false, true)
+                    } else {
+                        blockPos.block?.collisionRayTrace(world, blockPos, eyes, end)
+                    }
+
+                    raytrace?.blockPos == blockPos && (target.face == null || raytrace.sideHit == target.face)
+                }
+            }
+
+            is RotationTarget.ExactRotation ->
+                rotationDifference(rotation, target.rotation) <= getFixedAngleDelta()
+
+            null -> rotationDifference(rotation, request.desired) <= getFixedAngleDelta()
+        }
     }
 
     /**
@@ -662,6 +719,8 @@ object RotationUtils : MinecraftInstance, Listenable {
         val sourceRotation = if (settings.applyServerSide) currentRotation ?: serverRotation else playerRotation
 
         if (resetTicks == 0) {
+            activeRotationValid = false
+
             if (isDifferenceAcceptableForReset(sourceRotation, playerRotation, settings)) {
                 resetRotation()
                 return
@@ -688,8 +747,43 @@ object RotationUtils : MinecraftInstance, Listenable {
                 if (request?.changePitch != false) target.pitch else sourceRotation.pitch,
             )
 
-            limitAngleChange(sourceRotation, effectiveTarget, settings, request).let { rotation ->
+            val speedLimits = resolveSpeedLimits(settings, request)
+            val deadlineStrategy = request?.let {
+                RotationDeadlinePolicy.choose(
+                    current = AnglePoint(sourceRotation.yaw.toDouble(), sourceRotation.pitch.toDouble()),
+                    target = AnglePoint(effectiveTarget.yaw.toDouble(), effectiveTarget.pitch.toDouble()),
+                    maxYawStep = speedLimits.horizontal.toDouble(),
+                    maxPitchStep = speedLimits.vertical.toDouble(),
+                    sensitivityStep = getFixedAngleDelta().toDouble(),
+                    deadlineReached = it.deadlineTick?.let { deadline -> runTimeTicks >= deadline } == true,
+                )
+            } ?: DeadlineStrategy.NORMAL
+
+            val plannedRotation = when (deadlineStrategy) {
+                DeadlineStrategy.DIRECT -> {
+                    sensitivityQuantizer.reset()
+                    effectiveTarget
+                }
+                DeadlineStrategy.DETERMINISTIC -> limitAngleChange(
+                    sourceRotation,
+                    effectiveTarget,
+                    settings,
+                    request,
+                    speedLimits,
+                    forceDeterministic = true,
+                )
+                DeadlineStrategy.NORMAL -> limitAngleChange(
+                    sourceRotation,
+                    effectiveTarget,
+                    settings,
+                    request,
+                    speedLimits,
+                )
+            }
+
+            plannedRotation.let { rotation ->
                 val quantizedRotation = quantizeRotation(sourceRotation, rotation)
+                activeRotationValid = request?.let { isRotationValid(it, quantizedRotation) } ?: true
 
                 if (!settings.applyServerSide) {
                     if (request?.changeYaw != false) player.rotationYaw = quantizedRotation.yaw
@@ -756,6 +850,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         activeRequest = null
         currentRotation = null
         activeSettings = null
+        activeRotationValid = false
         skipNextRotationUpdate = false
         quantizingReset = false
         targetMotionEstimator.clear()

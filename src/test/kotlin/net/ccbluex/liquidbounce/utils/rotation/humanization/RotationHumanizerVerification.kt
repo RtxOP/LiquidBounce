@@ -20,6 +20,7 @@ object RotationHumanizerVerification {
         shortestYawPath()
         respectsLimitsAndPitchBounds()
         sensitivityQuantizationConservesMotion()
+        deadlinePolicyHonorsLimits()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
         predictionBuildsConfidenceAndRejectsTeleports()
@@ -105,6 +106,41 @@ object RotationHumanizerVerification {
         quantizer.reset()
         val pitchLimited = quantizer.quantize(AnglePoint(0.0, 89.4), AnglePoint(0.0, 100.0), step = 1.0)
         check(pitchLimited.pitch == 89.4) { "Pitch bounds must not create a fractional mouse step: $pitchLimited" }
+    }
+
+    private fun deadlinePolicyHonorsLimits() {
+        val current = AnglePoint(179.0, 0.0)
+
+        check(
+            RotationDeadlinePolicy.choose(
+                current,
+                AnglePoint(-179.0, 1.0),
+                maxYawStep = 1.0,
+                maxPitchStep = 1.0,
+                sensitivityStep = 1.0,
+                deadlineReached = false,
+            ) == DeadlineStrategy.NORMAL
+        )
+        check(
+            RotationDeadlinePolicy.choose(
+                current,
+                AnglePoint(-179.0, 1.0),
+                maxYawStep = 1.0,
+                maxPitchStep = 1.0,
+                sensitivityStep = 1.0,
+                deadlineReached = true,
+            ) == DeadlineStrategy.DIRECT
+        ) { "A deadline may snap only when the wrapped target is within the hard limits plus one GCD" }
+        check(
+            RotationDeadlinePolicy.choose(
+                current,
+                AnglePoint(-120.0, 20.0),
+                maxYawStep = 10.0,
+                maxPitchStep = 5.0,
+                sensitivityStep = 1.0,
+                deadlineReached = true,
+            ) == DeadlineStrategy.DETERMINISTIC
+        ) { "An unreachable deadline must fall back to bounded deterministic travel" }
     }
 
     private fun movingTargetDoesNotRestartEveryTick() {

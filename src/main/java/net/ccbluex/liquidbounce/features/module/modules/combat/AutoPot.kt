@@ -9,6 +9,7 @@ import net.ccbluex.liquidbounce.event.RotationUpdateEvent
 import net.ccbluex.liquidbounce.event.handler
 import net.ccbluex.liquidbounce.features.module.Category
 import net.ccbluex.liquidbounce.features.module.Module
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.extensions.sendUseItem
 import net.ccbluex.liquidbounce.utils.extensions.tryJump
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
@@ -95,6 +96,7 @@ object AutoPot : Module("AutoPot", Category.COMBAT) {
                         settings = options,
                         target = RotationTarget.ExactRotation(rotation.copy()),
                         purpose = RotationPurpose.PROJECTILE,
+                        deadlineTick = runTimeTicks,
                         validity = RotationValidity.EXACT,
                         immediate = true,
                     )
