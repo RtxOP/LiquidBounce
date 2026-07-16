@@ -1,5 +1,7 @@
 package net.ccbluex.liquidbounce.utils.rotation.humanization
 
+import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
+import net.ccbluex.liquidbounce.utils.rotation.prediction.TargetMotionEstimator
 import kotlin.math.abs
 
 /**
@@ -18,6 +20,7 @@ object RotationHumanizerVerification {
         respectsLimitsAndPitchBounds()
         movingTargetDoesNotRestartEveryTick()
         targetPointPersistsAcrossMovingBoxes()
+        predictionBuildsConfidenceAndRejectsTeleports()
     }
 
     private fun deterministicReplay() {
@@ -110,6 +113,41 @@ object RotationHumanizerVerification {
             variation = 0.0,
         )
         check(switched == NormalizedTargetPoint(0.5, 0.6, 0.5))
+    }
+
+    private fun predictionBuildsConfidenceAndRejectsTeleports() {
+        val estimator = TargetMotionEstimator()
+        var prediction = estimator.predict(
+            entityId = 4,
+            current = MotionVector(1.0, 0.0, 0.0),
+            previous = MotionVector(0.0, 0.0, 0.0),
+            tick = 1,
+            horizonTicks = 2.0,
+        )
+        check(prediction.confidence == 0.25)
+
+        for (tick in 2..4) {
+            prediction = estimator.predict(
+                entityId = 4,
+                current = MotionVector(tick.toDouble(), 0.0, 0.0),
+                previous = MotionVector((tick - 1).toDouble(), 0.0, 0.0),
+                tick = tick,
+                horizonTicks = 2.0,
+            )
+        }
+
+        check(prediction.confidence == 1.0)
+        check(prediction.offset.x in 1.99..2.01)
+
+        val afterTeleport = estimator.predict(
+            entityId = 4,
+            current = MotionVector(100.0, 0.0, 0.0),
+            previous = MotionVector(4.0, 0.0, 0.0),
+            tick = 5,
+            horizonTicks = 2.0,
+        )
+        check(afterTeleport.confidence == 0.0)
+        check(afterTeleport.offset == MotionVector.ZERO)
     }
 
     private fun collect(seed: Long): List<HumanizationStep> {

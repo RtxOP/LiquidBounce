@@ -11,6 +11,9 @@ The first compatibility slice is now in progress:
 - migrated KillAura and ProjectileAimbot to attach stable entity target metadata;
 - replaced Zig-Zag/LazyFlick candidate perturbation with a seeded sticky normalized target point;
 - removed `RandomizationSettings` and its combat-module configuration surface;
+- added bounded per-entity motion history with confidence-aware prediction and teleport/staleness resets;
+- migrated KillAura, Aimbot, and TimerRange from hard-coded prediction multipliers to an explicit 0–5 tick horizon;
+- removed the ineffective Boolean observer-prediction argument from `toRotation`/`searchCenter` and their callers;
 - added a dependency-free pure-math verification harness;
 - compilation is awaiting the maintainer-run build checkpoint; no Gradle command should be run by the implementing agent.
 

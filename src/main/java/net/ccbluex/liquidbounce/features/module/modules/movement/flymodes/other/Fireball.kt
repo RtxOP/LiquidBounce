@@ -56,7 +56,7 @@ object Fireball : FlyMode("Fireball") {
             Fly.firePosition = BlockPos(player.posX, player.posY - 1, player.posZ)
         }
 
-        val smartRotation = Fly.firePosition?.center?.let { RotationUtils.toRotation(it, false, player) }
+        val smartRotation = Fly.firePosition?.center?.let { RotationUtils.toRotation(it, player) }
         val rotation = if (Fly.pitchMode == "Custom") customRotation else smartRotation
 
         if (options.rotationsActive && rotation != null) {

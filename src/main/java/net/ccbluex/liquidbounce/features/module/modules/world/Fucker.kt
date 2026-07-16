@@ -226,7 +226,7 @@ object Fucker : Module("Fucker", Category.WORLD) {
         val targetRotation = if (options.rotationsActive) {
             currentRotation ?: player.rotation
         } else {
-            toRotation(currentPos.center, false).fixedSensitivity()
+            toRotation(currentPos.center).fixedSensitivity()
         }
 
         val raytrace = performRaytrace(currentPos, targetRotation, range) ?: return@handler

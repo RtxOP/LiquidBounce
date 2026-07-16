@@ -72,7 +72,7 @@ object AntiFireball : Module("AntiFireball", Category.PLAYER) {
             }
 
             if (options.rotationsActive) {
-                setTargetRotation(toRotation(nearestPoint, true), options = options)
+                setTargetRotation(toRotation(nearestPoint), options = options)
             }
 
             target = entity

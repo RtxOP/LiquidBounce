@@ -292,7 +292,7 @@ object AntiBot : Module("AntiBot", Category.MISC) {
 
                 if (alwaysBehind) {
                     val distance = mc.thePlayer.getDistanceToEntity(entity)
-                    val rotationToEntity = toRotation(entity.hitBox.center, false, mc.thePlayer).fixedSensitivity().yaw
+                    val rotationToEntity = toRotation(entity.hitBox.center, mc.thePlayer).fixedSensitivity().yaw
                     val angleDifferenceToEntity = abs(angleDifference(rotationToEntity, serverRotation.yaw))
 
                     if (distance < alwaysBehindRadius && angleDifferenceToEntity > behindRotDiffToIgnore) {

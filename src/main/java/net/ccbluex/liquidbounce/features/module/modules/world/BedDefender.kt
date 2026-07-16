@@ -124,7 +124,7 @@ object BedDefender : Module("BedDefender", Category.WORLD) {
             val pos = if (scannerMode == "Nearest") defenceBlocks.minByOrNull { it.distanceSq(playerPos) }
                 ?: return@handler else defenceBlocks.random()
             val blockPos = BlockPos(pos.x.toDouble(), pos.y - player.eyeHeight + 1.5, pos.z.toDouble())
-            val rotation = RotationUtils.toRotation(blockPos.center, false, player)
+            val rotation = RotationUtils.toRotation(blockPos.center, player)
             val raytrace = performBlockRaytrace(rotation, mc.playerController.blockReachDistance) ?: return@handler
 
             if (options.rotationsActive) {

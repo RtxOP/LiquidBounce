@@ -12,6 +12,7 @@ import net.ccbluex.liquidbounce.features.module.modules.render.Rotations
 import net.ccbluex.liquidbounce.utils.block.block
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.ccbluex.liquidbounce.utils.client.chat
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.client.rotation
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
@@ -23,6 +24,8 @@ import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoin
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationHumanizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
+import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
+import net.ccbluex.liquidbounce.utils.rotation.prediction.TargetMotionEstimator
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
 import net.minecraft.network.play.client.C03PacketPlayer
@@ -36,6 +39,7 @@ object RotationUtils : MinecraftInstance, Listenable {
     private val humanizationSeed = java.util.Random().nextLong()
     private val humanizer = RotationHumanizer(humanizationSeed)
     private val targetPointTracker = TargetPointTracker(humanizationSeed xor 0x5DEECE66DL)
+    private val targetMotionEstimator = TargetMotionEstimator()
 
     /**
      * Our final rotation point, which [currentRotation] follows.
@@ -210,12 +214,10 @@ object RotationUtils : MinecraftInstance, Listenable {
      * Translate vec to rotation
      *
      * @param vec     target vec
-     * @param predict predict new location of your body
      * @return rotation
      */
-    fun toRotation(vec: Vec3, predict: Boolean = false, fromEntity: Entity = mc.thePlayer): Rotation {
+    fun toRotation(vec: Vec3, fromEntity: Entity = mc.thePlayer): Rotation {
         val eyesPos = fromEntity.eyes
-        if (predict) eyesPos.addVector(fromEntity.motionX, fromEntity.motionY, fromEntity.motionZ)
 
         val (diffX, diffY, diffZ) = vec - eyesPos
         return Rotation(
@@ -227,12 +229,24 @@ object RotationUtils : MinecraftInstance, Listenable {
         )
     }
 
+    /** Predicts an entity box from bounded motion history without mutating either entity involved. */
+    fun predictEntityBox(entity: Entity, horizonTicks: Double): AxisAlignedBB {
+        val prediction = targetMotionEstimator.predict(
+            entityId = entity.entityId,
+            current = MotionVector(entity.posX, entity.posY, entity.posZ),
+            previous = MotionVector(entity.prevPosX, entity.prevPosY, entity.prevPosZ),
+            tick = runTimeTicks,
+            horizonTicks = horizonTicks,
+        )
+        val offset = prediction.offset
+        return entity.hitBox.offset(offset.x, offset.y, offset.z)
+    }
+
     /**
      * Search good center
      *
      * @param bb                entity box to search rotation for
      * @param outborder         outborder option
-     * @param predict           predict, offsets rotation by player's motion
      * @param lookRange         look range
      * @param attackRange       attack range, rotations in attack range will be prioritized
      * @param throughWallsRange through walls range,
@@ -240,7 +254,6 @@ object RotationUtils : MinecraftInstance, Listenable {
      */
     fun searchCenter(
         bb: AxisAlignedBB, distanceBasedSpot: Boolean = false, outborder: Boolean,
-        predict: Boolean,
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
         targetKey: TargetPointKey? = null, targetPointVariation: Double = 0.0,
@@ -253,7 +266,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         if (outborder) {
             val vec3 = bb.lerpWith(nextDouble(0.5, 1.3), nextDouble(0.9, 1.3), nextDouble(0.5, 1.3))
 
-            return toRotation(vec3, predict).fixedSensitivity()
+            return toRotation(vec3).fixedSensitivity()
         }
 
         val eyes = mc.thePlayer.eyes
@@ -270,8 +283,8 @@ object RotationUtils : MinecraftInstance, Listenable {
             )
         }?.let { bb.lerpWith(it.x, it.y, it.z) }
 
-        val preferredRotation = stickyPoint?.let { toRotation(it, predict) }
-            ?: toRotation(nearestPoint, predict).takeIf { distanceBasedSpot }
+        val preferredRotation = stickyPoint?.let { toRotation(it) }
+            ?: toRotation(nearestPoint).takeIf { distanceBasedSpot }
             ?: currentRotation
             ?: mc.thePlayer.rotation
 
@@ -285,7 +298,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                 for (z in hMin..hMax) {
                     val vec = bb.lerpWith(x, y, z)
 
-                    val rotation = toRotation(vec, predict).fixedSensitivity()
+                    val rotation = toRotation(vec).fixedSensitivity()
 
                     // Calculate actual hit vec after applying fixed sensitivity to rotation
                     val gcdVec = bb.calculateIntercept(
@@ -318,7 +331,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             val vec = getNearestPointBB(eyes, bb)
             val dist = eyes.distanceTo(vec)
 
-            if (dist <= scanRange && (dist <= throughWallsRange || isVisible(vec))) toRotation(vec, predict)
+            if (dist <= scanRange && (dist <= throughWallsRange || isVisible(vec))) toRotation(vec)
             else null
         }
     }
@@ -341,7 +354,7 @@ object RotationUtils : MinecraftInstance, Listenable {
      * @return difference between rotation
      */
     fun rotationDifference(entity: Entity) =
-        rotationDifference(toRotation(entity.hitBox.center, true), mc.thePlayer.rotation)
+        rotationDifference(toRotation(entity.hitBox.center), mc.thePlayer.rotation)
 
     /**
      * Calculate difference between two rotations
@@ -811,6 +824,17 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         update()
+    }
+
+    val onWorld = handler<WorldEvent> {
+        resetTicks = 0
+        targetRotation = null
+        activeRequest = null
+        currentRotation = null
+        activeSettings = null
+        targetMotionEstimator.clear()
+        targetPointTracker.reset()
+        humanizer.reset()
     }
 
     /**

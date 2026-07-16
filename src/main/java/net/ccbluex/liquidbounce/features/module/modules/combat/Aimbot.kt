@@ -17,9 +17,11 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isFaced
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performAngleChange
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.predictEntityBox
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.searchCenter
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.minecraft.entity.Entity
@@ -38,7 +40,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         "GenerateSpotBasedOnDistance", false
     ) { horizontalAim || verticalAim }
     private val predictClientMovement by int("PredictClientMovement", 2, 0..5)
-    private val predictEnemyPosition by float("PredictEnemyPosition", 1.5f, -1f..2f)
+    private val predictionHorizon by float("PredictionHorizon", 2f, 0f..5f)
 
     private val highestBodyPointToTargetValue = choices(
         "HighestBodyPointToTarget", arrayOf("Head", "Body", "Feet"), "Head"
@@ -136,9 +138,7 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
             return false
         }
 
-        val prediction = entity.currPos.subtract(entity.prevPos).times(2 + predictEnemyPosition.toDouble())
-
-        val boundingBox = entity.hitBox.offset(prediction)
+        val boundingBox = predictEntityBox(entity, predictionHorizon.toDouble())
         val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
@@ -154,17 +154,17 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         val playerRotation = player.rotation
 
         val destinationRotation = if (center) {
-            toRotation(boundingBox.center, true)
+            toRotation(boundingBox.center)
         } else {
             searchCenter(
                 boundingBox,
                 generateSpotBasedOnDistance,
                 outborder = false,
-                predict = true,
                 lookRange = range,
                 attackRange = if (Reach.handleEvents()) Reach.combatReach else 3f,
                 bodyPoints = listOf(highestBodyPointToTarget, lowestBodyPointToTarget),
-                horizontalSearch = horizontalBodySearchRange
+                horizontalSearch = horizontalBodySearchRange,
+                targetKey = TargetPointKey(this, entity.entityId),
             )
         }
 

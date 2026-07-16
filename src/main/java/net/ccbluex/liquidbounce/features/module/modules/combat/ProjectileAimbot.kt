@@ -126,7 +126,6 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
             searchCenter(
                 it,
                 outborder = false,
-                predict = true,
                 lookRange = range,
                 attackRange = range,
                 throughWallsRange = throughWallsRange,

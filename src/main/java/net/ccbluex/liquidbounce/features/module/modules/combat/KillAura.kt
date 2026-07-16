@@ -43,6 +43,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isRotationFaced
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isVisible
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.predictEntityBox
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.searchCenter
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.serverRotation
@@ -260,7 +261,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
     private val predictOnlyWhenOutOfRange by boolean(
         "PredictOnlyWhenOutOfRange", false
     ) { predictClientMovement != 0 }
-    private val predictEnemyPosition by float("PredictEnemyPosition", 1.5f, -1f..2f)
+    private val predictionHorizon by float("PredictionHorizon", 2f, 0f..5f)
 
     private val forceFirstHit by boolean("ForceFirstHit", false) { !respectMissCooldown && !useHitDelay }
 
@@ -872,9 +873,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return player.getDistanceToEntityBox(entity) <= range
         }
 
-        val prediction = entity.currPos.subtract(entity.prevPos).times(2 + predictEnemyPosition.toDouble())
-
-        val boundingBox = entity.hitBox.offset(prediction)
+        val boundingBox = predictEntityBox(entity, predictionHorizon.toDouble())
         val (currPos, oldPos) = player.currPos to player.prevPos
 
         val simPlayer = SimulatedPlayer.fromClientPlayer(RotationUtils.modifiedInput)
@@ -914,7 +913,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             bb = boundingBox,
             distanceBasedSpot = generateSpotBasedOnDistance,
             outborder = outBorder && !attackTimer.hasTimePassed(attackDelay / 2),
-            predict = false,
             lookRange = range + scanRange,
             attackRange = range,
             throughWallsRange = throughWallsRange,
@@ -1305,7 +1303,7 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
                     if (player.hurtTime > maxOwnHurtTime) return false
 
-                    val rotationToPlayer = toRotation(player.hitBox.center, true, target!!)
+                    val rotationToPlayer = toRotation(player.hitBox.center, target!!)
 
                     if (rotationDifference(rotationToPlayer, target!!.rotation) > maxDirectionDiff) return false
 
