@@ -258,7 +258,7 @@ object RotationHumanizerVerification {
         check(samples.last().yawJerk == 1.0)
         check(telemetry.latest() == samples.last())
         val csv = telemetry.toCsv()
-        check(csv.lineSequence().count() == 4)
+        check(csv.lineSequence().count { it.isNotEmpty() } == 4)
         check(csv.startsWith("tick,seed,owner,purpose,movementId"))
 
         telemetry.clear()
