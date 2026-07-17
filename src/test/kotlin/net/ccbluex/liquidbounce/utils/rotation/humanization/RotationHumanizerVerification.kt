@@ -1,5 +1,7 @@
 package net.ccbluex.liquidbounce.utils.rotation.humanization
 
+import com.google.gson.JsonObject
+import net.ccbluex.liquidbounce.utils.rotation.RotationConfigMigration
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
 import net.ccbluex.liquidbounce.utils.rotation.prediction.ProjectileInterceptSolver
 import net.ccbluex.liquidbounce.utils.rotation.prediction.TargetMotionEstimator
@@ -23,15 +25,23 @@ object RotationHumanizerVerification {
         sensitivityQuantizationConservesMotion()
         deadlinePolicyHonorsLimits()
         movementSpeedSamplesOncePerHandoff()
+        movementSpeedOverridesAreIndependent()
         telemetryIsBoundedAndWrapAware()
         overshootCorrectionIsBoundedAndContextual()
         movingTargetDoesNotRestartEveryTick()
         balancedAcquisitionIsDistanceAware()
         completedMovementTransitionsToTracking()
         retargetingKeepsAccelerationBounded()
+        requestHandoffPreservesVelocity()
+        instantTransitionRebasesVelocity()
+        continuouslyMovingTargetEntersTracking()
         targetPointPersistsAcrossMovingBoxes()
+        disablingTargetPersistenceReleasesState()
+        profileEpochReinitializesTargetPoint()
         predictionBuildsConfidenceAndRejectsTeleports()
         projectileInterceptionHandlesMotionAndFailure()
+        temporaryQuantizationPlateauPreservesResidual()
+        legacyRotationSettingsMigrate()
     }
 
     private fun deterministicReplay() {
@@ -117,7 +127,7 @@ object RotationHumanizerVerification {
         check(current.pitch in 1.5..2.5) { "Sub-step pitch motion must not be rounded away forever: $current" }
 
         repeat(5) {
-            val settled = quantizer.quantize(current, current, step = 1.0)
+            val settled = quantizer.quantize(current, current, step = 1.0, settled = true)
             check(settled == current) { "A settled endpoint must not drift from stale quantization error" }
         }
 
@@ -163,6 +173,11 @@ object RotationHumanizerVerification {
                 deadlineReached = true,
             ) == DeadlineStrategy.DETERMINISTIC
         ) { "An unreachable deadline must fall back to bounded deterministic travel" }
+
+        check(RotationDeadlinePolicy.retain(100, 105, sameMovement = true) == 100)
+        check(RotationDeadlinePolicy.retain(100, 95, sameMovement = true) == 95)
+        check(RotationDeadlinePolicy.retain(100, null, sameMovement = true) == 100)
+        check(RotationDeadlinePolicy.retain(100, 105, sameMovement = false) == 105)
     }
 
     private fun movementSpeedSamplesOncePerHandoff() {
@@ -192,6 +207,29 @@ object RotationHumanizerVerification {
         check(yawSamples == 2 && pitchSamples == 2) { "Explicit request speeds must not consume range samples" }
     }
 
+    private fun movementSpeedOverridesAreIndependent() {
+        val sampler = MovementSpeedSampler()
+        var yawSamples = 0
+        var pitchSamples = 0
+
+        val yawOnly = sampler.resolve(
+            baseYaw = { (++yawSamples * 10).toDouble() },
+            basePitch = { (++pitchSamples * 20).toDouble() },
+            overrideYaw = 37.0,
+        )
+        check(yawOnly == AngularSpeedLimits(37.0, 20.0))
+        check(yawSamples == 0 && pitchSamples == 1)
+
+        sampler.reset()
+        val pitchOnly = sampler.resolve(
+            baseYaw = { (++yawSamples * 10).toDouble() },
+            basePitch = { (++pitchSamples * 20).toDouble() },
+            overridePitch = 13.0,
+        )
+        check(pitchOnly == AngularSpeedLimits(10.0, 13.0))
+        check(yawSamples == 1 && pitchSamples == 1)
+    }
+
     private fun telemetryIsBoundedAndWrapAware() {
         val telemetry = RotationTelemetry(capacity = 3)
 
@@ -219,6 +257,9 @@ object RotationHumanizerVerification {
         check(samples.last().yawVelocity == 1.0 && samples.last().yawAcceleration == 0.0)
         check(samples.last().yawJerk == 1.0)
         check(telemetry.latest() == samples.last())
+        val csv = telemetry.toCsv()
+        check(csv.lineSequence().count() == 4)
+        check(csv.startsWith("tick,seed,owner,purpose,movementId"))
 
         telemetry.clear()
         check(telemetry.snapshot().isEmpty() && telemetry.latest() == null)
@@ -372,6 +413,97 @@ object RotationHumanizerVerification {
         }
     }
 
+    private fun requestHandoffPreservesVelocity() {
+        val engine = RotationHumanizer(74L)
+        var current = AnglePoint(0.0, 0.0)
+        var previousVelocity = AnglePoint(0.0, 0.0)
+        var previousMovementId = -1L
+
+        repeat(5) {
+            val result = engine.step(
+                current,
+                AnglePoint(90.0, 10.0),
+                maxYawSpeed = 180.0,
+                maxPitchSpeed = 180.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            previousVelocity = result.rotation - current
+            current = result.rotation
+            previousMovementId = result.movementId
+        }
+
+        engine.handoff()
+
+        val handedOff = engine.step(
+            current,
+            AnglePoint(-90.0, -10.0),
+            maxYawSpeed = 180.0,
+            maxPitchSpeed = 180.0,
+            requestedProfile = HumanizationProfile.balanced(),
+        )
+        val velocity = handedOff.rotation - current
+
+        check(handedOff.movementId == previousMovementId + 1)
+        check(abs(velocity.yaw - previousVelocity.yaw) <= 7.3)
+        check(abs(velocity.pitch - previousVelocity.pitch) <= 5.3)
+    }
+
+    private fun continuouslyMovingTargetEntersTracking() {
+        val engine = RotationHumanizer(75L)
+        var current = AnglePoint(0.0, 0.0)
+        var enteredTracking = false
+
+        repeat(40) { tick ->
+            val result = engine.step(
+                current,
+                AnglePoint(30.0 + tick * 0.5, 5.0 + tick * 0.05),
+                maxYawSpeed = 30.0,
+                maxPitchSpeed = 20.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            check(result.complete == (result.phase == MovementPhase.COMPLETE))
+            enteredTracking = enteredTracking || result.phase == MovementPhase.TRACKING
+            current = result.rotation
+        }
+
+        check(enteredTracking) { "A continuously moving target must leave acquisition and enter TRACKING" }
+    }
+
+    private fun instantTransitionRebasesVelocity() {
+        val engine = RotationHumanizer(76L)
+        var current = AnglePoint(0.0, 0.0)
+        var movementId = -1L
+
+        repeat(4) {
+            val result = engine.step(
+                current,
+                AnglePoint(-90.0, 0.0),
+                maxYawSpeed = 20.0,
+                maxPitchSpeed = 20.0,
+                requestedProfile = HumanizationProfile.balanced(),
+            )
+            current = result.rotation
+            movementId = result.movementId
+        }
+
+        val snapped = AnglePoint(45.0, 0.0)
+        engine.interrupt(snapped)
+        engine.handoff()
+        val resumed = engine.step(
+            snapped,
+            AnglePoint(30.0, 0.0),
+            maxYawSpeed = 20.0,
+            maxPitchSpeed = 20.0,
+            requestedProfile = HumanizationProfile.balanced(),
+        )
+
+        check(resumed.movementId == movementId + 1)
+        check(resumed.rotation.yaw < snapped.yaw) {
+            "Normal motion after an instant snap must move toward the new target, not inherit the snap velocity"
+        }
+        check(abs(resumed.rotation.yaw - snapped.yaw) <= 20.0)
+    }
+
     private fun targetPointPersistsAcrossMovingBoxes() {
         val tracker = TargetPointTracker(91L)
         val key = TargetPointKey("combat", 12)
@@ -417,6 +549,61 @@ object RotationHumanizerVerification {
 
         val retained = tracker.pointFor(key, fallback, 0.1..0.9, 0.5..0.9, variation = 0.04, tick = 100)
         check(retained == drifted) { "Alternating producers must retain independent target-point state" }
+    }
+
+    private fun disablingTargetPersistenceReleasesState() {
+        val tracker = TargetPointTracker(92L)
+        val key = TargetPointKey("combat", 4)
+        tracker.pointFor(
+            key,
+            NormalizedTargetPoint(0.2, 0.8, 0.2),
+            0.0..1.0,
+            0.0..1.0,
+            variation = 0.04,
+            tick = 1,
+        )
+        tracker.release(key)
+
+        val fallback = NormalizedTargetPoint(0.8, 0.4, 0.8)
+        val disabled = tracker.pointFor(key, fallback, 0.0..1.0, 0.0..1.0, variation = 0.0, tick = 2)
+        check(disabled == fallback) { "Disabling persistence must not retain a randomized point" }
+    }
+
+    private fun profileEpochReinitializesTargetPoint() {
+        val tracker = TargetPointTracker(93L)
+        val key = TargetPointKey("combat", 5)
+        val first = tracker.pointFor(
+            key,
+            NormalizedTargetPoint(0.2, 0.8, 0.2),
+            0.0..1.0,
+            0.0..1.0,
+            variation = 0.0,
+            tick = 1,
+            epoch = TargetPointEpoch(HumanizationProfile.subtle()),
+        )
+        val changed = tracker.pointFor(
+            key,
+            NormalizedTargetPoint(0.8, 0.4, 0.8),
+            0.0..1.0,
+            0.0..1.0,
+            variation = 0.0,
+            tick = 2,
+            epoch = TargetPointEpoch(HumanizationProfile.balanced()),
+        )
+
+        check(first == NormalizedTargetPoint(0.2, 0.8, 0.2))
+        check(changed == NormalizedTargetPoint(0.8, 0.4, 0.8))
+
+        val changedRange = tracker.pointFor(
+            key,
+            NormalizedTargetPoint(0.55, 0.65, 0.55),
+            0.5..0.6,
+            0.6..0.7,
+            variation = 0.0,
+            tick = 3,
+            epoch = TargetPointEpoch(HumanizationProfile.balanced()),
+        )
+        check(changedRange == NormalizedTargetPoint(0.55, 0.65, 0.55))
     }
 
     private fun predictionBuildsConfidenceAndRejectsTeleports() {
@@ -475,6 +662,8 @@ object RotationHumanizerVerification {
 
         check(movingAway.relativeIntercept.x > stationary.relativeIntercept.x)
         check(movingAway.flightTicks > stationary.flightTicks)
+        val expectedIntercept = MotionVector(10.0, 0.0, 0.0) + MotionVector(0.1, 0.0, 0.0) * movingAway.flightTicks
+        check((movingAway.relativeIntercept - expectedIntercept).length <= 0.01)
 
         val unreachable = ProjectileInterceptSolver.solve(
             relativePosition = MotionVector(10.0, 100.0, 0.0),
@@ -483,6 +672,59 @@ object RotationHumanizerVerification {
             gravity = 0.006,
         )
         check(unreachable == null)
+    }
+
+    private fun temporaryQuantizationPlateauPreservesResidual() {
+        val quantizer = SensitivityQuantizer()
+        val current = AnglePoint(0.0, 0.0)
+        val first = quantizer.quantize(current, AnglePoint(0.4, 0.0), step = 1.0)
+        check(first == current)
+
+        val plateau = quantizer.quantize(first, AnglePoint(0.4, 0.0), step = 1.0)
+        check(plateau == current)
+
+        val resumed = quantizer.quantize(plateau, AnglePoint(0.7, 0.0), step = 1.0)
+        check(resumed.yaw == 1.0) { "An active plateau must retain sub-GCD residual motion" }
+
+        quantizer.quantize(resumed, AnglePoint(0.7, 0.0), step = 1.0, settled = true)
+
+        quantizer.reset()
+        val settledSubStep = quantizer.quantize(current, AnglePoint(0.4, 0.0), step = 1.0, settled = true)
+        val afterSettle = quantizer.quantize(settledSubStep, AnglePoint(0.7, 0.0), step = 1.0)
+        check(afterSettle == settledSubStep) { "A confirmed endpoint must discard residual immediately" }
+    }
+
+    private fun legacyRotationSettingsMigrate() {
+        val aimbot = JsonObject().apply {
+            addProperty("Legitimize", true)
+            addProperty("PredictEnemyPosition", 1.5)
+        }
+        RotationConfigMigration.migrate("Aimbot", aimbot)
+        check(aimbot["Humanization"].asString == "Balanced")
+        check(aimbot["PredictionHorizon"].asDouble == 3.5)
+
+        val killAura = JsonObject().apply {
+            addProperty("RandomizationPattern", "Zig-Zag")
+        }
+        RotationConfigMigration.migrate("KillAura", killAura)
+        check(killAura["Humanization"].asString == "Balanced")
+
+        val disabled = JsonObject().apply { addProperty("Legitimize", false) }
+        RotationConfigMigration.migrate("Aimbot", disabled)
+        check(disabled["Humanization"].asString == "Off")
+
+        val current = JsonObject().apply {
+            addProperty("Humanization", "Custom")
+            addProperty("Legitimize", true)
+        }
+        RotationConfigMigration.migrate("Aimbot", current)
+        check(current["Humanization"].asString == "Custom")
+
+        val nested = JsonObject().apply {
+            add("RotationSettings", JsonObject().apply { addProperty("Legitimize", true) })
+        }
+        RotationConfigMigration.migrate("KillAura", nested)
+        check(nested["Humanization"].asString == "Balanced")
     }
 
     private fun collect(seed: Long): List<HumanizationStep> {

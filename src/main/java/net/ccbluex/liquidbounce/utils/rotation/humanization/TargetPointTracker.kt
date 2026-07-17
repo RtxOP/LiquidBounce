@@ -11,6 +11,9 @@ import kotlin.math.min
 /** Identifies a target independently from its changing world-space bounding box. */
 data class TargetPointKey(val owner: Any, val targetId: Int)
 
+/** Separates target-point state created under incompatible humanization profiles. */
+data class TargetPointEpoch(val profile: HumanizationProfile)
+
 /** Coordinates normalized to a bounding box, where each component is normally in [0, 1]. */
 data class NormalizedTargetPoint(val x: Double, val y: Double, val z: Double)
 
@@ -29,6 +32,37 @@ class TargetPointTracker(seed: Long) {
         states.clear()
     }
 
+    fun release(key: TargetPointKey) {
+        states.remove(key)
+    }
+
+    /** Replace an infeasible point with a known feasible projection from the adapter. */
+    fun replace(
+        key: TargetPointKey,
+        point: NormalizedTargetPoint,
+        horizontalRange: ClosedFloatingPointRange<Double>,
+        verticalRange: ClosedFloatingPointRange<Double>,
+        variation: Double,
+        tick: Int,
+        epoch: TargetPointEpoch? = null,
+    ) {
+        val spread = variation.coerceIn(0.0, 0.2)
+        val horizontal = safeRange(horizontalRange).inset(spread)
+        val vertical = safeRange(verticalRange).inset(spread)
+        val random = Random(seeder.nextLong())
+
+        if (states.size >= MAX_TRACKED_POINTS && key !in states) states.remove(states.keys.first())
+        states[key] = PointState(
+            point = point.clamp(horizontal, vertical),
+            lastTick = tick,
+            random = random,
+            epoch = epoch,
+            horizontalRange = horizontal,
+            verticalRange = vertical,
+            spread = spread,
+        )
+    }
+
     fun pointFor(
         key: TargetPointKey,
         fallback: NormalizedTargetPoint,
@@ -36,24 +70,36 @@ class TargetPointTracker(seed: Long) {
         verticalRange: ClosedFloatingPointRange<Double>,
         variation: Double,
         tick: Int,
+        epoch: TargetPointEpoch? = null,
     ): NormalizedTargetPoint {
         val spread = variation.coerceIn(0.0, 0.2)
         val horizontal = safeRange(horizontalRange).inset(spread)
         val vertical = safeRange(verticalRange).inset(spread)
 
-        val state = states[key] ?: Random(seeder.nextLong()).let { random ->
-            PointState(
-                point = NormalizedTargetPoint(
-                    fallback.x + random.nextGaussian() * spread,
-                    fallback.y + random.nextGaussian() * spread * 0.6,
-                    fallback.z + random.nextGaussian() * spread,
-                ).clamp(horizontal, vertical),
-                lastTick = tick,
-                random = random,
-            )
-        }.also {
+        val state = states[key]?.takeIf {
+            it.epoch == epoch && it.spread == spread &&
+                sameRange(it.horizontalRange, horizontal) && sameRange(it.verticalRange, vertical)
+        } ?: run {
+            states.remove(key)
+            val created = Random(seeder.nextLong()).let { random ->
+                PointState(
+                    point = NormalizedTargetPoint(
+                        fallback.x + random.nextGaussian() * spread,
+                        fallback.y + random.nextGaussian() * spread * 0.6,
+                        fallback.z + random.nextGaussian() * spread,
+                    ).clamp(horizontal, vertical),
+                    lastTick = tick,
+                    random = random,
+                    epoch = epoch,
+                    horizontalRange = horizontal,
+                    verticalRange = vertical,
+                    spread = spread,
+                )
+            }
+
             if (states.size >= MAX_TRACKED_POINTS) states.remove(states.keys.first())
-            states[key] = it
+            states[key] = created
+            created
         }
 
         if (tick > state.lastTick && spread > 0.0) {
@@ -100,10 +146,15 @@ class TargetPointTracker(seed: Long) {
     )
 
     private fun safeRange(range: ClosedFloatingPointRange<Double>): ClosedFloatingPointRange<Double> {
-        val start = range.start.coerceIn(0.0, 1.0)
-        val end = range.endInclusive.coerceIn(start, 1.0)
+        val start = range.start.takeIf { it.isFinite() }?.coerceIn(-0.5, 1.5) ?: 0.0
+        val end = range.endInclusive.takeIf { it.isFinite() }?.coerceIn(start, 1.5) ?: start
         return start..end
     }
+
+    private fun sameRange(
+        first: ClosedFloatingPointRange<Double>,
+        second: ClosedFloatingPointRange<Double>,
+    ) = first.start == second.start && first.endInclusive == second.endInclusive
 
     private fun ClosedFloatingPointRange<Double>.inset(variation: Double): ClosedFloatingPointRange<Double> {
         if (variation <= 0.0) return this
@@ -116,6 +167,10 @@ class TargetPointTracker(seed: Long) {
         var point: NormalizedTargetPoint,
         var lastTick: Int,
         val random: Random,
+        val epoch: TargetPointEpoch?,
+        val horizontalRange: ClosedFloatingPointRange<Double>,
+        val verticalRange: ClosedFloatingPointRange<Double>,
+        val spread: Double,
         var velocityX: Double = 0.0,
         var velocityY: Double = 0.0,
         var velocityZ: Double = 0.0,

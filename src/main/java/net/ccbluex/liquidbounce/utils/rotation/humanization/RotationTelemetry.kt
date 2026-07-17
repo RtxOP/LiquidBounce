@@ -93,6 +93,43 @@ class RotationTelemetry(private val capacity: Int = 512) {
 
     fun latest(): RotationTelemetrySample? = samples.lastOrNull()
 
+    fun toCsv(): String = buildString {
+        appendLine(
+            "tick,seed,owner,purpose,movementId,phase,deadlineStrategy," +
+                "sourceYaw,sourcePitch,targetYaw,targetPitch,plannedYaw,plannedPitch," +
+                "quantizedYaw,quantizedPitch,valid,yawVelocity,pitchVelocity," +
+                "yawAcceleration,pitchAcceleration,yawJerk,pitchJerk"
+        )
+        for (sample in samples) {
+            appendLine(
+                listOf(
+                    sample.tick,
+                    sample.seed,
+                    sample.owner,
+                    sample.purpose,
+                    sample.movementId,
+                    sample.phase,
+                    sample.deadlineStrategy,
+                    sample.source.yaw,
+                    sample.source.pitch,
+                    sample.target.yaw,
+                    sample.target.pitch,
+                    sample.planned.yaw,
+                    sample.planned.pitch,
+                    sample.quantized.yaw,
+                    sample.quantized.pitch,
+                    sample.valid,
+                    sample.yawVelocity,
+                    sample.pitchVelocity,
+                    sample.yawAcceleration,
+                    sample.pitchAcceleration,
+                    sample.yawJerk,
+                    sample.pitchJerk,
+                ).joinToString(",")
+            )
+        }
+    }
+
     fun clear() {
         samples.clear()
         previousRotation = null

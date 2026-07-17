@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performRaytrace
@@ -211,6 +212,8 @@ object Fucker : Module("Fucker", Category.WORLD) {
                     target = RotationTarget.WorldPoint(spot.vec, currentPos),
                     purpose = RotationPurpose.BLOCK_INTERACT,
                     validity = RotationValidity.RAYCAST,
+                    reach = range.toDouble(),
+                    throughWallsReach = if (throughWalls != "None") range.toDouble() else 0.0,
                 )
             )
         }
@@ -235,6 +238,8 @@ object Fucker : Module("Fucker", Category.WORLD) {
         if (obstructingPos != null) {
             currentPos = obstructingPos!!
         }
+
+        if (options.rotationsActive && !RotationUtils.isRequestValid(this)) return@handler
 
         val targetRotation = if (options.rotationsActive) {
             currentRotation ?: player.rotation

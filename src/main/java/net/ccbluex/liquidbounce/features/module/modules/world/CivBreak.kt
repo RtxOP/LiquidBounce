@@ -17,6 +17,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
@@ -71,6 +72,7 @@ object CivBreak : Module("CivBreak", Category.WORLD) {
                     target = RotationTarget.WorldPoint(spot.vec, pos),
                     purpose = RotationPurpose.BLOCK_INTERACT,
                     validity = RotationValidity.RAYCAST,
+                    reach = range.toDouble(),
                 )
             )
         }
@@ -79,6 +81,8 @@ object CivBreak : Module("CivBreak", Category.WORLD) {
     val onTick = handler<GameTickEvent> {
         blockPos ?: return@handler
         enumFacing ?: return@handler
+
+        if (options.rotationsActive && !RotationUtils.isRequestValid(this)) return@handler
 
         if (visualSwing) {
             mc.thePlayer.swingItem()

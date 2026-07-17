@@ -25,6 +25,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointEpoch
 import net.minecraft.entity.Entity
 import net.minecraft.entity.EntityLivingBase
 import net.minecraft.item.*
@@ -131,6 +132,8 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
                 horizontalSearch = horizontalBodySearchRange,
                 targetKey = TargetPointKey(this, currentTarget.entityId),
                 targetPointVariation = options.humanizationProfile.targetDrift,
+                persistentTargetPoint = options.humanizationProfile.enabled,
+                targetPointEpoch = TargetPointEpoch(options.humanizationProfile),
             )
         } ?: return@handler
 
@@ -149,7 +152,9 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
                     horizontalRange = horizontalBodySearchRange.start.toDouble()..horizontalBodySearchRange.endInclusive.toDouble(),
                 ),
                 purpose = RotationPurpose.PROJECTILE,
-                validity = RotationValidity.RAYCAST,
+                validity = if (gravityType == "Projectile") RotationValidity.BALLISTIC else RotationValidity.RAYCAST,
+                reach = range.toDouble(),
+                throughWallsReach = throughWallsRange.toDouble(),
             )
         )
     }

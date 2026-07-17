@@ -30,7 +30,7 @@ class MovementSpeedSampler {
         if (instant) return AngularSpeedLimits(180.0, 180.0)
 
         val yaw = overrideYaw ?: sampledYaw ?: abs(baseYaw()).also { sampledYaw = it }
-        val pitch = overridePitch ?: overrideYaw ?: sampledPitch ?: abs(basePitch()).also { sampledPitch = it }
+        val pitch = overridePitch ?: sampledPitch ?: abs(basePitch()).also { sampledPitch = it }
         return AngularSpeedLimits(abs(yaw), abs(pitch))
     }
 }

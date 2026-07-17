@@ -34,7 +34,7 @@ class SensitivityQuantizer {
         lastOutput = null
     }
 
-    fun quantize(current: AnglePoint, desired: AnglePoint, step: Double): AnglePoint {
+    fun quantize(current: AnglePoint, desired: AnglePoint, step: Double, settled: Boolean = false): AnglePoint {
         require(current.yaw.isFinite() && current.pitch.isFinite()) { "Current rotation must be finite" }
         require(desired.yaw.isFinite() && desired.pitch.isFinite()) { "Desired rotation must be finite" }
         require(step.isFinite() && step > 0.0) { "Sensitivity step must be positive and finite" }
@@ -57,13 +57,14 @@ class SensitivityQuantizer {
         val yawCommand = wrappedDifference(desired.yaw, previousDesired.yaw)
         val pitchCommand = desiredPitch - previousDesired.pitch
 
-        val yaw = quantizeAxis(yawCommand, yawResidual, step)
+        val yaw = quantizeAxis(yawCommand, yawResidual, step, settled = settled)
         val pitch = quantizeAxis(
             delta = pitchCommand,
             residual = pitchResidual,
             step = step,
             minimumApplied = -90.0 - current.pitch,
             maximumApplied = 90.0 - current.pitch,
+            settled = settled,
         )
         yawResidual = yaw.residual
         pitchResidual = pitch.residual
@@ -89,14 +90,21 @@ class SensitivityQuantizer {
         step: Double,
         minimumApplied: Double = Double.NEGATIVE_INFINITY,
         maximumApplied: Double = Double.POSITIVE_INFINITY,
+        settled: Boolean = false,
     ): QuantizedAxis {
-        if (abs(delta) <= 1.0e-12) return QuantizedAxis(0.0, 0.0)
+        if (abs(delta) <= 1.0e-12) {
+            return QuantizedAxis(0.0, if (settled) 0.0 else residual)
+        }
 
         val accumulated = delta + residual
         val minimumSteps = if (minimumApplied.isFinite()) ceil(minimumApplied / step) else Double.NEGATIVE_INFINITY
         val maximumSteps = if (maximumApplied.isFinite()) floor(maximumApplied / step) else Double.POSITIVE_INFINITY
         val applied = round(accumulated / step).coerceIn(minimumSteps, maximumSteps) * step
-        val nextResidual = (accumulated - applied).coerceIn(-step * 0.5, step * 0.5)
+        val nextResidual = if (settled) {
+            0.0
+        } else {
+            (accumulated - applied).coerceIn(-step * 0.5, step * 0.5)
+        }
         return QuantizedAxis(applied, nextResidual)
     }
 

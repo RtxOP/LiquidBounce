@@ -40,12 +40,15 @@ object ProjectileInterceptSolver {
 
         var flightTicks = (hypot(relativePosition.x, relativePosition.z) / projectileSpeed).coerceIn(0.0, 100.0)
 
-        for (iteration in 0 until maximumIterations.coerceIn(1, 12)) {
+        val iterations = maximumIterations.coerceIn(1, 12)
+
+        for (iteration in 0 until iterations) {
             val futurePosition = relativePosition + relativeVelocity * flightTicks
             val solution = solveStatic(futurePosition, projectileSpeed, gravity) ?: return null
 
             val nextFlightTicks = solution.flightTicks.coerceIn(0.0, 100.0)
-            if (abs(nextFlightTicks - flightTicks) < 0.01) {
+            val residual = abs(nextFlightTicks - flightTicks)
+            if (residual < CONVERGENCE_TOLERANCE) {
                 flightTicks = nextFlightTicks
                 break
             }
@@ -54,7 +57,13 @@ object ProjectileInterceptSolver {
         }
 
         val interceptPosition = relativePosition + relativeVelocity * flightTicks
-        return solveStatic(interceptPosition, projectileSpeed, gravity)
+        val solution = solveStatic(interceptPosition, projectileSpeed, gravity) ?: return null
+        val finalResidual = abs(solution.flightTicks - flightTicks)
+        if (finalResidual > MAXIMUM_ACCEPTED_RESIDUAL) return null
+
+        // The static solve can differ slightly from the fixed-point time after the finite iteration budget. Keep the
+        // returned time and target point internally consistent; the checked residual bounds the ballistic mismatch.
+        return solution.copy(flightTicks = flightTicks)
     }
 
     private fun solveStatic(
@@ -85,4 +94,7 @@ object ProjectileInterceptSolver {
             relativeIntercept = relativePosition,
         )
     }
+
+    private const val CONVERGENCE_TOLERANCE = 0.01
+    private const val MAXIMUM_ACCEPTED_RESIDUAL = 0.05
 }

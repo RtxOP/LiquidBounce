@@ -14,6 +14,7 @@ import net.ccbluex.liquidbounce.utils.attack.CPSCounter
 import net.ccbluex.liquidbounce.utils.block.BlockUtils.isBlockBBValid
 import net.ccbluex.liquidbounce.utils.block.center
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
@@ -139,7 +140,9 @@ object BedDefender : Module("BedDefender", Category.WORLD) {
                         settings = options,
                         target = RotationTarget.WorldPoint(raytrace.hitVec, raytrace.blockPos, raytrace.sideHit),
                         purpose = RotationPurpose.PLACE,
+                        deadlineTick = runTimeTicks + 1,
                         validity = RotationValidity.EXACT,
+                        reach = mc.playerController.blockReachDistance.toDouble(),
                     ),
                     if (options.keepRotation) options.resetTicks else 1,
                 )
@@ -149,6 +152,7 @@ object BedDefender : Module("BedDefender", Category.WORLD) {
 
             if (timerCounter.hasTimePassed(placeDelay)) {
                 if (!isPlaceablePos(blockPos)) return@handler
+                if (options.rotationsActive && !RotationUtils.isRequestValid(this)) return@handler
 
                 when (autoSneak.lowercase()) {
                     "normal" -> mc.gameSettings.keyBindSneak.pressed = false

@@ -79,6 +79,7 @@ object Fireball : FlyMode("Fireball") {
                     purpose = RotationPurpose.PROJECTILE,
                     deadlineTick = runTimeTicks + 1,
                     validity = RotationValidity.EXACT,
+                    reach = mc.playerController.blockReachDistance.toDouble(),
                 ),
                 if (options.keepRotation) options.resetTicks else 1,
             )
@@ -103,6 +104,10 @@ object Fireball : FlyMode("Fireball") {
             return
 
         if (Fly.wasFired) {
+            return
+        }
+
+        if (options.rotationsActive && !RotationUtils.isRequestValid(this)) {
             return
         }
 

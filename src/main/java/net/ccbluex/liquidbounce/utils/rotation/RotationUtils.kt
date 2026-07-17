@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.AnglePoint
 import net.ccbluex.liquidbounce.utils.rotation.humanization.DeadlineStrategy
+import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationProfile
 import net.ccbluex.liquidbounce.utils.rotation.humanization.MovementPhase
 import net.ccbluex.liquidbounce.utils.rotation.humanization.MovementSpeedSampler
 import net.ccbluex.liquidbounce.utils.rotation.humanization.NormalizedTargetPoint
@@ -28,6 +29,7 @@ import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationTelemetry
 import net.ccbluex.liquidbounce.utils.rotation.humanization.RotationTelemetrySample
 import net.ccbluex.liquidbounce.utils.rotation.humanization.SensitivityQuantizer
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointEpoch
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointTracker
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionVector
 import net.ccbluex.liquidbounce.utils.rotation.prediction.MotionPrediction
@@ -57,6 +59,9 @@ object RotationUtils : MinecraftInstance, Listenable {
 
     /** The rich request currently owning the global rotation pipeline. */
     private var activeRequest: RotationRequest? = null
+
+    /** Immutable profile snapshot used to detect live setting changes on a retained settings object. */
+    private var activeHumanizationProfile: HumanizationProfile? = null
 
     /** Prevents an immediate request from advancing twice in one logical rotation update. */
     private var skipNextRotationUpdate = false
@@ -294,6 +299,8 @@ object RotationUtils : MinecraftInstance, Listenable {
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
         targetKey: TargetPointKey? = null, targetPointVariation: Double = 0.0,
+        persistentTargetPoint: Boolean = false,
+        targetPointEpoch: TargetPointEpoch? = null,
         observerEyes: Vec3 = mc.thePlayer.eyes,
     ): Rotation? {
         val scanRange = lookRange.coerceAtLeast(attackRange)
@@ -301,17 +308,36 @@ object RotationUtils : MinecraftInstance, Listenable {
         val max = BodyPoint.fromString(bodyPoints[0]).range.endInclusive
         val min = BodyPoint.fromString(bodyPoints[1]).range.start
 
+        if (!persistentTargetPoint) {
+            targetKey?.let(targetPointTracker::release)
+        }
+
         if (outborder) {
-            val vec3 = bb.lerpWith(nextDouble(0.5, 1.3), nextDouble(0.9, 1.3), nextDouble(0.5, 1.3))
+            val normalized = if (persistentTargetPoint && targetKey != null) {
+                targetPointTracker.pointFor(
+                    key = targetKey,
+                    fallback = NormalizedTargetPoint(0.9, 1.1, 0.9),
+                    horizontalRange = 0.5..1.3,
+                    verticalRange = 0.9..1.3,
+                    variation = targetPointVariation,
+                    tick = runTimeTicks,
+                    epoch = targetPointEpoch,
+                )
+            } else {
+                NormalizedTargetPoint(nextDouble(0.5, 1.3), nextDouble(0.9, 1.3), nextDouble(0.5, 1.3))
+            }
+            val vec3 = bb.lerpWith(normalized.x, normalized.y, normalized.z)
 
             return toRotation(vec3, observerEyes).fixedSensitivity()
         }
 
         val eyes = observerEyes
 
-        val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
+        val hMin = horizontalSearch.start.toDouble().coerceIn(0.0, 1.0)
+        val hMax = horizontalSearch.endInclusive.toDouble().coerceIn(hMin, 1.0)
+        val scanHMax = min(hMax + 0.01, 1.0)
         val nearestPoint = getNearestPointBB(eyes, bb)
-        val stickyPoint = targetKey?.let {
+        val stickyPoint = targetKey?.takeIf { persistentTargetPoint }?.let {
             targetPointTracker.pointFor(
                 key = it,
                 fallback = normalizePoint(bb, nearestPoint),
@@ -319,6 +345,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                 verticalRange = min..max,
                 variation = targetPointVariation,
                 tick = runTimeTicks,
+                epoch = targetPointEpoch,
             )
         }?.let { bb.lerpWith(it.x, it.y, it.z) }
 
@@ -331,10 +358,36 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         var attackRotation: Pair<Rotation, Float>? = null
         var lookRotation: Pair<Rotation, Float>? = null
+        var attackPoint: NormalizedTargetPoint? = null
+        var lookPoint: NormalizedTargetPoint? = null
+        var stickyPointValid = stickyPoint == null
 
-        for (x in hMin..hMax) {
+        stickyPoint?.let { vec ->
+            val rotation = toRotation(vec, eyes).fixedSensitivity()
+            val gcdVec = bb.calculateIntercept(
+                eyes, eyes + getVectorForRotation(rotation) * scanRange.toDouble()
+            )?.hitVec
+
+            if (gcdVec != null) {
+                val normalizedHit = normalizePoint(bb, gcdVec)
+                val distance = eyes.distanceTo(gcdVec)
+                if (isWithinTargetRegion(normalizedHit, hMin..hMax, min..max) &&
+                    distance <= scanRange && (distance <= throughWallsRange || isVisible(gcdVec, eyes))
+                ) {
+                    stickyPointValid = true
+                    if (distance <= attackRange) return rotation
+                    lookRotation = rotation to 0f
+                }
+            }
+        }
+
+        if (!stickyPointValid) {
+            targetKey?.let(targetPointTracker::release)
+        }
+
+        for (x in hMin..scanHMax) {
             for (y in min..max) {
-                for (z in hMin..hMax) {
+                for (z in hMin..scanHMax) {
                     val vec = bb.lerpWith(x, y, z)
 
                     val rotation = toRotation(vec, eyes).fixedSensitivity()
@@ -343,6 +396,9 @@ object RotationUtils : MinecraftInstance, Listenable {
                     val gcdVec = bb.calculateIntercept(
                         eyes, eyes + getVectorForRotation(rotation) * scanRange.toDouble()
                     )?.hitVec ?: continue
+                    val normalizedHit = normalizePoint(bb, gcdVec)
+
+                    if (!isWithinTargetRegion(normalizedHit, hMin..hMax, min..max)) continue
 
                     val distance = eyes.distanceTo(gcdVec)
 
@@ -356,17 +412,35 @@ object RotationUtils : MinecraftInstance, Listenable {
                     val rotationWithDiff = rotation to rotationDifference(rotation, currRotation)
 
                     if (distance <= attackRange) {
-                        if (attackRotation == null || rotationWithDiff.second < attackRotation.second) attackRotation =
-                            rotationWithDiff
+                        if (attackRotation == null || rotationWithDiff.second < attackRotation.second) {
+                            attackRotation = rotationWithDiff
+                            attackPoint = normalizedHit
+                        }
                     } else {
-                        if (lookRotation == null || rotationWithDiff.second < lookRotation.second) lookRotation =
-                            rotationWithDiff
+                        if (lookRotation == null || rotationWithDiff.second < lookRotation.second) {
+                            lookRotation = rotationWithDiff
+                            lookPoint = normalizedHit
+                        }
                     }
                 }
             }
         }
 
-        return attackRotation?.first ?: lookRotation?.first ?: run {
+        val selectedRotation = attackRotation?.first ?: lookRotation?.first
+        val selectedPoint = attackPoint ?: lookPoint
+        if (!stickyPointValid && persistentTargetPoint && targetKey != null && selectedPoint != null) {
+            targetPointTracker.replace(
+                key = targetKey,
+                point = selectedPoint,
+                horizontalRange = hMin..hMax,
+                verticalRange = min..max,
+                variation = targetPointVariation,
+                tick = runTimeTicks,
+                epoch = targetPointEpoch,
+            )
+        }
+
+        return selectedRotation ?: run {
             val vec = getNearestPointBB(eyes, bb)
             val dist = eyes.distanceTo(vec)
 
@@ -385,6 +459,12 @@ object RotationUtils : MinecraftInstance, Listenable {
             normalize(point.zCoord, box.minZ, box.maxZ),
         )
     }
+
+    private fun isWithinTargetRegion(
+        point: NormalizedTargetPoint,
+        horizontalRange: ClosedFloatingPointRange<Double>,
+        verticalRange: ClosedFloatingPointRange<Double>,
+    ) = point.x in horizontalRange && point.z in horizontalRange && point.y in verticalRange
 
     /**
      * Calculate difference between the client rotation and your entity
@@ -426,6 +506,11 @@ object RotationUtils : MinecraftInstance, Listenable {
                 requestedProfile = profile,
                 allowCorrections = request?.deadlineTick == null && request?.validity != RotationValidity.EXACT &&
                     (request?.purpose == RotationPurpose.COMBAT_TRACK || request?.purpose == RotationPurpose.PROJECTILE),
+                requestedPurpose = request?.purpose ?: RotationPurpose.RESET,
+                targetWidth = request?.let(::targetAngularWidth)
+                    ?: RotationHumanizer.DEFAULT_TARGET_WIDTH,
+                remainingDeadlineTicks = request?.deadlineTick?.minus(runTimeTicks)?.coerceAtLeast(0),
+                completionTolerance = getFixedAngleDelta().toDouble(),
             )
 
             lastMovementId = result.movementId
@@ -433,6 +518,8 @@ object RotationUtils : MinecraftInstance, Listenable {
 
             return Rotation(result.rotation.yaw.toFloat(), result.rotation.pitch.toFloat())
         }
+
+        humanizer.observe(AnglePoint(currentRotation.yaw.toDouble(), currentRotation.pitch.toDouble()))
 
         val (yawDiff, pitchDiff) = angleDifferences(targetRotation, currentRotation)
         val difference = hypot(yawDiff, pitchDiff)
@@ -469,6 +556,25 @@ object RotationUtils : MinecraftInstance, Listenable {
     }
 
     private data class RotationSpeedLimits(val horizontal: Float, val vertical: Float)
+
+    private fun targetAngularWidth(request: RotationRequest): Double {
+        val eyes = request.observerOrigin ?: mc.thePlayer?.eyes ?: return RotationHumanizer.DEFAULT_TARGET_WIDTH
+        return when (val target = request.target) {
+            is RotationTarget.EntityRegion -> {
+                val box = target.box
+                val distance = eyes.distanceTo(box.center).coerceAtLeast(0.01)
+                val horizontalWidth = max(box.maxX - box.minX, box.maxZ - box.minZ) *
+                    (target.horizontalRange.endInclusive - target.horizontalRange.start).coerceAtLeast(0.0)
+                val verticalWidth = (box.maxY - box.minY) *
+                    (target.bodyRange.endInclusive - target.bodyRange.start).coerceAtLeast(0.0)
+                val effectiveWidth = max(horizontalWidth, verticalWidth).coerceAtLeast(0.01)
+                Math.toDegrees(2.0 * atan(effectiveWidth / (2.0 * distance)))
+            }
+
+            is RotationTarget.WorldPoint, is RotationTarget.ExactRotation -> getFixedAngleDelta().toDouble()
+            null -> RotationHumanizer.DEFAULT_TARGET_WIDTH
+        }
+    }
 
     /**
      * Calculate difference between two angle points
@@ -561,23 +667,39 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         val previousRequest = activeRequest
+        val requestedProfile = options.humanizationProfile
         if (request.priority < (previousRequest?.priority ?: 0)) {
+            (request.target as? RotationTarget.EntityRegion)?.let {
+                targetPointTracker.release(TargetPointKey(request.owner, it.entityId))
+            }
             return
         }
 
-        val requestChanged = previousRequest == null ||
+        val targetChanged = previousRequest == null || previousRequest.owner !== request.owner ||
+            !sameTarget(previousRequest.target, request.target)
+        val requestChanged = quantizingReset || previousRequest == null ||
             previousRequest.owner !== request.owner ||
             previousRequest.purpose != request.purpose ||
             previousRequest.settings !== request.settings ||
             previousRequest.changeYaw != request.changeYaw ||
             previousRequest.changePitch != request.changePitch ||
-            !sameTarget(previousRequest.target, request.target)
+            previousRequest.instant != request.instant ||
+            activeHumanizationProfile != requestedProfile ||
+            targetChanged
 
         if (requestChanged) {
-            humanizer.reset()
+            humanizer.handoff()
             sensitivityQuantizer.reset()
             movementSpeedSampler.reset()
             activeRotationValid = false
+        }
+
+        if (targetChanged) {
+            previousRequest?.let { previous ->
+                (previous.target as? RotationTarget.EntityRegion)?.let { target ->
+                    targetPointTracker.release(TargetPointKey(previous.owner, target.entityId))
+                }
+            }
         }
 
         if (!options.applyServerSide && activeSettings?.applyServerSide != false) {
@@ -586,10 +708,16 @@ object RotationUtils : MinecraftInstance, Listenable {
                 mc.thePlayer.rotationPitch = it.pitch
             }
 
-            resetRotation()
+            resetRotation(preserveKinematics = true)
         }
 
-        activeRequest = request.copy(desired = rotation.copy())
+        val retainedDeadline = RotationDeadlinePolicy.retain(
+            previous = previousRequest?.deadlineTick,
+            requested = request.deadlineTick,
+            sameMovement = !requestChanged,
+        )
+        activeRequest = request.copy(desired = rotation.copy(), deadlineTick = retainedDeadline)
+        activeHumanizationProfile = requestedProfile
         targetRotation = activeRequest?.desired
 
         resetTicks = if (!options.applyServerSide || !options.resetTicksValue.isSupported()) 1 else ticks
@@ -604,7 +732,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
     }
 
-    private fun resetRotation() {
+    private fun resetRotation(preserveKinematics: Boolean = false) {
         resetTicks = 0
         currentRotation?.let { (yaw, _) ->
             mc.thePlayer?.let {
@@ -614,15 +742,20 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
         targetRotation = null
         activeRequest = null
+        activeHumanizationProfile = null
         currentRotation = null
         activeSettings = null
         activeRotationValid = false
         skipNextRotationUpdate = false
         quantizingReset = false
-        humanizer.reset()
+        if (preserveKinematics) {
+            humanizer.handoff()
+        } else {
+            humanizer.reset()
+            targetPointTracker.reset()
+        }
         sensitivityQuantizer.reset()
         movementSpeedSampler.reset()
-        targetPointTracker.reset()
     }
 
     private fun sameTarget(first: RotationTarget?, second: RotationTarget?): Boolean {
@@ -655,11 +788,12 @@ object RotationUtils : MinecraftInstance, Listenable {
     fun getFixedSensitivityAngle(targetAngle: Float, startAngle: Float = 0f, gcd: Float = getFixedAngleDelta()) =
         startAngle + ((targetAngle - startAngle) / gcd).roundToInt() * gcd
 
-    private fun quantizeRotation(current: Rotation, desired: Rotation): Rotation {
+    private fun quantizeRotation(current: Rotation, desired: Rotation, settled: Boolean = false): Rotation {
         val quantized = sensitivityQuantizer.quantize(
             current = AnglePoint(current.yaw.toDouble(), current.pitch.toDouble()),
             desired = AnglePoint(desired.yaw.toDouble(), desired.pitch.toDouble()),
             step = getFixedAngleDelta().toDouble(),
+            settled = settled,
         )
 
         return Rotation(quantized.yaw.toFloat(), quantized.pitch.toFloat())
@@ -668,19 +802,45 @@ object RotationUtils : MinecraftInstance, Listenable {
     private fun isRotationValid(request: RotationRequest, rotation: Rotation): Boolean {
         if (request.validity == RotationValidity.NONE) return true
 
+        if (request.validity == RotationValidity.BALLISTIC) {
+            val entityTarget = request.target as? RotationTarget.EntityRegion ?: return false
+            val world = mc.theWorld ?: return false
+            return world.getEntityByID(entityTarget.entityId) != null &&
+                rotationDifference(rotation, request.desired) <= getFixedAngleDelta()
+        }
+
         val player = mc.thePlayer ?: return false
         val world = mc.theWorld ?: return false
-        val eyes = player.eyes
+        val eyes = request.observerOrigin ?: player.eyes
         val direction = getVectorForRotation(rotation)
 
         return when (val target = request.target) {
             is RotationTarget.EntityRegion -> {
+                if (world.getEntityByID(target.entityId) == null) return false
+
                 val box = target.box
+                val horizontalStart = target.horizontalRange.start.coerceIn(0.0, 1.0)
+                val horizontalEnd = target.horizontalRange.endInclusive.coerceIn(horizontalStart, 1.0)
+                val bodyStart = target.bodyRange.start.coerceIn(0.0, 1.0)
+                val bodyEnd = target.bodyRange.endInclusive.coerceIn(bodyStart, 1.0)
                 val width = box.maxX - box.minX
                 val height = box.maxY - box.minY
                 val depth = box.maxZ - box.minZ
-                val reach = eyes.distanceTo(box.center) + sqrt(width * width + height * height + depth * depth) + 1.0
-                box.calculateIntercept(eyes, eyes + direction * reach) != null
+                val allowedBox = AxisAlignedBB(
+                    box.minX + width * horizontalStart,
+                    box.minY + height * bodyStart,
+                    box.minZ + depth * horizontalStart,
+                    box.minX + width * horizontalEnd,
+                    box.minY + height * bodyEnd,
+                    box.minZ + depth * horizontalEnd,
+                )
+                val reach = request.reach ?: (
+                    eyes.distanceTo(box.center) + sqrt(width * width + height * height + depth * depth) + 1.0
+                )
+                val hit = allowedBox.calculateIntercept(eyes, eyes + direction * reach)?.hitVec ?: return false
+
+                val distance = eyes.distanceTo(hit)
+                distance <= reach && (distance <= request.throughWallsReach || isVisible(hit, eyes))
             }
 
             is RotationTarget.WorldPoint -> {
@@ -688,12 +848,21 @@ object RotationUtils : MinecraftInstance, Listenable {
                 if (blockPos == null) {
                     rotationDifference(rotation, toRotation(target.point)) <= getFixedAngleDelta()
                 } else {
-                    val reach = eyes.distanceTo(target.point) + 1.0
+                    val reach = request.reach ?: (eyes.distanceTo(target.point) + 1.0)
                     val end = eyes + direction * reach
-                    val raytrace = if (request.validity == RotationValidity.EXACT) {
-                        world.rayTraceBlocks(eyes, end, false, false, true)
-                    } else {
-                        blockPos.block?.collisionRayTrace(world, blockPos, eyes, end)
+                    val raytrace = when (request.validity) {
+                        RotationValidity.EXACT -> world.rayTraceBlocks(eyes, end, false, false, true)
+                        RotationValidity.RAYCAST -> {
+                            val targetHit = blockPos.block?.collisionRayTrace(world, blockPos, eyes, end)
+                                ?: return false
+                            val distance = eyes.distanceTo(targetHit.hitVec)
+                            if (distance > request.throughWallsReach) {
+                                val obstruction = world.rayTraceBlocks(eyes, targetHit.hitVec, false, false, true)
+                                if (obstruction != null && obstruction.blockPos != blockPos) return false
+                            }
+                            targetHit
+                        }
+                        else -> null
                     }
 
                     raytrace?.blockPos == blockPos && (target.face == null || raytrace.sideHit == target.face)
@@ -707,7 +876,15 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
     }
 
+    /** True only when [owner] still owns the active request and its latest quantized output is valid. */
+    fun isRequestValid(owner: Any): Boolean = activeRequest?.owner === owner && activeRotationValid
+
+    /** True while [owner] still owns the request, independently of whether its latest output is valid. */
+    fun ownsActiveRequest(owner: Any): Boolean = activeRequest?.owner === owner
+
     fun telemetrySnapshot(): List<RotationTelemetrySample> = telemetry.snapshot()
+
+    fun telemetryCsv(): String = telemetry.toCsv()
 
     private fun recordTelemetry(
         request: RotationRequest?,
@@ -797,6 +974,8 @@ object RotationUtils : MinecraftInstance, Listenable {
 
             if (!quantizingReset) {
                 sensitivityQuantizer.reset()
+                movementSpeedSampler.reset()
+                humanizer.handoff()
                 quantizingReset = true
             }
 
@@ -862,7 +1041,17 @@ object RotationUtils : MinecraftInstance, Listenable {
             }
 
             plannedRotation.let { rotation ->
-                val quantizedRotation = quantizeRotation(sourceRotation, rotation)
+                val quantizedRotation = quantizeRotation(
+                    sourceRotation,
+                    rotation,
+                    settled = lastMovementPhase == MovementPhase.COMPLETE,
+                )
+                if (request?.instant == true || deadlineStrategy == DeadlineStrategy.DIRECT) {
+                    humanizer.interrupt(
+                        AnglePoint(quantizedRotation.yaw.toDouble(), quantizedRotation.pitch.toDouble())
+                    )
+                    lastMovementPhase = MovementPhase.COMPLETE
+                }
                 activeRotationValid = request?.let { isRotationValid(it, quantizedRotation) } ?: true
                 recordTelemetry(
                     request,
@@ -937,6 +1126,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         resetTicks = 0
         targetRotation = null
         activeRequest = null
+        activeHumanizationProfile = null
         currentRotation = null
         activeSettings = null
         activeRotationValid = false
@@ -987,7 +1177,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             chat(
                 "PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}, " +
                     "VALID: ${sample?.valid}, PHASE: ${sample?.phase}, " +
-                    "MOVE: ${sample?.movementId}, PURPOSE: ${sample?.purpose}, " +
+                    "MOVE: ${sample?.movementId}, PURPOSE: ${sample?.purpose}, SEED: ${sample?.seed}, " +
                     "VEL: ${sample?.yawVelocity}/${sample?.pitchVelocity}, " +
                     "ACC: ${sample?.yawAcceleration}/${sample?.pitchAcceleration}, " +
                     "JERK: ${sample?.yawJerk}/${sample?.pitchJerk}"

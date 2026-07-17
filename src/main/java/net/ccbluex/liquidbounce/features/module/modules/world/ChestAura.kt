@@ -24,6 +24,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getVectorForRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performRayTrace
@@ -165,6 +166,8 @@ object ChestAura : Module("ChestAura", Category.WORLD) {
                             target = RotationTarget.WorldPoint(it.clickPoint, it.entity.pos),
                             purpose = RotationPurpose.BLOCK_INTERACT,
                             validity = RotationValidity.RAYCAST,
+                            reach = range.toDouble(),
+                            throughWallsReach = if (throughWalls) wallsRange.toDouble() else 0.0,
                         )
                     )
                 }
@@ -285,6 +288,8 @@ object ChestAura : Module("ChestAura", Category.WORLD) {
     val onTick = handler<GameTickEvent> {
         val player = mc.thePlayer ?: return@handler
         val target = tileTarget ?: return@handler
+
+        if (options.rotationsActive && !RotationUtils.isRequestValid(this)) return@handler
 
         val rotationToUse = if (options.rotationsActive) {
             currentRotation ?: return@handler

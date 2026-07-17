@@ -57,6 +57,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointEpoch
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
@@ -724,6 +725,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return
         }
 
+        if (options.rotationsActive && !RotationUtils.isRequestValid(this)) return
+
         // Close inventory when open
         if (manipulateInventory && isFirstClick) serverOpenInventory = false
 
@@ -928,6 +931,8 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             horizontalSearch = horizontalBodySearchRange,
             targetKey = TargetPointKey(this, entity.entityId),
             targetPointVariation = options.humanizationProfile.targetDrift,
+            persistentTargetPoint = options.humanizationProfile.enabled,
+            targetPointEpoch = TargetPointEpoch(options.humanizationProfile),
             observerEyes = observerEyes,
         )
 
@@ -951,6 +956,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
                 ),
                 purpose = RotationPurpose.COMBAT_TRACK,
                 validity = RotationValidity.RAYCAST,
+                reach = (range + scanRange).toDouble(),
+                throughWallsReach = throughWallsRange.toDouble(),
+                observerOrigin = observerEyes,
             )
         )
 

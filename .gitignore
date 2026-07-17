@@ -1,6 +1,8 @@
 /run/
 /out/
 /logs/
+latest.log
+*.log
 /build/
 /bin/
 /.settings/

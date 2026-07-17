@@ -17,6 +17,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isRotationFaced
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
@@ -89,6 +90,7 @@ object AntiFireball : Module("AntiFireball", Category.PLAYER) {
                         ),
                         purpose = RotationPurpose.COMBAT_TRACK,
                         validity = RotationValidity.RAYCAST,
+                        reach = range.toDouble(),
                     )
                 )
             }
@@ -180,8 +182,8 @@ object AntiFireball : Module("AntiFireball", Category.PLAYER) {
         val entity = target ?: return@handler
         val rotation = currentRotation ?: player.rotation
 
-        if (!options.rotationsActive && player.getDistanceToBox(entity.hitBox) <= range
-            || isRotationFaced(entity, range.toDouble(), rotation)
+        if (!options.rotationsActive && player.getDistanceToBox(entity.hitBox) <= range ||
+            RotationUtils.isRequestValid(this) && isRotationFaced(entity, range.toDouble(), rotation)
         ) {
             player.attackEntityWithModifiedSprint(entity) {
                 when (swing) {

@@ -5,6 +5,7 @@
  */
 package net.ccbluex.liquidbounce.utils.rotation.humanization
 
+import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import java.util.Random
 import kotlin.math.PI
 import kotlin.math.abs
@@ -74,6 +75,9 @@ class RotationHumanizer(seed: Long) {
     private var preferredPitchSpeed = 180.0
     private var yawAcceleration = 180.0
     private var pitchAcceleration = 180.0
+    private var targetWidthDegrees = DEFAULT_TARGET_WIDTH
+    private var cosmeticsEnabled = true
+    private var endpointTolerance = MINIMUM_ENDPOINT_TOLERANCE
     private var drift = 0.0
     private var profile = HumanizationProfile.OFF
     private var phase = MovementPhase.COMPLETE
@@ -90,6 +94,44 @@ class RotationHumanizer(seed: Long) {
         stableTargetTicks = 0
     }
 
+    /**
+     * Ends the current logical movement without discarding the last observed input sample.
+     *
+     * The next [step] can therefore recover the actual quantized outgoing velocity and start a new movement with a
+     * continuous handoff. World/session teardown must use [reset] instead.
+     */
+    fun handoff() {
+        active = false
+        tick = 0
+        drift = 0.0
+        targetVelocity = AnglePoint(0.0, 0.0)
+        stableTargetTicks = 0
+        phase = MovementPhase.COMPLETE
+    }
+
+    /** Observe a deterministic/instant pipeline tick so a later humanized handoff starts from real packet motion. */
+    fun observe(current: AnglePoint) {
+        synchronizeVelocity(current)
+        active = false
+        phase = MovementPhase.COMPLETE
+    }
+
+    /**
+     * Rebase after an explicitly discontinuous instant/direct output.
+     *
+     * The snap is a functional exception, not a mouse velocity that a following normal movement should inherit.
+     */
+    fun interrupt(current: AnglePoint) {
+        active = false
+        tick = 0
+        drift = 0.0
+        previousInput = current
+        velocity = AnglePoint(0.0, 0.0)
+        targetVelocity = AnglePoint(0.0, 0.0)
+        stableTargetTicks = 0
+        phase = MovementPhase.COMPLETE
+    }
+
     fun step(
         current: AnglePoint,
         requestedTarget: AnglePoint,
@@ -97,6 +139,10 @@ class RotationHumanizer(seed: Long) {
         maxPitchSpeed: Double,
         requestedProfile: HumanizationProfile,
         allowCorrections: Boolean = false,
+        requestedPurpose: RotationPurpose = RotationPurpose.GENERIC,
+        targetWidth: Double = DEFAULT_TARGET_WIDTH,
+        remainingDeadlineTicks: Int? = null,
+        completionTolerance: Double = MINIMUM_ENDPOINT_TOLERANCE,
     ): HumanizationStep {
         require(current.yaw.isFinite() && current.pitch.isFinite()) { "Current rotation must be finite" }
         require(requestedTarget.yaw.isFinite() && requestedTarget.pitch.isFinite()) { "Target rotation must be finite" }
@@ -117,9 +163,23 @@ class RotationHumanizer(seed: Long) {
         synchronizeVelocity(current)
 
         if (!active || requestedProfile != profile) {
-            begin(current, target, yawSpeed, pitchSpeed, requestedProfile, allowCorrections)
+            begin(
+                current,
+                target,
+                yawSpeed,
+                pitchSpeed,
+                requestedProfile,
+                allowCorrections,
+                requestedPurpose,
+                targetWidth,
+                remainingDeadlineTicks,
+                completionTolerance,
+            )
         } else {
-            updateLimits(yawSpeed, pitchSpeed, requestedProfile)
+            targetWidthDegrees = targetWidth.coerceIn(MINIMUM_TARGET_WIDTH, MAXIMUM_TARGET_WIDTH)
+            cosmeticsEnabled = remainingDeadlineTicks == null
+            endpointTolerance = completionTolerance.coerceIn(MINIMUM_ENDPOINT_TOLERANCE, MAXIMUM_ENDPOINT_TOLERANCE)
+            updateLimits(yawSpeed, pitchSpeed, requestedProfile, requestedPurpose)
             correctionsAllowed = allowCorrections
             val targetDelta = updateTargetMotion(target)
 
@@ -127,9 +187,13 @@ class RotationHumanizer(seed: Long) {
                 phase = MovementPhase.TRACKING
             }
 
+            if (phase == MovementPhase.SETTLE && !isStationary(targetDelta)) {
+                phase = MovementPhase.TRACKING
+            }
+
             if (phase == MovementPhase.COMPLETE || phase == MovementPhase.TRACKING) {
                 if (phase == MovementPhase.COMPLETE && isStationary(targetDelta) &&
-                    distanceBetween(current, target) <= ENDPOINT_EPSILON
+                    distanceBetween(current, target) <= endpointTolerance
                 ) {
                     velocity = AnglePoint(0.0, 0.0)
                     lastPlanned = current
@@ -144,6 +208,10 @@ class RotationHumanizer(seed: Long) {
             retarget(target)
         }
 
+        remainingDeadlineTicks?.let { remaining ->
+            durationTicks = minOf(durationTicks, tick + remaining.coerceAtLeast(1))
+        }
+
         tick++
         val progress = (tick.toDouble() / durationTicks).coerceIn(0.0, 1.0)
         val time = minimumJerk(progress)
@@ -151,7 +219,7 @@ class RotationHumanizer(seed: Long) {
 
         val direction = goal - start
         val length = hypot(direction.yaw, direction.pitch)
-        if (length > 1.0e-9 && profile.driftScale > 0.0 && progress < 1.0) {
+        if (cosmeticsEnabled && length > 1.0e-9 && profile.driftScale > 0.0 && progress < 1.0) {
             val phaseDriftScale = if (phase == MovementPhase.CORRECTION) 0.25 else 1.0
             drift = drift * 0.72 + random.nextGaussian() * profile.driftScale * phaseDriftScale
             val envelope = sin(PI * progress)
@@ -168,31 +236,40 @@ class RotationHumanizer(seed: Long) {
 
         val remainingToPhaseGoal = goal - desired
         val phaseGoalReached = progress >= 1.0 &&
-            abs(remainingToPhaseGoal.yaw) <= 1.0e-6 &&
-            abs(remainingToPhaseGoal.pitch) <= 1.0e-6
+            abs(remainingToPhaseGoal.yaw) <= endpointTolerance &&
+            abs(remainingToPhaseGoal.pitch) <= endpointTolerance
 
-        if (phase == MovementPhase.OVERSHOOT && phaseGoalReached) {
+        if (phase == MovementPhase.OVERSHOOT && progress >= 1.0) {
             val emittedPhase = phase
             beginCorrection(desired)
             return HumanizationStep(desired, emittedPhase, movementId, complete = false)
         }
 
         val remaining = finalGoal - desired
-        val complete = phaseGoalReached && abs(remaining.yaw) <= 1.0e-6 && abs(remaining.pitch) <= 1.0e-6
+        val endpointReached = phaseGoalReached &&
+            abs(remaining.yaw) <= endpointTolerance && abs(remaining.pitch) <= endpointTolerance
         val emittedPhase = when {
-            complete && stableTargetTicks >= STABLE_TARGET_TICKS -> {
+            endpointReached && targetIsStable() -> {
                 phase = MovementPhase.COMPLETE
                 MovementPhase.COMPLETE
             }
-            complete -> {
+            progress >= 1.0 && !targetIsStable() -> {
                 phase = MovementPhase.TRACKING
                 MovementPhase.TRACKING
             }
-            progress >= 1.0 && phase == MovementPhase.PRIMARY -> MovementPhase.SETTLE
+            progress >= 1.0 && (phase == MovementPhase.PRIMARY || phase == MovementPhase.CORRECTION) -> {
+                phase = MovementPhase.SETTLE
+                MovementPhase.SETTLE
+            }
             else -> phase
         }
 
-        return HumanizationStep(desired, emittedPhase, movementId, complete)
+        return HumanizationStep(
+            desired,
+            emittedPhase,
+            movementId,
+            complete = emittedPhase == MovementPhase.COMPLETE,
+        )
     }
 
     private fun begin(
@@ -202,6 +279,10 @@ class RotationHumanizer(seed: Long) {
         maxPitchSpeed: Double,
         requestedProfile: HumanizationProfile,
         allowCorrections: Boolean,
+        requestedPurpose: RotationPurpose,
+        targetWidth: Double,
+        remainingDeadlineTicks: Int?,
+        completionTolerance: Double,
     ) {
         val incomingVelocity = velocity
 
@@ -220,12 +301,20 @@ class RotationHumanizer(seed: Long) {
         lastTarget = target
         targetVelocity = AnglePoint(0.0, 0.0)
         stableTargetTicks = 1
-        updateLimits(maxYawSpeed, maxPitchSpeed, requestedProfile)
+        targetWidthDegrees = targetWidth.coerceIn(MINIMUM_TARGET_WIDTH, MAXIMUM_TARGET_WIDTH)
+        cosmeticsEnabled = remainingDeadlineTicks == null
+        endpointTolerance = completionTolerance.coerceIn(MINIMUM_ENDPOINT_TOLERANCE, MAXIMUM_ENDPOINT_TOLERANCE)
+        updateLimits(maxYawSpeed, maxPitchSpeed, requestedProfile, requestedPurpose)
         phase = MovementPhase.PRIMARY
 
         var delta = goal - start
         val distance = hypot(delta.yaw, delta.pitch)
-        durationTicks = planDuration(delta, requestedProfile.minimumCurveTicks, 40)
+        durationTicks = planDuration(
+            delta,
+            requestedProfile.minimumCurveTicks,
+            40,
+            remainingDeadlineTicks,
+        )
 
         val correctionProbability = if (requestedProfile.correctionTendency >= 1.0) {
             1.0
@@ -233,7 +322,7 @@ class RotationHumanizer(seed: Long) {
             requestedProfile.correctionTendency * (distance / (distance + 30.0)) *
                 ((durationTicks - 2) / 6.0).coerceIn(0.0, 1.0)
         }
-        if (allowCorrections && distance >= 15.0 && durationTicks >= 4 &&
+        if (cosmeticsEnabled && allowCorrections && distance >= 15.0 && durationTicks >= 4 &&
             random.nextDouble() < correctionProbability
         ) {
             val magnitude = minOf(2.0, distance * requestedProfile.overshootScale) *
@@ -256,7 +345,11 @@ class RotationHumanizer(seed: Long) {
         val pathDistance = hypot(delta.yaw, delta.pitch)
         val normal = AnglePoint(-delta.pitch / pathDistance, delta.yaw / pathDistance)
         val side = if (random.nextBoolean()) 1.0 else -1.0
-        val variation = distance * requestedProfile.pathVariation * (0.55 + random.nextDouble() * 0.45) * side
+        val variation = if (cosmeticsEnabled) {
+            distance * requestedProfile.pathVariation * (0.55 + random.nextDouble() * 0.45) * side
+        } else {
+            0.0
+        }
         control1 = start + delta * (1.0 / 3.0) + normal * variation + incomingVelocity
         control2 = start + delta * (2.0 / 3.0) + normal * (variation * (0.35 + random.nextDouble() * 0.25))
     }
@@ -294,9 +387,7 @@ class RotationHumanizer(seed: Long) {
             trackingVelocity(error.yaw, targetVelocity.yaw, preferredYawSpeed),
             trackingVelocity(error.pitch, targetVelocity.pitch, preferredPitchSpeed),
         )
-        val targetIsStable = stableTargetTicks >= STABLE_TARGET_TICKS &&
-            abs(targetVelocity.yaw) <= TARGET_MOTION_EPSILON &&
-            abs(targetVelocity.pitch) <= TARGET_MOTION_EPSILON
+        val targetIsStable = targetIsStable()
         val nextVelocity = AnglePoint(
             approachTrackingAxis(error.yaw, velocity.yaw, desiredVelocity.yaw, yawAcceleration, plannedYawSpeed,
                 targetIsStable),
@@ -310,8 +401,8 @@ class RotationHumanizer(seed: Long) {
         previousPlanned = lastPlanned
         lastPlanned = next
 
-        val complete = targetIsStable && distanceBetween(next, target) <= ENDPOINT_EPSILON &&
-            abs(velocity.yaw) <= ENDPOINT_EPSILON && abs(velocity.pitch) <= ENDPOINT_EPSILON
+        val complete = targetIsStable && distanceBetween(next, target) <= endpointTolerance &&
+            abs(velocity.yaw) <= endpointTolerance && abs(velocity.pitch) <= endpointTolerance
 
         phase = if (complete) MovementPhase.COMPLETE else MovementPhase.TRACKING
         if (complete) velocity = AnglePoint(0.0, 0.0)
@@ -340,7 +431,12 @@ class RotationHumanizer(seed: Long) {
         return delta
     }
 
-    private fun updateLimits(maxYawSpeed: Double, maxPitchSpeed: Double, requestedProfile: HumanizationProfile) {
+    private fun updateLimits(
+        maxYawSpeed: Double,
+        maxPitchSpeed: Double,
+        requestedProfile: HumanizationProfile,
+        requestedPurpose: RotationPurpose,
+    ) {
         plannedYawSpeed = maxYawSpeed
         plannedPitchSpeed = maxPitchSpeed
 
@@ -350,20 +446,37 @@ class RotationHumanizer(seed: Long) {
             HumanizationMode.CUSTOM -> Triple(28.0, 20.0, 0.26)
             HumanizationMode.OFF -> Triple(maxYawSpeed, maxPitchSpeed, 1.0)
         }
-        preferredYawSpeed = minOf(maxYawSpeed, profileYawSpeed / requestedProfile.responseScale)
-        preferredPitchSpeed = minOf(maxPitchSpeed, profilePitchSpeed / requestedProfile.responseScale)
+        val functionalScale = when (requestedPurpose) {
+            RotationPurpose.PLACE, RotationPurpose.BLOCK_INTERACT -> 1.25
+            RotationPurpose.PROJECTILE -> 1.1
+            else -> 1.0
+        }
+        preferredYawSpeed = minOf(
+            maxYawSpeed,
+            profileYawSpeed * functionalScale / requestedProfile.responseScale,
+        )
+        preferredPitchSpeed = minOf(
+            maxPitchSpeed,
+            profilePitchSpeed * functionalScale / requestedProfile.responseScale,
+        )
         yawAcceleration = minOf(maxYawSpeed, max(0.25, preferredYawSpeed * accelerationRatio))
         pitchAcceleration = minOf(maxPitchSpeed, max(0.2, preferredPitchSpeed * accelerationRatio))
     }
 
-    private fun planDuration(delta: AnglePoint, minimumTicks: Int, maximumTicks: Int): Int {
+    private fun planDuration(
+        delta: AnglePoint,
+        minimumTicks: Int,
+        maximumTicks: Int,
+        remainingDeadlineTicks: Int? = null,
+    ): Int {
         val distance = hypot(delta.yaw, delta.pitch)
         val speedTicks = max(
             abs(delta.yaw) * MINIMUM_JERK_PEAK / preferredYawSpeed,
             abs(delta.pitch) * MINIMUM_JERK_PEAK / preferredPitchSpeed,
         )
-        val distanceTicks = 2.0 + ln(1.0 + distance / DURATION_DISTANCE_SCALE) / LN_2
-        return max(minimumTicks, ceil(max(speedTicks, distanceTicks)).toInt()).coerceAtMost(maximumTicks)
+        val distanceTicks = 2.0 + ln(1.0 + distance / targetWidthDegrees) / LN_2
+        val planned = max(minimumTicks, ceil(max(speedTicks, distanceTicks)).toInt()).coerceAtMost(maximumTicks)
+        return remainingDeadlineTicks?.coerceAtLeast(1)?.let { minOf(planned, it) } ?: planned
     }
 
     private fun advanceDynamics(current: AnglePoint, desired: AnglePoint): AnglePoint {
@@ -424,6 +537,10 @@ class RotationHumanizer(seed: Long) {
     private fun isStationary(delta: AnglePoint) =
         abs(delta.yaw) <= TARGET_MOTION_EPSILON && abs(delta.pitch) <= TARGET_MOTION_EPSILON
 
+    private fun targetIsStable() = stableTargetTicks >= STABLE_TARGET_TICKS &&
+        abs(targetVelocity.yaw) <= TARGET_MOTION_EPSILON &&
+        abs(targetVelocity.pitch) <= TARGET_MOTION_EPSILON
+
     private fun minimumJerk(value: Double): Double {
         val t2 = value * value
         val t3 = t2 * value
@@ -447,12 +564,15 @@ class RotationHumanizer(seed: Long) {
 
     companion object {
         private const val MINIMUM_JERK_PEAK = 1.875
-        private const val DURATION_DISTANCE_SCALE = 8.0
+        const val DEFAULT_TARGET_WIDTH = 8.0
+        private const val MINIMUM_TARGET_WIDTH = 0.1
+        private const val MAXIMUM_TARGET_WIDTH = 90.0
         private const val LN_2 = 0.6931471805599453
         private const val TARGET_VELOCITY_MEMORY = 0.72
         private const val TRACKING_GAIN = 0.42
         private const val TARGET_MOTION_EPSILON = 0.02
-        private const val ENDPOINT_EPSILON = 1.0e-6
+        const val MINIMUM_ENDPOINT_TOLERANCE = 1.0e-6
+        private const val MAXIMUM_ENDPOINT_TOLERANCE = 1.0
         private const val STABLE_TARGET_TICKS = 3
 
         fun unwrapYaw(target: Double, reference: Double): Double {

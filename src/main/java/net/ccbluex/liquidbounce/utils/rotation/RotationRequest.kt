@@ -29,6 +29,7 @@ enum class RotationValidity {
     NONE,
     RAYCAST,
     EXACT,
+    BALLISTIC,
 }
 
 /**
@@ -69,4 +70,8 @@ data class RotationRequest(
     val verticalSpeed: Float? = null,
     val changeYaw: Boolean = true,
     val changePitch: Boolean = true,
+    val reach: Double? = null,
+    val throughWallsReach: Double = 0.0,
+    /** Eye position used to choose this target when client-movement prediction is active. */
+    val observerOrigin: Vec3? = null,
 )

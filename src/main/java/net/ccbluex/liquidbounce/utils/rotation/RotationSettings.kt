@@ -15,14 +15,21 @@ import net.ccbluex.liquidbounce.utils.rotation.humanization.HumanizationProfile
 
 // TODO: refactor them all
 
-class AlwaysRotationSettings(owner: Module, generalApply: () -> Boolean = { true }) :
-    RotationSettings(owner, generalApply) {
+class AlwaysRotationSettings(
+    owner: Module,
+    defaultHumanization: String = "Off",
+    generalApply: () -> Boolean = { true },
+) : RotationSettings(owner, defaultHumanization, generalApply) {
     override val rotationsValue = super.rotationsValue.apply { excludeWithState(true) }
     override val rotationsActive: Boolean = true
 }
 
 @Suppress("MemberVisibilityCanBePrivate")
-open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
+open class RotationSettings(
+    val moduleOwner: Module,
+    defaultHumanization: String = "Off",
+    generalApply: () -> Boolean = { true },
+) : Configurable("RotationSettings") {
 
     open val rotationsValue = boolean("Rotations", true) { generalApply() }
     open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
@@ -35,7 +42,7 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
     }
 
     open val humanizationModeValue = choices(
-        "Humanization", arrayOf("Off", "Subtle", "Balanced", "Custom"), "Off"
+        "Humanization", arrayOf("Off", "Subtle", "Balanced", "Custom"), defaultHumanization
     ) { rotationsActive && generalApply() }
     open val humanizationResponseValue = int(
         "HumanizationResponse", 100, 50..150, suffix = "%"
@@ -117,7 +124,7 @@ open class RotationSettings(val moduleOwner: Module, generalApply: () -> Boolean
 
 class RotationSettingsWithRotationModes(
     owner: Module, listValue: ListValue, generalApply: () -> Boolean = { true },
-) : RotationSettings(owner, generalApply) {
+) : RotationSettings(owner, generalApply = generalApply) {
 
     override val rotationsValue = super.rotationsValue.apply { excludeWithState() }
 

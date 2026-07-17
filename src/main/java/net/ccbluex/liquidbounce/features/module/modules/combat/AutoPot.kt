@@ -86,22 +86,20 @@ object AutoPot : Module("AutoPot", Category.COMBAT) {
 
             potion = potionInHotbar
 
-            if (player.rotationPitch <= 80F) {
-                val rotation = Rotation(player.rotationYaw, nextFloat(80F, 90F)).fixedSensitivity()
+            val rotation = Rotation(player.rotationYaw, nextFloat(80F, 90F)).fixedSensitivity()
 
-                setTargetRotation(
-                    RotationRequest(
-                        owner = this,
-                        desired = rotation,
-                        settings = options,
-                        target = RotationTarget.ExactRotation(rotation.copy()),
-                        purpose = RotationPurpose.PROJECTILE,
-                        deadlineTick = runTimeTicks,
-                        validity = RotationValidity.EXACT,
-                        immediate = true,
-                    )
+            setTargetRotation(
+                RotationRequest(
+                    owner = this,
+                    desired = rotation,
+                    settings = options,
+                    target = RotationTarget.ExactRotation(rotation.copy()),
+                    purpose = RotationPurpose.PROJECTILE,
+                    deadlineTick = runTimeTicks,
+                    validity = RotationValidity.EXACT,
+                    immediate = true,
                 )
-            }
+            )
 
             nextTick {
                 SilentHotbar.selectSlotSilently(
@@ -113,7 +111,7 @@ object AutoPot : Module("AutoPot", Category.COMBAT) {
                     resetManually = true
                 )
 
-                if (potion >= 0 && RotationUtils.serverRotation.pitch >= 75F) {
+                if (potion >= 0 && RotationUtils.isRequestValid(this) && RotationUtils.serverRotation.pitch >= 75F) {
                     player.sendUseItem(player.heldItem)
 
                     msTimer.reset()

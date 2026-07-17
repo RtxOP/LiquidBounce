@@ -21,6 +21,7 @@ import net.ccbluex.liquidbounce.ui.client.GuiMainMenu
 import net.ccbluex.liquidbounce.ui.client.altmanager.menus.altgenerator.GuiTheAltening.Companion.apiKey
 import net.ccbluex.liquidbounce.utils.attack.EntityUtils.Targets
 import net.ccbluex.liquidbounce.utils.io.readJson
+import net.ccbluex.liquidbounce.utils.rotation.RotationConfigMigration
 import java.io.*
 
 class ValuesConfig(file: File) : FileConfig(file) {
@@ -97,6 +98,7 @@ class ValuesConfig(file: File) : FileConfig(file) {
                     val module = moduleManager[key] ?: continue
 
                     val jsonModule = value as JsonObject
+                    RotationConfigMigration.migrate(module.name, jsonModule)
                     for (moduleValue in module.values) {
                         val element = jsonModule[moduleValue.name]
                         if (element != null) moduleValue.fromJson(element)

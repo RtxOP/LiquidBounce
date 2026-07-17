@@ -2,39 +2,21 @@
 
 ## Implementation status
 
-The planned core and migration work is feature-complete; maintainer verification and gameplay calibration remain:
+The implementation is under correctness remediation and is **not feature-complete**. [ISSUES.md](ISSUES.md) is the
+authoritative merge-gate register.
 
-- added rich, owner-aware rotation request/target/purpose/validity models;
-- added an opt-in deterministic trajectory core with cubic geometry, minimum-jerk timing, bounded retargeting, and correlated drift;
-- added `Off`, `Subtle`, `Balanced`, and `Custom` settings while keeping `Off` as the compatibility default;
-- routed the new engine through the central server/client rotation limiter;
-- migrated KillAura and ProjectileAimbot to attach stable entity target metadata;
-- replaced Zig-Zag/LazyFlick candidate perturbation with a seeded sticky normalized target point;
-- removed `RandomizationSettings` and its combat-module configuration surface;
-- added bounded per-entity motion history with confidence-aware prediction and teleport/staleness resets;
-- migrated KillAura, Aimbot, and TimerRange from hard-coded prediction multipliers to an explicit 0–5 tick horizon;
-- removed the ineffective Boolean observer-prediction argument from `toRotation`/`searchCenter` and their callers;
-- replaced `PredictSize` with iterative projectile interception using confidence-weighted relative target/shooter motion;
-- migrated Aimbot's camera-side rotation onto the shared request coordinator with per-axis controls and request-local speed caps;
-- removed `Legitimize`, iid limiter jitter, Aimbot Jitter, minimum-difference slowdown, and rotation short-stop settings/state;
-- made client-side request refreshes retain humanizer state and quantize against the camera rotation;
-- migrated every rotation producer to rich requests and removed the bare `Rotation` compatibility overload;
-- attached stable block/face metadata and explicit purposes/validity to interaction, placement, projectile, combat, and reset requests;
-- moved immediate/instant execution flags from shared settings into individual requests;
-- made `Rotation` immutable so constants, requests, and historical samples cannot be mutated through shared references;
-- added stateful sensitivity quantization with incremental error diffusion, target-handoff resets, camera rebasing, pitch-safe whole steps, and endpoint drift suppression;
-- added quantized validity checks for entity boxes, exact rotations, and block points/faces, including through-wall geometric validation versus exact world raycasts;
-- activated bounded deadline policy: reachable endpoints may consume at most one GCD of tolerance, while unreachable deadlines disable cosmetic pathing but retain configured speed limits;
-- sample configured yaw/pitch speed ranges once per movement handoff while allowing explicit request-local speed caps to refresh continuously;
-- added bounded per-owner/target point state with safe-region insets and slow correlated normalized drift; repeated resolution in one tick and moving world-space boxes retain the same point;
-- added a disabled-by-default bounded telemetry trace with seed, request context, phase, deadline strategy, raw/planned/quantized angles, validity, wrapped velocity, and acceleration; existing rotation debug output exposes live validity/phase;
-- added distance-conditioned overshoot and goal-directed correction phases under one movement ID; exact actions, reset travel, and deadline-bound requests never opt into corrections, and every phase retains the configured speed caps;
-- completed the profile surface: Response is shared by presets, while Custom independently controls PathVariation, CorrectionTendency, and TargetDrift instead of coupling all imperfections to one slider;
-- removed live-player position mutation from client-movement prediction by passing simulated observer-eye coordinates into target search and visibility checks;
-- added a dependency-free pure-math verification harness;
-- all checkpoints through the final profile surface have passed maintainer-run compilation; the closing observer-eye
-  isolation checkpoint is awaiting its maintainer-run build and verification. The implementing agent must not run
-  Gradle.
+Implemented foundations include rich rotation requests, immutable rotations, a shared humanization core, sensitivity
+quantization, target-motion estimation, projectile interception, sticky target-point state, bounded telemetry, and
+migration of rotation producers to the coordinator.
+
+The current remediation adds kinematic request handoffs, explicit instant transitions, a real moving-target tracking
+phase, mode-aware target-point lifetime, direct use of feasible persistent target points, owner-scoped validity gates,
+purpose/width/deadline planning inputs, legacy configuration migration, phase-aware quantization residuals, bounded
+projectile convergence, and automatic execution of the verification harness through `check`.
+
+Remaining work before merge consists of maintainer compilation/verification, any fixes exposed by that run, integration
+validation for every action producer, removal of the historical runtime-log commit if the branch is published, and
+manual/runtime calibration using structured traces. The implementing agent must not run Gradle.
 
 ## Goal
 
@@ -183,6 +165,10 @@ sealed interface RotationTarget {
 
 Use stable owner identity and priority instead of mutable `prioritizeRequest`, `immediate`, and `instant` flags stored on shared settings objects. A request refresh from the same owner updates the target without starting a new movement. A different owner, target entity, purpose, or world epoch starts a new movement or an explicit handoff.
 
+`instant` and reachable deadline-direct outputs are explicit functional discontinuities: they may exceed normal
+acceleration for that output only. The next normal movement starts at the emitted quantized angle with zero inherited
+snap velocity, so it cannot resume a stale curve or continue in the snap direction away from its new target.
+
 `RotationPurpose` should at least distinguish `COMBAT_TRACK`, `PROJECTILE`, `BLOCK_INTERACT`, `PLACE`, `RESET`, and `GENERIC`. Purpose selects constraints, not a hidden per-module algorithm.
 
 ### 2. Pure engine with explicit state
@@ -280,7 +266,8 @@ Never add iid output jitter after planning. Any perturbation is part of state an
 
 Expose a small UI instead of dozens of statistical knobs:
 
-- `Humanization`: `Off`, `Subtle`, `Balanced`, `Custom` (default `Off` for backward compatibility during rollout; reconsider after validation).
+- `Humanization`: `Off`, `Subtle`, `Balanced`, `Custom`. The general default is `Off`; Aimbot defaults to `Balanced`
+  to preserve its former `Legitimize=true` behavior. Explicit saved values always win over migration defaults.
 - `Response`: a bounded speed/duration scale.
 - `PathVariation`: maximum normal curvature scale.
 - `CorrectionTendency`: low/medium/high mapped to bounded planner parameters.

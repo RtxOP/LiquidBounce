@@ -22,6 +22,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationPurpose
 import net.ccbluex.liquidbounce.utils.rotation.RotationRequest
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationTarget
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceBlock
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
@@ -165,8 +166,14 @@ object Nuker : Module("Nuker", Category.WORLD, gameDetecting = false) {
                             purpose = RotationPurpose.BLOCK_INTERACT,
                             validity = RotationValidity.RAYCAST,
                             immediate = true,
+                            reach = radius.toDouble(),
+                            throughWallsReach = if (throughWalls) radius.toDouble() else 0.0,
                         )
                     )
+
+                    if (!RotationUtils.isRequestValid(this)) {
+                        return@handler
+                    }
                 }
 
                 // Set next target block

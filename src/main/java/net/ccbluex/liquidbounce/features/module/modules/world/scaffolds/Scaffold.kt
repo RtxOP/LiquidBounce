@@ -12,6 +12,7 @@ import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.utils.attack.CPSCounter
 import net.ccbluex.liquidbounce.utils.block.*
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils.blocksAmount
@@ -484,10 +485,11 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
          * @see net.minecraft.client.Minecraft.runTick Line 1345
          */
         val raycast = performBlockRaytrace(currRotation, mc.playerController.blockReachDistance)
+        val rotationValid = !options.rotationsActive || RotationUtils.isRequestValid(this)
 
         var alreadyPlaced = false
 
-        if (extraClicks) {
+        if (extraClicks && rotationValid) {
             val doubleClick = if (simulateDoubleClicking) RandomUtils.nextInt(-1, 1) else 0
 
             val clicks = extraClick.clicks + doubleClick
@@ -505,6 +507,8 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
             }
             return@handler
         }
+
+        if (!rotationValid) return@handler
 
         // Change/Schedule slot once per tick according to vanilla-logic
         if (alreadyPlaced || SilentHotbar.modifiedThisTick) {
@@ -589,8 +593,10 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
                     RotationTarget.WorldPoint(it.vec3, it.blockPos, it.enumFacing)
                 } ?: RotationTarget.ExactRotation(rotation.copy()),
                 purpose = RotationPurpose.PLACE,
+                deadlineTick = if (placeInfo != null) runTimeTicks + 1 else null,
                 validity = if (placeInfo != null) RotationValidity.EXACT else RotationValidity.NONE,
                 instant = instantRotation,
+                reach = mc.playerController.blockReachDistance.toDouble(),
             ),
             ticks,
         )

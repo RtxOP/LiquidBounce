@@ -16,6 +16,14 @@ enum class DeadlineStrategy {
 /** Chooses the least invasive fallback that can still satisfy an action deadline. */
 object RotationDeadlinePolicy {
 
+    /** A refreshed logical action may tighten its deadline but must never move it into the future. */
+    fun retain(previous: Int?, requested: Int?, sameMovement: Boolean): Int? {
+        if (!sameMovement) return requested
+        if (previous == null) return requested
+        if (requested == null) return previous
+        return minOf(previous, requested)
+    }
+
     fun choose(
         current: AnglePoint,
         target: AnglePoint,

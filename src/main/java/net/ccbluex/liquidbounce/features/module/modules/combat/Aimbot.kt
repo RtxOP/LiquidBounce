@@ -27,6 +27,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationValidity
 import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointKey
+import net.ccbluex.liquidbounce.utils.rotation.humanization.TargetPointEpoch
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.minecraft.entity.Entity
@@ -83,7 +84,9 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
 
     private val clickTimer = MSTimer()
 
-    private val options = AlwaysRotationSettings(this) { horizontalAim || verticalAim }.apply {
+    private val options = AlwaysRotationSettings(this, defaultHumanization = "Balanced") {
+        horizontalAim || verticalAim
+    }.apply {
         withoutKeepRotation()
         applyServerSideValue.excludeWithState(false)
         strafeValue.excludeWithState(false)
@@ -153,6 +156,8 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 horizontalSearch = horizontalBodySearchRange,
                 targetKey = TargetPointKey(this, entity.entityId),
                 targetPointVariation = options.humanizationProfile.targetDrift,
+                persistentTargetPoint = options.humanizationProfile.enabled,
+                targetPointEpoch = TargetPointEpoch(options.humanizationProfile),
                 observerEyes = observerEyes,
             )
         }
@@ -207,6 +212,8 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 verticalSpeed = turnSpeed,
                 changeYaw = horizontalAim,
                 changePitch = verticalAim,
+                reach = range.toDouble(),
+                observerOrigin = observerEyes,
             )
         )
 

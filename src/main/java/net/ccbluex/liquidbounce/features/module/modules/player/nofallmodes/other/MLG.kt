@@ -19,6 +19,7 @@ import net.ccbluex.liquidbounce.utils.block.block
 import net.ccbluex.liquidbounce.utils.block.center
 import net.ccbluex.liquidbounce.utils.block.state
 import net.ccbluex.liquidbounce.utils.client.PacketUtils.sendPacket
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.SilentHotbar
 import net.ccbluex.liquidbounce.utils.inventory.hotBarSlot
@@ -70,6 +71,7 @@ object MLG : NoFallMode("MLG") {
                     target = RotationTarget.WorldPoint(it),
                     purpose = RotationPurpose.BLOCK_INTERACT,
                     validity = RotationValidity.RAYCAST,
+                    reach = mc.playerController.blockReachDistance.toDouble(),
                 ),
                 if (options.keepRotation) options.resetTicks else 1,
             )
@@ -146,7 +148,9 @@ object MLG : NoFallMode("MLG") {
                             settings = options,
                             target = RotationTarget.WorldPoint(vec, pos, EnumFacing.UP),
                             purpose = RotationPurpose.PLACE,
+                            deadlineTick = runTimeTicks + 1,
                             validity = RotationValidity.EXACT,
+                            reach = mc.playerController.blockReachDistance.toDouble(),
                         ),
                         if (options.keepRotation) options.resetTicks else 1,
                     )
@@ -166,6 +170,8 @@ object MLG : NoFallMode("MLG") {
 
             return
         }
+
+        if (options.rotationsActive && !RotationUtils.isRequestValid(MLG)) return
 
         val reach = mc.playerController.blockReachDistance
 
