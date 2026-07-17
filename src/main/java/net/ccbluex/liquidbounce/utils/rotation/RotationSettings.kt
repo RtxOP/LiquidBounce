@@ -37,7 +37,7 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         rotationsActive && applyServerSide && generalApply()
     }
 
-    open val legitimizeValue = boolean("Legitimize", false) { rotationsActive && generalApply() }
+    open val humanizeValue = boolean("Humanize", false) { rotationsActive && generalApply() }
 
     open val horizontalAngleChangeValue =
         floatRange("HorizontalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
@@ -52,10 +52,6 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         "MinRotationDifference", 2f, 0f..4f
     ) { rotationsActive && generalApply() }
 
-    open val minRotationDifferenceResetTimingValue = choices(
-        "MinRotationDifferenceResetTiming", arrayOf("OnStart", "OnSlowDown", "Always"), "OnStart"
-    ) { rotationsActive && generalApply() }
-
     // Variables for easier access
     val rotations by rotationsValue
     val applyServerSide by applyServerSideValue
@@ -67,12 +63,13 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     val strict by strictValue
     val keepRotation by keepRotationValue
     val resetTicks by resetTicksValue
-    val legitimize by legitimizeValue
+    val humanize by humanizeValue
     val horizontalAngleChange by horizontalAngleChangeValue
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
     val minRotationDifference by minRotationDifferenceValue
-    val minRotationDifferenceResetTiming by minRotationDifferenceResetTimingValue
+
+    internal val humanizedRotationController = HumanizedRotationController()
 
     var prioritizeRequest = false
     var immediate = false
