@@ -28,6 +28,15 @@ import kotlin.math.*
 
 object RotationUtils : MinecraftInstance, Listenable {
 
+    internal data class TelemetrySnapshot(
+        val requestedRotation: Rotation?,
+        val outputRotation: Rotation?,
+        val rotationActive: Boolean,
+        val humanize: Boolean?,
+        val phase: String?,
+        val hasOvershoot: Boolean,
+    )
+
     /**
      * Our final rotation point, which [currentRotation] follows.
      */
@@ -71,6 +80,24 @@ object RotationUtils : MinecraftInstance, Listenable {
     var activeSettings: RotationSettings? = null
 
     var resetTicks = 0
+
+    /**
+     * Read-only state for the opt-in rotation analysis recorder.
+     *
+     * Copies are returned so recording can never mutate the live rotation pipeline.
+     */
+    internal fun telemetrySnapshot(): TelemetrySnapshot {
+        val settings = activeSettings
+
+        return TelemetrySnapshot(
+            requestedRotation = targetRotation?.copy(),
+            outputRotation = currentRotation?.copy(),
+            rotationActive = settings != null,
+            humanize = settings?.humanize,
+            phase = settings?.humanizedRotationController?.telemetryPhase,
+            hasOvershoot = settings?.humanizedRotationController?.telemetryHasOvershoot == true,
+        )
+    }
 
     /**
      * Face block

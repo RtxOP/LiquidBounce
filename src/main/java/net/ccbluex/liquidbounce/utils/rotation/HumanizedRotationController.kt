@@ -44,6 +44,12 @@ internal class HumanizedRotationController(
     private var primaryTimeout = 0
     private var lastUpdateTick = Int.MIN_VALUE
 
+    internal val telemetryPhase
+        get() = phase.name
+
+    internal val telemetryHasOvershoot
+        get() = phase == Phase.PRIMARY && hasOvershoot
+
     fun step(
         current: Rotation,
         target: Rotation,
