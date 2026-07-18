@@ -95,13 +95,20 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
     val onMotion = handler<MotionEvent> { event ->
         if (event.eventState != EventState.POST) return@handler
 
-        val player = mc.thePlayer ?: return@handler
-        val world = mc.theWorld ?: return@handler
+        val player = mc.thePlayer ?: run {
+            humanizedRotationController.reset()
+            return@handler
+        }
+        val world = mc.theWorld ?: run {
+            humanizedRotationController.reset()
+            return@handler
+        }
 
         // Clicking delay
         if (mc.gameSettings.keyBindAttack.isKeyDown) clickTimer.reset()
 
         if (onClick && (clickTimer.hasTimePassed(150) || !mc.gameSettings.keyBindAttack.isKeyDown && AutoClicker.handleEvents())) {
+            humanizedRotationController.reset()
             return@handler
         }
 
@@ -113,12 +120,21 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                     true
                 ) && player.canEntityBeSeen(it) && player.getDistanceToEntityBox(it) <= range && rotationDifference(it) <= fov
             }
-        }.minByOrNull { player.getDistanceToEntityBox(it) } ?: return@handler
+        }.minByOrNull { player.getDistanceToEntityBox(it) } ?: run {
+            humanizedRotationController.reset()
+            return@handler
+        }
 
         // Should it always keep trying to lock on the enemy or just try to assist you?
-        if (!lock && isFaced(entity, range.toDouble())) return@handler
+        if (!lock && isFaced(entity, range.toDouble())) {
+            humanizedRotationController.reset()
+            return@handler
+        }
 
-        if (Backtrack.runWithNearestTrackedDistance(entity) { !findRotation(entity) }) return@handler
+        if (Backtrack.runWithNearestTrackedDistance(entity) { !findRotation(entity) }) {
+            humanizedRotationController.reset()
+            return@handler
+        }
     }
 
     private fun findRotation(entity: Entity): Boolean {
@@ -198,7 +214,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
                 effectiveTarget,
                 supposedTurnSpeed..supposedTurnSpeed,
                 supposedTurnSpeed..supposedTurnSpeed,
-                minRotationDifference,
                 getFixedAngleDelta(),
                 runTimeTicks,
             )

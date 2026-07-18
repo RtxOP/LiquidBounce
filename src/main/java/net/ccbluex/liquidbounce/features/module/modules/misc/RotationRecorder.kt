@@ -288,6 +288,9 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
         record.addNullableProperty("humanize", telemetry.humanize)
         record.addNullableProperty("phase", telemetry.phase)
         record.addProperty("has_overshoot", telemetry.hasOvershoot)
+        record.addNullableProperty("humanize_alpha", telemetry.humanizeAlpha)
+        record.addNullableProperty("humanize_target_stable", telemetry.humanizeTargetStable)
+        record.addNullableProperty("humanize_overshoot_armed", telemetry.humanizeOvershootArmed)
         record.addProperty("source", when {
             KillAura.handleEvents() && auraTarget != null -> "killaura"
             telemetry.rotationActive -> "rotation_utils"
@@ -417,7 +420,7 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
     private val ANALYSIS_TIME_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss-SSS")
     private val COMPACT_GSON = Gson()
 
-    private const val ANALYSIS_SCHEMA = 1
+    private const val ANALYSIS_SCHEMA = 2
     private const val TARGET_CAPTURE_RANGE = 16f
     private const val FLUSH_INTERVAL_RECORDS = 100
 }

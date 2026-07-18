@@ -6,18 +6,18 @@
 package net.ccbluex.liquidbounce.utils.rotation
 
 import net.minecraft.util.MathHelper
-import kotlin.math.ceil
+import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.random.Random
 
 /**
- * Generates intermediate rotations without changing the requested endpoint.
+ * Generates stateful intermediate rotations without changing the requested endpoint.
  *
- * The controller deliberately owns no game or target state. Callers provide the
- * actual rotation from the previous tick, allowing sensitivity quantization to
- * remain authoritative.
+ * Randomness is scoped to a movement: configured speed samples, one overshoot
+ * selection, and one magnitude sample when that overshoot is activated. The
+ * per-tick response itself is deterministic and follows the live target.
  */
 internal class HumanizedRotationController(
     private val random: Random = Random.Default,
@@ -32,115 +32,164 @@ internal class HumanizedRotationController(
 
     private var phase = Phase.IDLE
     private var previousRotation: Rotation? = null
+    private var previousRawVelocity = zeroRotation()
     private var previousTarget: Rotation? = null
-
-    private var overshootYaw = 0f
-    private var overshootPitch = 0f
 
     private var sampledHorizontalSpeed = 0f
     private var sampledVerticalSpeed = 0f
+    private var movementInitialDistance = 0f
 
-    private var phaseTicks = 0
-    private var primaryTimeout = 0
+    private var overshootArmed = false
+    private var overshootUsed = false
+    private var overshootOffset = zeroRotation()
+
+    private var stabilityAnchor: Rotation? = null
+    private var stableIntervals = 0
+    private var targetStable = false
+
+    private var lastAlpha: Float? = null
+    private var lastStepHadOvershoot = false
     private var lastUpdateTick = Int.MIN_VALUE
 
     internal val telemetryPhase
         get() = phase.name
 
     internal val telemetryHasOvershoot
-        get() = phase == Phase.PRIMARY && hasOvershoot
+        get() = lastStepHadOvershoot
+
+    internal val telemetryAlpha
+        get() = lastAlpha
+
+    internal val telemetryTargetStable
+        get() = targetStable
+
+    internal val telemetryOvershootArmed
+        get() = overshootArmed
 
     fun step(
         current: Rotation,
         target: Rotation,
         horizontalSpeed: ClosedFloatingPointRange<Float>,
         verticalSpeed: ClosedFloatingPointRange<Float>,
-        minDifference: Float,
         gcd: Float,
         tick: Int,
     ): Rotation {
+        val effectiveGcd = if (gcd.isFinite()) max(abs(gcd), MIN_EFFECTIVE_GCD) else MIN_EFFECTIVE_GCD
+
         if (isUpdateGap(tick)) {
             reset()
         }
 
-        val targetJump = previousTarget?.let { rotationDifference(target, it) } ?: Float.POSITIVE_INFINITY
+        lastAlpha = null
+        lastStepHadOvershoot = false
+
         val targetDistance = rotationDifference(target, current)
+        val targetJump = previousTarget?.let { rotationDifference(target, it) } ?: Float.POSITIVE_INFINITY
+        val shouldBeginMovement = targetDistance > FLOAT_EPSILON && (
+                phase == Phase.IDLE || targetJump > TARGET_DISCONTINUITY ||
+                        phase == Phase.TRACKING && targetDistance > TRACKING_REACQUIRE_DISTANCE
+                )
 
-        if (phase == Phase.IDLE || targetJump > TARGET_DISCONTINUITY ||
-            phase == Phase.TRACKING && targetDistance > TRACKING_REACQUIRE_DISTANCE
+        if (shouldBeginMovement) {
+            beginMovement(current, target, horizontalSpeed, verticalSpeed, effectiveGcd)
+        } else if (phase == Phase.IDLE && targetDistance <= FLOAT_EPSILON) {
+            return remainAtTarget(current, target, tick)
+        } else {
+            val stabilityBroken = updateTargetStability(target, effectiveGcd)
+
+            if (stabilityBroken && phase == Phase.PRIMARY && !hasActiveOvershoot) {
+                overshootArmed = false
+                phase = Phase.TRACKING
+            }
+
+            if (stabilityBroken && (hasActiveOvershoot || phase == Phase.CORRECTION)) {
+                cancelIntoTracking()
+            }
+        }
+
+        val actualVelocity = previousRotation?.let { angleDifferences(current, it) } ?: zeroRotation()
+        val measuredSpeed = magnitude(actualVelocity)
+
+        var workingTarget = workingTarget(target)
+        var movement = calculateMovement(current, workingTarget, actualVelocity)
+
+        val realError = angleDifferences(target, current)
+        if (!targetStable && !hasActiveOvershoot &&
+            wouldReach(realError, target, movement.proposed, inclusive = true)
         ) {
-            beginMovement(current, target, horizontalSpeed, verticalSpeed, gcd)
+            lastAlpha = movement.alpha
+            val guarded = guardUnconfirmedEndpoint(current, target, realError, effectiveGcd)
+            finishTick(current, target, movement.rawVelocity, tick)
+            return guarded
         }
 
-        if (phase == Phase.PRIMARY && hasOvershoot && phaseTicks >= primaryTimeout) {
-            beginCorrection()
+        if (phase == Phase.PRIMARY && overshootArmed && !overshootUsed && !hasActiveOvershoot &&
+            targetStable && wouldReach(realError, target, movement.proposed, inclusive = true)
+        ) {
+            if (activateOvershoot(target, realError, movementInitialDistance, movement.speed, effectiveGcd)) {
+                workingTarget = workingTarget(target)
+                movement = calculateMovement(current, workingTarget, actualVelocity)
+                lastStepHadOvershoot = true
+            } else {
+                overshootArmed = false
+            }
+        } else if (hasActiveOvershoot) {
+            lastStepHadOvershoot = true
         }
 
-        val actualVelocity = previousRotation?.let { angleDifferences(current, it) } ?: Rotation.ZERO
-        val workingTarget = workingTarget(target)
-        val error = angleDifferences(workingTarget, current)
-        val distance = hypot(error.yaw, error.pitch)
-        val measuredSpeed = hypot(actualVelocity.yaw, actualVelocity.pitch)
+        lastAlpha = movement.alpha
 
-        val settleDistance = max(gcd * SETTLE_GCD_MULTIPLIER, minDifference)
-        val settleSpeed = max(gcd, minDifference * SETTLE_SPEED_MULTIPLIER)
-
-        if (distance <= settleDistance && measuredSpeed <= settleSpeed) {
-            return reachWorkingTarget(current, target, workingTarget, tick)
+        val workingError = angleDifferences(workingTarget, current)
+        if (hasActiveOvershoot && wouldReach(
+                workingError,
+                workingTarget,
+                movement.proposed,
+                inclusive = true,
+            )
+        ) {
+            val waypoint = exactTarget(current, workingTarget)
+            beginCorrection(waypoint, target, tick)
+            return waypoint
         }
 
-        val speedMultiplier = if (phase == Phase.CORRECTION) CORRECTION_SPEED_MULTIPLIER else 1f
-        val maxYawSpeed = max(gcd, sampledHorizontalSpeed * speedMultiplier)
-        val maxPitchSpeed = max(gcd, sampledVerticalSpeed * speedMultiplier)
-        val maxYawAcceleration = max(gcd, maxYawSpeed * ACCELERATION_LIMIT_MULTIPLIER)
-        val maxPitchAcceleration = max(gcd, maxPitchSpeed * ACCELERATION_LIMIT_MULTIPLIER)
+        if (!hasActiveOvershoot && targetStable) {
+            if (wouldReach(realError, target, movement.proposed, inclusive = true)) {
+                return finishMovement(current, target, tick)
+            }
 
-        val yawAcceleration = (POSITION_GAIN * error.yaw - VELOCITY_DAMPING * actualVelocity.yaw)
-            .coerceIn(-maxYawAcceleration, maxYawAcceleration)
-        val pitchAcceleration = (POSITION_GAIN * error.pitch - VELOCITY_DAMPING * actualVelocity.pitch)
-            .coerceIn(-maxPitchAcceleration, maxPitchAcceleration)
-
-        var yawVelocity = (actualVelocity.yaw + yawAcceleration).coerceIn(-maxYawSpeed, maxYawSpeed)
-        var pitchVelocity = (actualVelocity.pitch + pitchAcceleration).coerceIn(-maxPitchSpeed, maxPitchSpeed)
-
-        // Preserve the two-dimensional movement direction while enforcing both axis limits.
-        val velocityScale = max(1f, hypot(yawVelocity / maxYawSpeed, pitchVelocity / maxPitchSpeed))
-
-        yawVelocity /= velocityScale
-        pitchVelocity /= velocityScale
-
-        val next = Rotation(
-            current.yaw + yawVelocity,
-            (current.pitch + pitchVelocity).coerceIn(-90f, 90f),
-        )
-        val nextError = angleDifferences(workingTarget, next)
-        val passedWorkingTarget = error.yaw * nextError.yaw + error.pitch * nextError.pitch <= 0f
-
-        if (passedWorkingTarget) {
-            return reachWorkingTarget(current, target, workingTarget, tick)
+            if (magnitude(realError) <= SETTLE_GCD_MULTIPLIER * effectiveGcd &&
+                measuredSpeed <= SETTLE_SPEED_GCD_MULTIPLIER * effectiveGcd
+            ) {
+                return finishMovement(current, target, tick)
+            }
         }
 
-        finishTick(current, target, tick)
-        phaseTicks++
-
-        return next
+        finishTick(current, target, movement.rawVelocity, tick)
+        return movement.proposed
     }
 
     fun hold(current: Rotation, tick: Int) {
         previousRotation = current.copyRotation()
+        previousRawVelocity = zeroRotation()
+        lastAlpha = null
+        lastStepHadOvershoot = false
         lastUpdateTick = tick
     }
 
     fun reset() {
         phase = Phase.IDLE
         previousRotation = null
+        previousRawVelocity = zeroRotation()
         previousTarget = null
-        overshootYaw = 0f
-        overshootPitch = 0f
         sampledHorizontalSpeed = 0f
         sampledVerticalSpeed = 0f
-        phaseTicks = 0
-        primaryTimeout = 0
+        movementInitialDistance = 0f
+        clearOvershoot()
+        stabilityAnchor = null
+        stableIntervals = 0
+        targetStable = false
+        lastAlpha = null
+        lastStepHadOvershoot = false
         lastUpdateTick = Int.MIN_VALUE
     }
 
@@ -149,106 +198,255 @@ internal class HumanizedRotationController(
         target: Rotation,
         horizontalSpeed: ClosedFloatingPointRange<Float>,
         verticalSpeed: ClosedFloatingPointRange<Float>,
-        gcd: Float,
+        effectiveGcd: Float,
     ) {
         phase = Phase.PRIMARY
-        phaseTicks = 0
-        sampledHorizontalSpeed = sample(horizontalSpeed).coerceAtLeast(gcd)
-        sampledVerticalSpeed = sample(verticalSpeed).coerceAtLeast(gcd)
+        previousRotation = current.copyRotation()
+        previousRawVelocity = zeroRotation()
+        sampledHorizontalSpeed = sample(horizontalSpeed).coerceAtLeast(effectiveGcd)
+        sampledVerticalSpeed = sample(verticalSpeed).coerceAtLeast(effectiveGcd)
+        movementInitialDistance = rotationDifference(target, current)
 
-        val error = angleDifferences(target, current)
-        val distance = hypot(error.yaw, error.pitch)
-        val fastestAxis = max(sampledHorizontalSpeed, sampledVerticalSpeed)
+        overshootOffset = zeroRotation()
+        overshootUsed = false
+        overshootArmed = shouldArmOvershoot(movementInitialDistance)
 
-        primaryTimeout = (ceil(distance / fastestAxis * PRIMARY_TIMEOUT_SPEED_FACTOR).toInt() +
-                PRIMARY_TIMEOUT_BASE_TICKS).coerceIn(PRIMARY_TIMEOUT_MIN_TICKS, PRIMARY_TIMEOUT_MAX_TICKS)
+        stabilityAnchor = target.copyRotation()
+        stableIntervals = 0
+        targetStable = false
+    }
 
-        overshootYaw = 0f
-        overshootPitch = 0f
+    private fun calculateMovement(
+        current: Rotation,
+        workingTarget: Rotation,
+        actualVelocity: Rotation,
+    ): Movement {
+        val error = angleDifferences(workingTarget, current)
+        val rawVelocity = limitLikeOrdinaryRotation(
+            error,
+            sampledHorizontalSpeed,
+            sampledVerticalSpeed,
+        )
+        val rawChange = magnitude(rawVelocity - previousRawVelocity)
+        val x = rawChange * ALPHA_ACCEL_SENSITIVITY
+        val alpha = ALPHA_MIN + (ALPHA_MAX - ALPHA_MIN) * x / (1f + x)
+        val candidateVelocity = actualVelocity + (rawVelocity - actualVelocity) * alpha
+        val limitedVelocity = limitLikeOrdinaryRotation(
+            candidateVelocity,
+            sampledHorizontalSpeed,
+            sampledVerticalSpeed,
+        )
+        val proposed = Rotation(
+            current.yaw + limitedVelocity.yaw,
+            (current.pitch + limitedVelocity.pitch).coerceIn(-90f, 90f),
+        )
 
+        return Movement(rawVelocity, proposed, alpha, magnitude(limitedVelocity))
+    }
+
+    private fun updateTargetStability(target: Rotation, effectiveGcd: Float): Boolean {
+        val anchor = stabilityAnchor
+        if (anchor == null) {
+            stabilityAnchor = target.copyRotation()
+            stableIntervals = 0
+            targetStable = false
+            return false
+        }
+
+        if (rotationDifference(target, anchor) <= effectiveGcd * TARGET_STABILITY_GCD_MULTIPLIER) {
+            stableIntervals = (stableIntervals + 1).coerceAtMost(REQUIRED_STABLE_INTERVALS)
+            targetStable = stableIntervals >= REQUIRED_STABLE_INTERVALS
+            return false
+        }
+
+        stabilityAnchor = target.copyRotation()
+        stableIntervals = 0
+        targetStable = false
+        return true
+    }
+
+    private fun shouldArmOvershoot(distance: Float): Boolean {
         if (distance < OVERSHOOT_MIN_DISTANCE) {
-            return
+            return false
         }
 
         val distanceFactor = ((distance - OVERSHOOT_MIN_DISTANCE) / OVERSHOOT_CHANCE_DISTANCE)
             .coerceIn(0f, 1f)
-        val chance = OVERSHOOT_BASE_CHANCE + distanceFactor * OVERSHOOT_ADDITIONAL_CHANCE
-
-        if (random.nextFloat() >= chance) {
-            return
-        }
-
-        val maximumMagnitude = min(OVERSHOOT_MAX_MAGNITUDE, distance * OVERSHOOT_MAX_DISTANCE_RATIO)
-
-        if (maximumMagnitude < gcd) {
-            return
-        }
-
-        val minimumMagnitude = min(maximumMagnitude, max(gcd, distance * OVERSHOOT_MIN_DISTANCE_RATIO))
-        val magnitude = minimumMagnitude + (maximumMagnitude - minimumMagnitude) * random.nextFloat()
-
-        overshootYaw = error.yaw / distance * magnitude
-        overshootPitch = error.pitch / distance * magnitude
+        val chance = OVERSHOOT_BASE_CHANCE + OVERSHOOT_ADDITIONAL_CHANCE * distanceFactor
+        return random.nextFloat() < chance
     }
 
-    private fun beginCorrection() {
-        phase = Phase.CORRECTION
-        phaseTicks = 0
-        overshootYaw = 0f
-        overshootPitch = 0f
-    }
-
-    private fun reachWorkingTarget(
-        current: Rotation,
+    private fun activateOvershoot(
         target: Rotation,
-        workingTarget: Rotation,
-        tick: Int,
-    ): Rotation {
-        val result = Rotation(
-            current.yaw + MathHelper.wrapAngleTo180_float(workingTarget.yaw - current.yaw),
-            workingTarget.pitch,
-        )
-
-        if (phase == Phase.PRIMARY && hasOvershoot) {
-            beginCorrection()
-        } else {
-            phase = Phase.TRACKING
-            phaseTicks = 0
+        realError: Rotation,
+        initialDistance: Float,
+        approachSpeed: Float,
+        effectiveGcd: Float,
+    ): Boolean {
+        val realDistance = magnitude(realError)
+        if (realDistance <= FLOAT_EPSILON) {
+            return false
         }
 
-        // Treat the endpoint as a stop. The next update derives zero velocity
-        // from this result before beginning a correction or tracking movement.
-        previousRotation = result.copyRotation()
+        val maximumMagnitude = min(
+            OVERSHOOT_MAX_MAGNITUDE,
+            min(initialDistance * OVERSHOOT_DISTANCE_RATIO, approachSpeed * OVERSHOOT_SPEED_RATIO),
+        )
+        if (maximumMagnitude < effectiveGcd) {
+            return false
+        }
+
+        val magnitude = maximumMagnitude * (
+                OVERSHOOT_MIN_MAGNITUDE_FACTOR +
+                        (1f - OVERSHOOT_MIN_MAGNITUDE_FACTOR) * random.nextFloat()
+                )
+        val requestedOffset = Rotation(
+            realError.yaw / realDistance * magnitude,
+            realError.pitch / realDistance * magnitude,
+        )
+        val waypoint = Rotation(
+            target.yaw + requestedOffset.yaw,
+            (target.pitch + requestedOffset.pitch).coerceIn(-90f, 90f),
+        )
+        val actualOffset = angleDifferences(waypoint, target)
+        if (magnitude(actualOffset) < effectiveGcd) {
+            return false
+        }
+
+        overshootOffset = actualOffset
+        overshootArmed = false
+        overshootUsed = true
+        return true
+    }
+
+    private fun beginCorrection(waypoint: Rotation, target: Rotation, tick: Int) {
+        phase = Phase.CORRECTION
+        overshootArmed = false
+        overshootOffset = zeroRotation()
+        previousRotation = waypoint.copyRotation()
+        previousRawVelocity = zeroRotation()
         previousTarget = target.copyRotation()
         lastUpdateTick = tick
+    }
 
+    private fun cancelIntoTracking() {
+        phase = Phase.TRACKING
+        overshootArmed = false
+        overshootOffset = zeroRotation()
+    }
+
+    private fun finishMovement(current: Rotation, target: Rotation, tick: Int): Rotation {
+        val result = exactTarget(current, target)
+        phase = Phase.IDLE
+        previousRotation = result.copyRotation()
+        previousRawVelocity = zeroRotation()
+        previousTarget = target.copyRotation()
+        clearOvershoot()
+        stabilityAnchor = target.copyRotation()
+        stableIntervals = REQUIRED_STABLE_INTERVALS
+        targetStable = true
+        lastUpdateTick = tick
         return result
     }
 
+    private fun remainAtTarget(current: Rotation, target: Rotation, tick: Int): Rotation {
+        val result = exactTarget(current, target)
+        previousRotation = result.copyRotation()
+        previousRawVelocity = zeroRotation()
+        previousTarget = target.copyRotation()
+        stabilityAnchor = target.copyRotation()
+        stableIntervals = REQUIRED_STABLE_INTERVALS
+        targetStable = true
+        lastUpdateTick = tick
+        return result
+    }
+
+    private fun finishTick(current: Rotation, target: Rotation, rawVelocity: Rotation, tick: Int) {
+        previousRotation = current.copyRotation()
+        previousRawVelocity = rawVelocity.copyRotation()
+        previousTarget = target.copyRotation()
+        lastUpdateTick = tick
+    }
+
+    private fun clearOvershoot() {
+        overshootArmed = false
+        overshootUsed = false
+        overshootOffset = zeroRotation()
+    }
+
     private fun workingTarget(target: Rotation): Rotation {
-        if (phase != Phase.PRIMARY || !hasOvershoot) {
+        if (!hasActiveOvershoot) {
             return target
         }
 
         return Rotation(
-            target.yaw + overshootYaw,
-            (target.pitch + overshootPitch).coerceIn(-90f, 90f),
+            target.yaw + overshootOffset.yaw,
+            (target.pitch + overshootOffset.pitch).coerceIn(-90f, 90f),
         )
     }
 
-    private fun finishTick(current: Rotation, target: Rotation, tick: Int) {
-        previousRotation = current.copyRotation()
-        previousTarget = target.copyRotation()
-        lastUpdateTick = tick
+    private fun wouldReach(
+        errorBefore: Rotation,
+        target: Rotation,
+        proposed: Rotation,
+        inclusive: Boolean,
+    ): Boolean {
+        val errorAfter = angleDifferences(target, proposed)
+        val dot = errorBefore.yaw * errorAfter.yaw + errorBefore.pitch * errorAfter.pitch
+        return if (inclusive) dot <= 0f else dot < 0f
     }
 
-    private fun isUpdateGap(tick: Int) = lastUpdateTick != Int.MIN_VALUE &&
-            (tick < lastUpdateTick || tick - lastUpdateTick > MAX_UPDATE_GAP_TICKS)
+    /**
+     * Prevents filter momentum from becoming an unbounded, unselected pass of
+     * the live target. Moving targets retain at most a sensitivity-scale lag.
+     */
+    private fun guardUnconfirmedEndpoint(
+        current: Rotation,
+        target: Rotation,
+        error: Rotation,
+        effectiveGcd: Float,
+    ): Rotation {
+        val distance = magnitude(error)
+        if (distance <= effectiveGcd) {
+            return exactTarget(current, target)
+        }
+
+        val guardedDistance = distance - effectiveGcd
+        return Rotation(
+            current.yaw + error.yaw / distance * guardedDistance,
+            (current.pitch + error.pitch / distance * guardedDistance).coerceIn(-90f, 90f),
+        )
+    }
+
+    private fun limitLikeOrdinaryRotation(
+        delta: Rotation,
+        horizontalSpeed: Float,
+        verticalSpeed: Float,
+    ): Rotation {
+        val distance = magnitude(delta)
+        if (distance <= FLOAT_EPSILON) {
+            return zeroRotation()
+        }
+
+        val yawLimit = abs(delta.yaw / distance) * horizontalSpeed
+        val pitchLimit = abs(delta.pitch / distance) * verticalSpeed
+        return Rotation(
+            delta.yaw.coerceIn(-yawLimit, yawLimit),
+            delta.pitch.coerceIn(-pitchLimit, pitchLimit),
+        )
+    }
+
+    private fun exactTarget(current: Rotation, target: Rotation) = Rotation(
+        current.yaw + MathHelper.wrapAngleTo180_float(target.yaw - current.yaw),
+        target.pitch.coerceIn(-90f, 90f),
+    )
 
     private fun sample(range: ClosedFloatingPointRange<Float>): Float {
         val minimum = min(range.start, range.endInclusive)
         val maximum = max(range.start, range.endInclusive)
-
+        if (minimum == maximum) {
+            return minimum
+        }
         return minimum + (maximum - minimum) * random.nextFloat()
     }
 
@@ -257,40 +455,52 @@ internal class HumanizedRotationController(
         target.pitch - current.pitch,
     )
 
-    private fun rotationDifference(target: Rotation, current: Rotation): Float {
-        val difference = angleDifferences(target, current)
-        return hypot(difference.yaw, difference.pitch)
-    }
+    private fun rotationDifference(target: Rotation, current: Rotation) =
+        magnitude(angleDifferences(target, current))
+
+    private fun magnitude(rotation: Rotation) = hypot(rotation.yaw, rotation.pitch)
+
+    private fun isUpdateGap(tick: Int) = lastUpdateTick != Int.MIN_VALUE &&
+            (tick < lastUpdateTick || tick - lastUpdateTick > MAX_UPDATE_GAP_TICKS)
 
     private fun Rotation.copyRotation() = Rotation(yaw, pitch)
 
-    private val hasOvershoot
-        get() = overshootYaw != 0f || overshootPitch != 0f
+    private fun zeroRotation() = Rotation(0f, 0f)
+
+    private val hasActiveOvershoot
+        get() = overshootOffset.yaw != 0f || overshootOffset.pitch != 0f
+
+    private data class Movement(
+        val rawVelocity: Rotation,
+        val proposed: Rotation,
+        val alpha: Float,
+        val speed: Float,
+    )
 
     private companion object {
-        const val POSITION_GAIN = 0.32f
-        const val VELOCITY_DAMPING = 0.70f
-        const val ACCELERATION_LIMIT_MULTIPLIER = 0.35f
-        const val CORRECTION_SPEED_MULTIPLIER = 0.55f
+        const val FLOAT_EPSILON = 1e-6f
+        const val MIN_EFFECTIVE_GCD = 1e-4f
+
+        const val ALPHA_MIN = 0.50f
+        const val ALPHA_MAX = 0.90f
+        const val ALPHA_ACCEL_SENSITIVITY = 0.25f
 
         const val SETTLE_GCD_MULTIPLIER = 1.5f
-        const val SETTLE_SPEED_MULTIPLIER = 0.25f
+        const val SETTLE_SPEED_GCD_MULTIPLIER = 1.5f
+        const val TARGET_STABILITY_GCD_MULTIPLIER = 1f
+        const val REQUIRED_STABLE_INTERVALS = 2
 
         const val TARGET_DISCONTINUITY = 25f
         const val TRACKING_REACQUIRE_DISTANCE = 10f
         const val MAX_UPDATE_GAP_TICKS = 1
 
-        const val OVERSHOOT_MIN_DISTANCE = 12f
-        const val OVERSHOOT_BASE_CHANCE = 0.18f
-        const val OVERSHOOT_ADDITIONAL_CHANCE = 0.17f
-        const val OVERSHOOT_CHANCE_DISTANCE = 90f
-        const val OVERSHOOT_MIN_DISTANCE_RATIO = 0.015f
-        const val OVERSHOOT_MAX_DISTANCE_RATIO = 0.04f
-        const val OVERSHOOT_MAX_MAGNITUDE = 2.25f
-
-        const val PRIMARY_TIMEOUT_SPEED_FACTOR = 3f
-        const val PRIMARY_TIMEOUT_BASE_TICKS = 10
-        const val PRIMARY_TIMEOUT_MIN_TICKS = 12
-        const val PRIMARY_TIMEOUT_MAX_TICKS = 80
+        const val OVERSHOOT_MIN_DISTANCE = 8f
+        const val OVERSHOOT_BASE_CHANCE = 0.12f
+        const val OVERSHOOT_ADDITIONAL_CHANCE = 0.18f
+        const val OVERSHOOT_CHANCE_DISTANCE = 40f
+        const val OVERSHOOT_MAX_MAGNITUDE = 1.5f
+        const val OVERSHOOT_DISTANCE_RATIO = 0.035f
+        const val OVERSHOOT_SPEED_RATIO = 0.20f
+        const val OVERSHOOT_MIN_MAGNITUDE_FACTOR = 0.50f
     }
 }

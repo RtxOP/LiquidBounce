@@ -35,6 +35,9 @@ object RotationUtils : MinecraftInstance, Listenable {
         val humanize: Boolean?,
         val phase: String?,
         val hasOvershoot: Boolean,
+        val humanizeAlpha: Float?,
+        val humanizeTargetStable: Boolean?,
+        val humanizeOvershootArmed: Boolean?,
     )
 
     /**
@@ -88,14 +91,18 @@ object RotationUtils : MinecraftInstance, Listenable {
      */
     internal fun telemetrySnapshot(): TelemetrySnapshot {
         val settings = activeSettings
+        val controller = settings?.takeIf { it.humanize }?.humanizedRotationController
 
         return TelemetrySnapshot(
             requestedRotation = targetRotation?.copy(),
             outputRotation = currentRotation?.copy(),
             rotationActive = settings != null,
             humanize = settings?.humanize,
-            phase = settings?.humanizedRotationController?.telemetryPhase,
-            hasOvershoot = settings?.humanizedRotationController?.telemetryHasOvershoot == true,
+            phase = controller?.telemetryPhase,
+            hasOvershoot = controller?.telemetryHasOvershoot == true,
+            humanizeAlpha = controller?.telemetryAlpha,
+            humanizeTargetStable = controller?.telemetryTargetStable,
+            humanizeOvershootArmed = controller?.telemetryOvershootArmed,
         )
     }
 
@@ -382,7 +389,6 @@ object RotationUtils : MinecraftInstance, Listenable {
                 targetRotation,
                 settings.horizontalAngleChange,
                 settings.verticalAngleChange,
-                settings.minRotationDifference,
                 getFixedAngleDelta(),
                 runTimeTicks,
             )
