@@ -6,10 +6,12 @@
 package net.ccbluex.liquidbounce.utils.rotation
 
 import net.ccbluex.liquidbounce.event.*
+import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.combat.FastBow
 import net.ccbluex.liquidbounce.features.module.modules.misc.NoRotateSet
 import net.ccbluex.liquidbounce.features.module.modules.render.Rotations
 import net.ccbluex.liquidbounce.utils.block.block
+import net.ccbluex.liquidbounce.utils.client.ClientUtils.runTimeTicks
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.client.rotation
@@ -18,6 +20,7 @@ import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
+import net.ccbluex.liquidbounce.utils.rotation.aim.AimEngine
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
 import net.minecraft.network.play.client.C03PacketPlayer
@@ -25,13 +28,46 @@ import net.minecraft.tileentity.TileEntity
 import net.minecraft.util.*
 import javax.vecmath.Vector2f
 import kotlin.math.*
+import kotlin.random.Random
 
 object RotationUtils : MinecraftInstance, Listenable {
 
     /**
      * Our final rotation point, which [currentRotation] follows.
      */
-    private var targetRotation: Rotation? = null
+    internal var targetRotation: Rotation? = null
+        private set
+
+    /**
+     * Last tick a request arrived through [setTargetRotation]. RotationRecorder
+     * uses it to drop stale [targetRotation] values: module-enabled is not the
+     * same as "aim was commanded this tick".
+     */
+    internal var lastTargetSetTick = Int.MIN_VALUE
+        private set
+
+    /**
+     * Last tick the shaper produced output through [limitAngleChange].
+     * Recorder separation of shaper-driven ticks from raw mouse play relies on
+     * this instead of `activeSettings != null`, which lingers across holds and
+     * GUI-open early returns.
+     */
+    internal var lastShapedTick = Int.MIN_VALUE
+        private set
+
+    /**
+     * True when this tick's rotation was produced by the shaper here
+     * (within one tick of [lastShapedTick]; call order between motion
+     * handlers decides whether the stamp reads 0 or 1 behind).
+     */
+    internal fun isShapingNow() =
+        lastShapedTick != Int.MIN_VALUE && runTimeTicks - lastShapedTick in 0..1
+
+    /**
+     * True when [targetRotation] was requested within [maxAge] ticks.
+     */
+    internal fun hasFreshTarget(maxAge: Int = 2) =
+        lastTargetSetTick != Int.MIN_VALUE && runTimeTicks - lastTargetSetTick in 0..maxAge
 
     /**
      * The current rotation that is responsible for aiming at objects, synchronizing movement, etc.
@@ -71,6 +107,29 @@ object RotationUtils : MinecraftInstance, Listenable {
     var activeSettings: RotationSettings? = null
 
     var resetTicks = 0
+
+    /**
+     * Engine channels, one per rotation owner (spec §11.1: one [AimEngine.State]
+     * per [RotationSettings], the previous aimPaths pattern). Capped so idle
+     * modules cannot grow the map without bound; oldest entry is evicted
+     * first. Each channel owns its determinism root (§11.7.5): a fresh seed
+     * per stored channel = per-engagement variety, stable within one.
+     */
+    private class AimChannel(val state: AimEngine.State, val seed: Long)
+
+    private val aimStates = LinkedHashMap<RotationSettings, AimChannel>()
+
+    private fun channelFor(settings: RotationSettings): AimChannel {
+        aimStates[settings]?.let { return it }
+        if (aimStates.size >= 8) {
+            aimStates.keys.firstOrNull()?.let { aimStates.remove(it) }
+        }
+        return AimChannel(AimEngine.State(), Random.nextLong()).also { aimStates[settings] = it }
+    }
+
+    internal fun clearAimStates() {
+        aimStates.clear()
+    }
 
     /**
      * Face block
@@ -229,7 +288,7 @@ object RotationUtils : MinecraftInstance, Listenable {
      */
     fun searchCenter(
         bb: AxisAlignedBB, distanceBasedSpot: Boolean = false, outborder: Boolean,
-        randomization: RandomizationSettings? = null, predict: Boolean,
+        predict: Boolean,
         lookRange: Float, attackRange: Float, throughWallsRange: Float = 0f,
         bodyPoints: List<String> = listOf("Head", "Feet"), horizontalSearch: ClosedFloatingPointRange<Float> = 0f..1f,
     ): Rotation? {
@@ -254,10 +313,6 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         var attackRotation: Pair<Rotation, Float>? = null
         var lookRotation: Pair<Rotation, Float>? = null
-
-        randomization?.takeIf { it.randomizationChosen }?.run {
-            processNextSpot(bb, currRotation, eyes, scanRange.toDouble())
-        }
 
         val (hMin, hMax) = horizontalSearch.start.toDouble() to min(horizontalSearch.endInclusive + 0.01, 1.0)
 
@@ -326,16 +381,51 @@ object RotationUtils : MinecraftInstance, Listenable {
     private fun limitAngleChange(
         currentRotation: Rotation, targetRotation: Rotation, settings: RotationSettings
     ): Rotation {
+        // Every call here decides this tick's rotation (flick, track, hold,
+        // instant): stamp shaping so RotationRecorder can tell shaper-driven
+        // ticks from raw mouse play.
+        lastShapedTick = runTimeTicks
+
+        if (settings.humanize) {
+            if (settings.instant) {
+                aimStates.remove(settings)
+                return targetRotation.copy()
+            }
+
+            // NoRotateSet keeps its adapter-level hold; SimulateShortStop and
+            // friends are deprecated no-ops — superseded by the scheduler's
+            // fitted dwells (spec §11.5).
+            if (WaitTickUtils.hasScheduled(NoRotateSet)) {
+                return currentRotation
+            }
+
+            // Stage 6 (grid snap) is applied by every consumer below
+            // (release/server branches via fixedSensitivity(), the client
+            // branch inside toPlayer()).
+            val channel = channelFor(settings)
+            return AimEngine.step(
+                AimEngine.Input(
+                    current = currentRotation,
+                    reference = targetRotation,
+                    engaged = true,
+                    tick = runTimeTicks,
+                    gcd = getFixedAngleDelta(),
+                    seed = channel.seed,
+                    knobs = settings.engineKnobs(),
+                ),
+                channel.state,
+            )
+        }
+
         val (hSpeed, vSpeed) = if (settings.instant) {
             180f to 180f
-        } else settings.horizontalSpeed to settings.verticalSpeed
+        } else settings.horizontalAngleChange.random() to settings.verticalAngleChange.random()
 
         return performAngleChange(
             currentRotation,
             targetRotation,
             hSpeed,
             vSpeed,
-            !settings.instant && settings.legitimize,
             settings.minRotationDifference,
             settings.minRotationDifferenceResetTiming
         )
@@ -346,7 +436,6 @@ object RotationUtils : MinecraftInstance, Listenable {
         targetRotation: Rotation,
         hSpeed: Float,
         vSpeed: Float = hSpeed,
-        legitimize: Boolean,
         minRotationDiff: Float,
         minRotationDiffResetTiming: String,
     ): Rotation {
@@ -354,35 +443,16 @@ object RotationUtils : MinecraftInstance, Listenable {
 
         val rotationDifference = hypot(yawDiff, pitchDiff)
 
-        val isShortStopActive = WaitTickUtils.hasScheduled(this)
-        val isNoRotateSetActive = WaitTickUtils.hasScheduled(NoRotateSet)
-
-        if (isNoRotateSetActive) {
+        // NoRotateSet adapter policy; SimulateShortStop is a deprecated
+        // no-op (§11.5) — its slowdown branch is gone with the old engine.
+        if (WaitTickUtils.hasScheduled(NoRotateSet)) {
             yawDiff = 0F
             pitchDiff = 0F
-        } else if (isShortStopActive || activeSettings?.shouldPerformShortStop() == true) {
-            if (!isShortStopActive) {
-                WaitTickUtils.schedule(activeSettings?.shortStopDuration?.random()?.plus(1) ?: 0, this)
-            }
-
-            activeSettings?.resetSimulateShortStopData()
-
-            val yawSlowdown = (0F..0.1F).random()
-            val pitchSlowdown = (0F..0.1F).random()
-
-            yawDiff = (yawDiff * yawSlowdown).withGCD()
-            pitchDiff = (pitchDiff * pitchSlowdown).withGCD()
         }
 
         var (straightLineYaw, straightLinePitch) = run {
             val baseYawSpeed = abs(yawDiff safeDiv rotationDifference) * hSpeed
             val basePitchSpeed = abs(pitchDiff safeDiv rotationDifference) * vSpeed
-
-            // Apply imperfect correlation
-            if (legitimize) {
-                baseYawSpeed * (0.9F..1.1F).random()
-                basePitchSpeed * (0.9F..1.1F).random()
-            }
 
             baseYawSpeed to basePitchSpeed
         }
@@ -390,24 +460,14 @@ object RotationUtils : MinecraftInstance, Listenable {
         straightLineYaw = yawDiff.coerceIn(-straightLineYaw, straightLineYaw)
         straightLinePitch = pitchDiff.coerceIn(-straightLinePitch, straightLinePitch)
 
-        // Humans usually have some small jitter when moving their mouse from point A to point B.
-        // Usually when a rotation axis' difference is prioritized.
-        if (rotationDifference > 0F) {
-            val yawJitter = (-0.03F..0.03F).random() * straightLineYaw
-            val pitchJitter = (-0.02F..0.02F).random() * straightLinePitch
-
-            straightLineYaw += yawJitter
-            straightLinePitch += pitchJitter
-        }
-
         val minYaw = nextFloat(min(minRotationDiff, getFixedAngleDelta()), minRotationDiff).withGCD()
         val minPitch = nextFloat(min(minRotationDiff, getFixedAngleDelta()), minRotationDiff).withGCD()
 
-        applySlowDown(straightLineYaw, minYaw, minRotationDiffResetTiming, true, legitimize) {
+        applySlowDown(straightLineYaw, minYaw, minRotationDiffResetTiming, true) {
             straightLineYaw = it
         }
 
-        applySlowDown(straightLinePitch, minPitch, minRotationDiffResetTiming, false, legitimize) {
+        applySlowDown(straightLinePitch, minPitch, minRotationDiffResetTiming, false) {
             straightLinePitch = it
         }
 
@@ -415,7 +475,7 @@ object RotationUtils : MinecraftInstance, Listenable {
     }
 
     private fun applySlowDown(
-        diff: Float, min: Float, timing: String, yaw: Boolean, applyRealism: Boolean, action: (Float) -> Unit
+        diff: Float, min: Float, timing: String, yaw: Boolean, action: (Float) -> Unit
     ) {
         if (diff == 0f) {
             action(diff)
@@ -434,28 +494,7 @@ object RotationUtils : MinecraftInstance, Listenable {
             return
         }
 
-        if (!applyRealism) {
-            action(diff)
-            return
-        }
-
-        val range = when {
-            lastTick1 == 0f -> {
-                val inc = 0.2f * (diffAbs / 50f).coerceIn(0f, 1f)
-
-                0.1F + inc..0.5F + inc
-            }
-
-            else -> 0.3f..0.7f
-        }
-
-        val new = (lastTick1..diff).lerpWith(range.random())
-
-        if (abs(new.withGCD()) <= min && isSlowingDown) {
-            action(diff)
-        } else {
-            action(new)
-        }
+        action(diff)
     }
 
     /**
@@ -552,16 +591,12 @@ object RotationUtils : MinecraftInstance, Listenable {
             return
         }
 
-        if (!options.applyServerSide) {
-            currentRotation?.let {
-                mc.thePlayer.rotationYaw = it.yaw
-                mc.thePlayer.rotationPitch = it.pitch
-            }
-
-            resetRotation()
+        if (needsReleaseSync(options.applyServerSide, currentRotation)) {
+            releaseSync()
         }
 
         targetRotation = rotation
+        lastTargetSetTick = runTimeTicks
 
         resetTicks = if (!options.applyServerSide || !options.resetTicksValue.isSupported()) 1 else ticks
 
@@ -572,11 +607,44 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
     }
 
+    /**
+     * §11.6 release-sync: the pending spoof is written back into the view,
+     * then everything resets (grid-snapped, Phase-1 linger logic intact).
+     */
+    private fun releaseSync() {
+        currentRotation?.let { pending ->
+            mc.thePlayer?.let { player ->
+                player.rotationYaw = pending.yaw
+                player.rotationPitch = pending.pitch
+            }
+        }
+        resetRotation()
+    }
+
+    /**
+     * §11.6 module-toggle handoff: release-sync when [owner] owns the live
+     * request, and always drop the owner's stored engine state — the
+     * observable behavior change the handoff test pins (today's Aimbot
+     * skipped the release entirely).
+     */
+    fun releaseOwnedBy(owner: Module) {
+        if (activeSettings?.ownerModule == owner) {
+            releaseSync()
+        }
+        aimStates.keys.filter { it.ownerModule == owner }.toList().forEach { aimStates.remove(it) }
+    }
+
     private fun resetRotation() {
         resetTicks = 0
+        releaseSettleTicks = 0
+        releaseAgeTicks = 0
+        activeSettings?.let { aimStates.remove(it) }
         currentRotation?.let { (yaw, _) ->
             mc.thePlayer?.let {
-                it.rotationYaw = yaw + angleDifference(it.rotationYaw, yaw)
+                // Snap to the server grid: an unsnapped release writes fractional
+                // counts (see aim recordings, KillAura->manual handoff tick).
+                val gcd = getFixedAngleDelta()
+                it.rotationYaw = getFixedSensitivityAngle(yaw + angleDifference(it.rotationYaw, yaw), yaw, gcd)
                 syncRotations()
             }
         }
@@ -629,6 +697,37 @@ object RotationUtils : MinecraftInstance, Listenable {
         player.prevRotationPitch = player.rotationPitch
     }
 
+    /**
+     * Release-branch liveness state (findings §8.3 item 2).
+     *
+     * The shaping path's deadband leaves a released spoof ~1–1.3° behind the
+     * player (observed idle trails), and [isDifferenceAcceptableForReset]'s
+     * monotonic-convergence condition cannot pass while that floor dominates
+     * the spoof's own 2-tick displacement — so release never fired: the
+     * spoof followed the player indefinitely (every manual tick of the
+     * Sep-22 corpus labeled `source: KillAura`). Three guards keep release
+     * bounded: a tolerance floor above the deadband floor, a settle window
+     * that bypasses the monotonic check, and a hard timeout.
+     */
+    private var releaseSettleTicks = 0
+    private var releaseAgeTicks = 0
+
+    /** Degrees; must sit above the ~1.3° observed deadband floor. */
+    private const val RELEASE_TOLERANCE_FLOOR = 2.0f
+
+    /** Consecutive ticks within tolerance before resetting regardless of monotonic convergence. */
+    private const val RELEASE_SETTLE_TICKS = 6
+
+    /** Hard failsafe: never keep spoofing past 20 s of release. */
+    private const val RELEASE_TIMEOUT_TICKS = 400
+
+    /**
+     * ...and only force-reset when the handoff jump stays human-scale
+     * (≤ 10°, below the human per-tick p99 ≈ 17.5°); otherwise wait for the
+     * gap to shrink so a force-reset can never emit a huge single-tick jump.
+     */
+    private const val RELEASE_TIMEOUT_MAX_GAP = 10f
+
     private fun update() {
         val settings = activeSettings ?: return
         val player = mc.thePlayer ?: return
@@ -644,7 +743,15 @@ object RotationUtils : MinecraftInstance, Listenable {
         val serverRotation = currentRotation ?: serverRotation
 
         if (resetTicks == 0) {
-            if (isDifferenceAcceptableForReset(serverRotation, playerRotation, settings)) {
+            val gap = rotationDifference(playerRotation, serverRotation)
+            val tolerance = maxOf(settings.angleResetDifference, RELEASE_TOLERANCE_FLOOR)
+            releaseSettleTicks = if (gap <= tolerance) releaseSettleTicks + 1 else 0
+            releaseAgeTicks++
+
+            if (releaseSettleTicks >= RELEASE_SETTLE_TICKS ||
+                isDifferenceAcceptableForReset(serverRotation, playerRotation, settings) ||
+                (releaseAgeTicks >= RELEASE_TIMEOUT_TICKS && gap <= RELEASE_TIMEOUT_MAX_GAP)
+            ) {
                 resetRotation()
                 return
             }
@@ -654,6 +761,9 @@ object RotationUtils : MinecraftInstance, Listenable {
             ).fixedSensitivity()
             return
         }
+
+        releaseSettleTicks = 0
+        releaseAgeTicks = 0
 
         targetRotation?.let {
             limitAngleChange(serverRotation, it, settings).let { rotation ->
@@ -675,13 +785,17 @@ object RotationUtils : MinecraftInstance, Listenable {
     ): Boolean {
         if (!options.applyServerSide) return true
 
-        if (rotationDifference(target, curr) > options.angleResetDifference) return false
+        // Floor the configured tolerance: configs may store 0 (tightest), which
+        // can never be reached against the deadband residual — see release state.
+        if (rotationDifference(target, curr) >
+            maxOf(options.angleResetDifference, RELEASE_TOLERANCE_FLOOR)
+        ) return false
 
         // We use the last rotation saved 2 ticks ago because we have not updated the currentRotation yet.
         val diffs = angleDifferences(target, curr).abs
         val lastTickDiffs = angleDifferences(curr, lastRotations[1]).abs
 
-        return diffs.x <= lastTickDiffs.x && diffs.y <= lastTickDiffs.y || !options.legitimize
+        return diffs.x <= lastTickDiffs.x && diffs.y <= lastTickDiffs.y || !options.humanize
     }
 
     /**
@@ -690,7 +804,8 @@ object RotationUtils : MinecraftInstance, Listenable {
     fun syncSpecialModuleRotations() {
         serverRotation.let { (yaw, _) ->
             mc.thePlayer?.let {
-                it.rotationYaw = yaw + angleDifference(it.rotationYaw, yaw)
+                val gcd = getFixedAngleDelta()
+                it.rotationYaw = getFixedSensitivityAngle(yaw + angleDifference(it.rotationYaw, yaw), yaw, gcd)
                 syncRotations()
             }
         }
@@ -749,7 +864,6 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         if (!packet.rotating) {
-            activeSettings?.resetSimulateShortStopData()
             return@handler
         }
 
@@ -760,8 +874,6 @@ object RotationUtils : MinecraftInstance, Listenable {
         if (Rotations.debugRotations && currentRotation != null) {
             chat("PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}")
         }
-
-        activeSettings?.updateSimulateShortStopData(diffs.x)
     }
 
     enum class BodyPoint(val rank: Int, val range: ClosedFloatingPointRange<Double>, val displayName: String) {
@@ -783,4 +895,19 @@ object RotationUtils : MinecraftInstance, Listenable {
             else -> point
         }
     }
+
+    val onWorld = handler<WorldEvent> {
+        clearAimStates()
+    }
 }
+
+/**
+ * §11.6 handoff predicate (top-level so the unit test classloads without
+ * touching the [RotationUtils] object / Minecraft): a client-side request
+ * must release-sync a pending server-side spoof first — and only then.
+ * The pending-spoof guard is what keeps continuous client-side requests
+ * from resetting the stored engine state every tick (churn that would
+ * break every fitted stage).
+ */
+internal fun needsReleaseSync(incomingApplyServerSide: Boolean, pendingSpoof: Rotation?) =
+    !incomingApplyServerSide && pendingSpoof != null

@@ -6,3 +6,6 @@
 /.settings/
 /.gradle/
 /.kotlin/
+
+# Python bytecode caches (tools/)
+__pycache__/

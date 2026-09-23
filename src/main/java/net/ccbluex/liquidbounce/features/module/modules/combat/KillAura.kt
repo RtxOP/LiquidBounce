@@ -37,7 +37,6 @@ import net.ccbluex.liquidbounce.utils.render.RenderUtils
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawCircle
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawEntityBox
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawPlatform
-import net.ccbluex.liquidbounce.utils.rotation.RandomizationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.runWithModifiedRaycastResult
 import net.ccbluex.liquidbounce.utils.rotation.Rotation
@@ -223,7 +222,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
 
     private val generateSpotBasedOnDistance by boolean("GenerateSpotBasedOnDistance", false) { options.rotationsActive }
 
-    private val randomization = RandomizationSettings(this) { options.rotationsActive }
     private val outBorder by boolean("OutBorder", false) { options.rotationsActive }
 
     private val highestBodyPointToTargetValue = choices(
@@ -927,7 +925,6 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             boundingBox,
             generateSpotBasedOnDistance,
             outBorder && clickMode.isWithinPostClickWindow(),
-            randomization,
             predict = false,
             lookRange = range + scanRange,
             attackRange = range,

@@ -1,5 +1,16 @@
 pluginManagement {
     repositories {
+        // JitPack pruned the pinned ForgeGradle commit build, so the plugin jar
+        // must be installed locally (one time per machine):
+        //   DEST=~/.m2/repository/com/github/ccbluex/ForgeGradle/a3d86a59c0
+        //   mkdir -p $DEST
+        //   curl -L -o $DEST/ForgeGradle-a3d86a59c0.jar \
+        //     https://jitpack.io/com/github/ccbluex/ForgeGradle/FG_2.1-a3d86a59c0-1/ForgeGradle-FG_2.1-a3d86a59c0-1.jar
+        //   curl -s -o $DEST/ForgeGradle-a3d86a59c0.pom \
+        //     https://jitpack.io/com/github/ccbluex/ForgeGradle/FG_2.1-a3d86a59c0-1/ForgeGradle-FG_2.1-a3d86a59c0-1.pom
+        //   sed -i 's|<version>FG_2.1-SNAPSHOT</version>|<version>a3d86a59c0</version>|' \
+        //     $DEST/ForgeGradle-a3d86a59c0.pom
+        mavenLocal()
         mavenCentral()
         gradlePluginPortal()
         maven { url = "https://maven.minecraftforge.net/" }

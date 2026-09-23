@@ -988,7 +988,7 @@ object Scaffold : Module("Scaffold", Category.WORLD, Keyboard.KEY_I) {
 
         val raytrace = performBlockRaytrace(rotation, maxReach) ?: return null
 
-        val multiplier = if (options.legitimize) 3 else 1
+        val multiplier = if (options.humanize) 3 else 1
 
         if (raytrace.blockPos == offsetPos && (!raycast || raytrace.sideHit == side.opposite) && canUpdateRotation(
                 currRotation, rotation, multiplier

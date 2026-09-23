@@ -14,7 +14,6 @@ import net.ccbluex.liquidbounce.utils.attack.EntityUtils.isSelected
 import net.ccbluex.liquidbounce.utils.extensions.getDistanceToEntityBox
 import net.ccbluex.liquidbounce.utils.inventory.isEmpty
 import net.ccbluex.liquidbounce.utils.render.RenderUtils.drawPlatform
-import net.ccbluex.liquidbounce.utils.rotation.RandomizationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.faceTrajectory
@@ -51,8 +50,6 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
     { predict && gravityType == "Projectile" }
 
     private val options = RotationSettings(this).withoutKeepRotation()
-
-    private val randomization = RandomizationSettings(this) { options.rotationsActive }
 
     private val highestBodyPointToTargetValue = choices(
         "HighestBodyPointToTarget", arrayOf("Head", "Body", "Feet"), "Head"
@@ -123,7 +120,6 @@ object ProjectileAimbot : Module("ProjectileAimbot", Category.COMBAT) {
             searchCenter(
                 it,
                 outborder = false,
-                randomization = this.randomization,
                 predict = true,
                 lookRange = range,
                 attackRange = range,

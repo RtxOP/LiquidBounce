@@ -28,6 +28,19 @@ compileKotlin {
     }
 }
 
+compileTestKotlin {
+    kotlinOptions {
+        jvmTarget = "1.8"
+    }
+}
+
+test {
+    useJUnitPlatform()
+    testLogging {
+        events "passed", "failed", "skipped"
+    }
+}
+
 minecraft {
     version = "1.8.9-11.15.1.2318-1.8.9"
     runDir = "run"
@@ -79,6 +92,11 @@ dependencies {
     implementation "com.formdev:flatlaf:3.5.4"
 
     implementation fileTree(include: ["*.jar"], dir: "libs")
+
+    // Phase-2 test spikes: JUnit 5 for the MC-free engine core (findings §8.3.5).
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.1"
+    // Pin the launcher to match the platform version (Gradle 6.9 would use its bundled 1.7.0).
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher:1.10.1"
 }
 
 shadowJar {

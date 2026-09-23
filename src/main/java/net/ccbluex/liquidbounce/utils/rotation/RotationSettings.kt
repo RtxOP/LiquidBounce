@@ -5,12 +5,11 @@
  */
 package net.ccbluex.liquidbounce.utils.rotation
 
+import com.google.gson.JsonObject
 import net.ccbluex.liquidbounce.config.Configurable
 import net.ccbluex.liquidbounce.config.ListValue
 import net.ccbluex.liquidbounce.features.module.Module
-import net.ccbluex.liquidbounce.utils.extensions.random
 import net.ccbluex.liquidbounce.utils.extensions.withGCD
-import kotlin.math.abs
 
 // TODO: refactor them all
 
@@ -21,10 +20,12 @@ class AlwaysRotationSettings(owner: Module, generalApply: () -> Boolean = { true
 }
 
 @Suppress("MemberVisibilityCanBePrivate")
-open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
+open class RotationSettings(val ownerModule: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
 
     open val rotationsValue = boolean("Rotations", true) { generalApply() }
     open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
+    // SimulateShortStop + friends below are deprecated no-ops (§11.5):
+    // superseded by the scheduler's fitted dwells; registered for configs.
     open val simulateShortStopValue = boolean("SimulateShortStop", false) { rotationsActive && generalApply() }
     open val rotationDiffBuildUpToStopValue = float("RotationDiffBuildUpToStop", 180f, 50f..720f) { simulateShortStop }
     open val maxThresholdAttemptsToStopValue = int("MaxThresholdAttemptsToStop", 1, 0..5) { simulateShortStop }
@@ -37,12 +38,33 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         rotationsActive && applyServerSide && generalApply()
     }
 
-    open val legitimizeValue = boolean("Legitimize", false) { rotationsActive && generalApply() }
+    open val humanizeValue = boolean("Humanize", false) { rotationsActive && generalApply() }
+    open val humanizeTremorValue = float("HumanizeTremor", 0.08f, 0f..0.3f) { humanize && rotationsActive && generalApply() }
+    open val humanizeOvershootChanceValue = float("HumanizeOvershootChance", 15f, 0f..100f) { humanize && rotationsActive && generalApply() }
+    open val humanizeOvershootMagnitudeValue = float("HumanizeOvershootMagnitude", 1.5f, 0.1f..3f) { humanize && rotationsActive && generalApply() }
+    open val humanizeCurvatureValue = float("HumanizeCurvature", 0.07f, 0f..0.2f) { humanize && rotationsActive && generalApply() }
+    open val humanizeReactionDelayValue = int("HumanizeReactionDelay", 3, 0..10) { humanize && rotationsActive && generalApply() }
+
+    // The four engine knobs (spec §11.3) — the frozen tuning budget. The
+    // humanize knobs above are deprecated no-ops kept registered so saved
+    // configs load (§11.5): the engine path reads only these four.
+    open val speedScaleValue = float("SpeedScale", 1f, 0.25f..4f) {
+        rotationsActive && humanize && generalApply()
+    }
+    open val noiseScaleValue = float("NoiseScale", 1f, 0f..3f) {
+        rotationsActive && humanize && generalApply()
+    }
+    open val eventRateScaleValue = float("EventRateScale", 1f, 0.25f..4f) {
+        rotationsActive && humanize && generalApply()
+    }
+    open val reactionDelayMsValue = int("ReactionDelayMs", 0, 0..600) {
+        rotationsActive && humanize && generalApply()
+    }
 
     open val horizontalAngleChangeValue =
-        floatRange("HorizontalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
+        floatRange("HorizontalAngleChange", 10f..20f, 1f..180f) { rotationsActive && generalApply() }
     open val verticalAngleChangeValue =
-        floatRange("VerticalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
+        floatRange("VerticalAngleChange", 8f..15f, 1f..180f) { rotationsActive && generalApply() }
 
     open val angleResetDifferenceValue = float("AngleResetDifference", 5f.withGCD(), 0.0f..180f) {
         rotationsActive && applyServerSide && generalApply()
@@ -67,7 +89,25 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     val strict by strictValue
     val keepRotation by keepRotationValue
     val resetTicks by resetTicksValue
-    val legitimize by legitimizeValue
+    val humanize by humanizeValue
+    val humanizeTremor by humanizeTremorValue
+    val humanizeOvershootChance by humanizeOvershootChanceValue
+    val humanizeOvershootMagnitude by humanizeOvershootMagnitudeValue
+    val humanizeCurvature by humanizeCurvatureValue
+    val humanizeReactionDelay by humanizeReactionDelayValue
+    val speedScale by speedScaleValue
+    val noiseScale by noiseScaleValue
+    val eventRateScale by eventRateScaleValue
+    val reactionDelayMs by reactionDelayMsValue
+
+    /** The four engine knobs (spec §11.3) in engine form (§11.1 adapter). */
+    internal fun engineKnobs() = net.ccbluex.liquidbounce.utils.rotation.aim.AimEngine.Knobs(
+        speedScale = speedScale,
+        noiseScale = noiseScale,
+        eventRateScale = eventRateScale,
+        reactionDelayMs = reactionDelayMs,
+    )
+
     val horizontalAngleChange by horizontalAngleChangeValue
     val verticalAngleChange by verticalAngleChangeValue
     val angleResetDifference by angleResetDifferenceValue
@@ -78,44 +118,44 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     var immediate = false
     var instant = false
 
-    var rotDiffBuildUp = 0f
-    var maxThresholdReachAttempts = 0
-
     open val rotationsActive
         get() = rotations
-
-    val horizontalSpeed
-        get() = horizontalAngleChange.random()
-
-    val verticalSpeed
-        get() = verticalAngleChange.random()
 
     fun withoutKeepRotation() = apply {
         keepRotationValue.excludeWithState()
     }
 
-    fun updateSimulateShortStopData(diff: Float) {
-        rotDiffBuildUp += diff
-    }
-
-    fun resetSimulateShortStopData() {
-        rotDiffBuildUp = 0f
-        maxThresholdReachAttempts = 0
-    }
-
-    fun shouldPerformShortStop(): Boolean {
-        if (abs(rotDiffBuildUp) < rotationDiffBuildUpToStop || !simulateShortStop) return false
-
-        if (maxThresholdReachAttempts < maxThresholdAttemptsToStop) {
-            maxThresholdReachAttempts++
-            return false
-        }
-
-        return true
+    /**
+     * Shaping-relevant snapshot for [net.ccbluex.liquidbounce.features.module.modules.misc.RotationRecorder].
+     * Only the values that change rotation output. The owning module name comes from [owner].
+     */
+    fun snapshot(): JsonObject = JsonObject().apply {
+        addProperty("humanize", humanize)
+        addProperty("tremor", humanizeTremor)
+        addProperty("overshoot_chance", humanizeOvershootChance)
+        addProperty("overshoot_magnitude", humanizeOvershootMagnitude)
+        addProperty("curvature", humanizeCurvature)
+        addProperty("reaction_delay", humanizeReactionDelay)
+        addProperty("speed_scale", speedScale)
+        addProperty("noise_scale", noiseScale)
+        addProperty("event_rate_scale", eventRateScale)
+        addProperty("reaction_delay_ms", reactionDelayMs)
+        addProperty("h_min", horizontalAngleChange.start)
+        addProperty("h_max", horizontalAngleChange.endInclusive)
+        addProperty("v_min", verticalAngleChange.start)
+        addProperty("v_max", verticalAngleChange.endInclusive)
+        addProperty("min_rotation_difference", minRotationDifference)
+        addProperty("min_rotation_difference_reset_timing", minRotationDifferenceResetTiming)
+        addProperty("simulate_short_stop", simulateShortStop)
+        addProperty("short_stop_duration", shortStopDuration.toString())
+        addProperty("keep_rotation", keepRotation)
+        addProperty("apply_server_side", applyServerSide)
+        addProperty("reset_ticks", resetTicks)
+        addProperty("angle_reset_difference", angleResetDifference)
     }
 
     init {
-        owner.addValues(this.values)
+        ownerModule.addValues(this.values)
     }
 }
 
