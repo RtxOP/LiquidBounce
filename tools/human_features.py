@@ -2,19 +2,37 @@
 """Extract human-aim feature distributions from RotationRecorder sessions.
 
 PARTITION (enforced by assertions below - never mix these groups):
-  HUMAN  = aim-2026-09-22_*.jsonl  schema 8, manual mouse input.
+  HUMAN  = aim-2026-09-22_*.jsonl (schema 8) + aim-2026-10-02_*.jsonl
+           (schema 9), manual mouse input. Both are pooled: the Sep-22 set
+           is calm play on an unlogged server, the Oct-02 set is the TARGET
+           server (eu.gamester.org, 547 ms ping) and carries a much heavier
+           speed tail (p99 32.3 vs 17.5 deg/tick, max 168.9 vs 62.5).
            Signal = player_yaw / player_pitch (raw, GCD-quantised mouse).
-           NOTE: source reads "KillAura" on every tick - artifact of the
-           RotationUtils release-branch linger (activeSettings never reset
-           after a prior KillAura test). Ground truth = target_yaw null on
-           100% of ticks (no live targeting) + attacker being the player.
+           Sep-22 NOTE: source reads "KillAura" on every tick - artifact of
+           the RotationUtils release-branch linger (activeSettings never
+           reset after a prior KillAura test). Ground truth = target_yaw null
+           on 100% of ticks (no live targeting) + attacker being the player.
+           Oct-02 NOTE: schema 9 replaced target_yaw with aimbot_engaged +
+           per-tick crosshair_entity_id; source reads "manual" and
+           aimbot_engaged/rotation_active are false on 100% of ticks.
+           RECORDER CAVEAT: teleport_jumps / max_speed in the summary are
+           only accumulated while rotationActive (RotationRecorder), so they
+           are ALWAYS 0/0 for a manual session and carry no information.
+           Never filter this corpus on those fields - the Oct-02 168.9
+           deg/tick tick is a real player whip-turn, not a teleport.
   SHAPER = aim-2026-09-19_*.jsonl  schema 7, real bot output.
            Signal = server_yaw / server_pitch (shaper-produced).
            Fresh targets present on essentially every KillAura tick.
 
 Also derives a third series for diagnostics: the TRAILING shaper output of
-the manual sessions (server_yaw, Sep 22) - what today's engine does to a
-real human input stream (exposes the deferred stop-and-go defect).
+the manual sessions (server_yaw) - what the engine does to a real human
+input stream.
+
+Engagement-onset analysis (reaction-delay feasibility) is reported, not
+fitted: see reaction_delay_report(). The Oct-02 corpus contains only 1-2
+clean rest -> acquire transitions, which cannot support a fit; the engine
+therefore keeps reactionDelayMs at its default 0 until a corpus with clean
+onsets exists.
 
 Outputs tools/human_corpus_features.json and a printed report.
 Stdlib only; no learned models (distribution/KS comparisons only).
@@ -28,12 +46,104 @@ import sys
 from pathlib import Path
 
 FS = 20.0  # tick rate
-HUMAN_GLOB = "tools/aim-2026-09-22_*.jsonl"
+# Fit group: both manual corpora, pooled. CORPUS_GROUPS keeps them separately
+# addressable so the harness can report a per-corpus held-out breakdown.
+HUMAN_GLOBS = ("tools/aim-2026-09-22_*.jsonl", "tools/aim-2026-10-02_*.jsonl")
+# Deployment-condition corpus (the server the cheat actually runs on).
+TARGET_GLOB = "tools/aim-2026-10-02_*.jsonl"
 SHAPER_GLOB = "tools/aim-2026-09-19_*.jsonl"
 OUT_JSON = Path("tools/human_corpus_features.json")
 ZERO_EPS = 1e-9
 GRID_RESID_TOL = 0.02  # fractional gcd steps, matches RotationRecorder
 MX_DUAL_THRESHOLD = 0.25  # deg: MX-Project's dual-axis motion threshold (findings §8.3 item 4)
+# Schema 8 used target_yaw (null == no live targeting); schema 9 uses
+# aimbot_engaged/rotation_active. Both are accepted for the HUMAN group.
+HUMAN_SCHEMAS = (8, 9)
+
+
+def human_paths():
+    """Every MANUAL recording, deduped and sorted.
+
+    Content-filtered, not glob-only: the same glob legitimately matches both
+    manual sessions and bot sessions once you record KillAura on the same
+    server (which is now the normal case). A recording counts as manual only
+    if no tick was shaper-driven, so a bot session can never silently enter
+    the fit group and flatter the engine.
+    """
+    out = set()
+    for g in HUMAN_GLOBS:
+        out.update(glob.glob(g))
+    return sorted(p for p in out if classify_path(p) == "human")
+
+
+def bot_paths():
+    """Every BOT recording matching the shaper globs, plus any HUMAN-glob file
+    that turns out to be shaper-driven (same server, same day)."""
+    out = set(glob.glob(SHAPER_GLOB))
+    for g in HUMAN_GLOBS:
+        for p in glob.glob(g):
+            if classify_path(p) == "bot":
+                out.add(p)
+    return sorted(out)
+
+
+def classify_path(path):
+    """'human' | 'bot' from the recording's own contents.
+
+    The discriminator is schema-dependent, because `rotation_active` means
+    different things in the two:
+
+    - schema 9: `rotation_active` is the shaper stamp (a module produced this
+      tick's rotation), and `aimbot_engaged` is conclusive on its own.
+    - schema 8: `rotation_active` lingers TRUE on 100% of ticks of a purely
+      manual session (the documented release-branch artifact - a module still
+      held RotationSettings), so it says nothing. The only sound signal is a
+      non-null `target_yaw`, i.e. a live target was being aimed at.
+
+    Getting this wrong is not cosmetic: a bot session admitted to the HUMAN
+    group flatters the engine, and a manual session rejected from it silently
+    shrinks the fit.
+    """
+    schema = ticks = engaged = active = fresh = 0
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or '"tick"' not in line and '"session"' not in line:
+                continue
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            t = r.get("type")
+            if t == "session":
+                if not schema:
+                    schema = r.get("schema") or 0
+                continue
+            if t != "tick":
+                continue
+            ticks += 1
+            if r.get("aimbot_engaged"):
+                engaged += 1
+            if r.get("rotation_active"):
+                active += 1
+            if r.get("target_yaw") is not None:
+                fresh += 1
+    if not ticks:
+        return "human"
+    if engaged:
+        return "bot"                     # schema 9 shaper stamp
+    if schema <= 8:
+        return "bot" if fresh else "human"  # schema 8: targets are the signal
+    return "bot" if active / ticks > 0.25 else "human"
+
+
+def subcorpus_of(path):
+    """'sep22' / 'oct02' for a HUMAN recording, else None."""
+    name = Path(path).name
+    for tag, pat in (("sep22", "aim-2026-09-22_"), ("oct02", "aim-2026-10-02_")):
+        if pat in name:
+            return tag
+    return None
 
 
 # ---------------------------------------------------------------- loading
@@ -751,6 +861,11 @@ def guard(human_files, shaper_files):
          does not.
     Plus the raw-mouse fingerprint: the player stream itself must sit on the
     GCD grid (residual <=0.02 steps on >=99% of nonzero deltas).
+
+    Schema 8 (Sep-22) proves "no live targeting" via target_yaw being null on
+    every tick. Schema 9 (Oct-02) dropped that field; the equivalent proof is
+    aimbot_engaged / rotation_active false on every tick, which is checked
+    here instead so the two corpora stay interchangeable in the fit group.
     """
     problems = []
     rows = []
@@ -760,6 +875,8 @@ def guard(human_files, shaper_files):
         gcd = sess.get("gcd") or 0.09143358
         tgt = sum(1 for t in ticks
                   if t.get("target_yaw") is not None)
+        engaged = sum(1 for t in ticks if t.get("aimbot_engaged"))
+        rot_active = sum(1 for t in ticks if t.get("rotation_active"))
         srcs = {}
         near_attack = 0
         for t in ticks:
@@ -852,6 +969,9 @@ def guard(human_files, shaper_files):
         row = {
             "file": name, "schema": sess.get("schema"), "ticks": len(ticks),
             "sources": srcs, "target_nonnull": tgt,
+            "aimbot_engaged_ticks": engaged,
+            "rotation_active_ticks": rot_active,
+            "server_ip": sess.get("server_ip"), "ping_ms": sess.get("ping_ms"),
             "click_evidence_frac": near_attack / max(1, len(ticks)),
             "player_motion_frac": pm,
             "trail_p50": pct(trail_vals, 0.5), "trail_p95": pct(trail_vals, 0.95),
@@ -864,10 +984,26 @@ def guard(human_files, shaper_files):
             "idle_trail_max": idle_max,
         }
         rows.append(row)
-        if sess.get("schema") != 8:
-            problems.append(f"{name}: expected schema 8, got {sess.get('schema')}")
+        if sess.get("schema") not in HUMAN_SCHEMAS:
+            problems.append(
+                f"{name}: expected schema in {HUMAN_SCHEMAS}, got {sess.get('schema')}")
         if tgt > 0:
             problems.append(f"{name}: {tgt} fresh targets - not a clean manual recording")
+        if engaged:
+            problems.append(
+                f"{name}: {engaged} ticks with aimbot_engaged - bot was live, "
+                f"not a clean manual recording")
+        # rotation_active means "some module still holds RotationSettings",
+        # which lingers long after the shaper stops (the Sep-22 release-linger
+        # artifact: true on 100% of those ticks while target_yaw is null
+        # throughout). It is therefore only a confusion signal where the
+        # linger cannot explain it - schema 9, where it is 0 everywhere.
+        if rot_active and sess.get("schema") != 8:
+            problems.append(
+                f"{name}: {rot_active} ticks with rotation_active - a rotation "
+                f"module was shaping, not a clean manual recording")
+        if rot_active and sess.get("schema") == 8:
+            row["rotation_active_expected"] = True  # documented linger artifact
         if ep_fail:
             problems.append(
                 f"{name}: {ep_fail}/{ep_count} high-trail episodes NOT explained by "
@@ -902,12 +1038,79 @@ def guard(human_files, shaper_files):
     return rows, problems
 
 
+def reaction_delay_report(human_files, yk="player_yaw", pk="player_pitch",
+                          motion_eps=0.5, pre_window=10, rest_eps=0.05):
+    """Can reactionDelayMs be fitted? Reports feasibility, never fabricates.
+
+    A usable sample needs a *clean acquisition*: a crosshair onset on an
+    entity never seen before in that session, preceded by a genuine rest
+    window (max |delta| below `rest_eps` over the `pre_window` ticks before).
+    Without the rest window the "onset" is just the crosshair landing on a
+    target the player was already turning toward, so the measured lag is
+    zero-or-negative and fitting it would encode a non-human constant.
+
+    Returns a dict with the per-onset samples and an explicit verdict.
+    """
+    fresh, reacq = [], 0
+    for f in human_files:
+        ticks = f["ticks"]
+        ys, ps = deltas(ticks, yk, pk)
+        # speed[i] = |rotation between tick i-1 and tick i|; speed[0] = 0.
+        speed = [0.0] + [math.hypot(a, b) for a, b in zip(ys, ps)]
+        if len(speed) < len(ticks):
+            speed += [0.0] * (len(ticks) - len(speed))
+        seen = set()
+        for k in range(1, len(ticks)):
+            a = ticks[k - 1].get("crosshair_entity_id")
+            b = ticks[k].get("crosshair_entity_id")
+            if b is None or b == a:
+                continue
+            if b in seen:
+                reacq += 1
+                continue
+            seen.add(b)
+            pre = speed[max(0, k - pre_window):k]
+            quiet = max(pre) if pre else 0.0
+            # speed[k] is the move INTO the onset tick, so the first
+            # post-onset move is speed[k+1].
+            post = speed[k + 1:k + 1 + 10]
+            lag = next((j for j, v in enumerate(post) if v > motion_eps), None)
+            fresh.append({
+                "file": Path(f["path"]).name, "tick": k,
+                "entity": b,
+                "name": ticks[k].get("crosshair_entity_name"),
+                "restful": quiet < rest_eps,
+                "max_delta_before": quiet,
+                "lag_ticks": (lag + 1) if lag is not None else None,
+            })
+    clean = [s for s in fresh if s["restful"] and s["lag_ticks"] is not None]
+    lags = sorted(s["lag_ticks"] for s in clean)
+    # 6 samples is the floor below which a quantile fit is noise, not a fit.
+    MIN_SAMPLES = 6
+    return {
+        "fresh_onsets": len(fresh),
+        "reacquisitions": reacq,
+        "restful_onsets": len(clean),
+        "lag_ticks_sorted": lags,
+        "lag_median_ticks": (lags[len(lags) // 2] if lags else None),
+        "lag_p90_ticks": (lags[max(0, int(0.9 * len(lags)) - 1)] if lags else None),
+        "min_samples_required": MIN_SAMPLES,
+        "fittable": len(lags) >= MIN_SAMPLES,
+        "verdict": (
+            f"{len(lags)} clean rest->acquire transitions (need "
+            f"{MIN_SAMPLES}); reactionDelayMs stays at its default 0"
+            if len(lags) < MIN_SAMPLES else
+            f"{len(lags)} clean transitions - fittable, median "
+            f"{(lags[len(lags) // 2] if lags else 0) * 50} ms"
+        ),
+    }
+
+
 # ---------------------------------------------------------------- main
 
 def main():
-    here = Path.cwd()
-    human_paths = sorted(glob.glob(HUMAN_GLOB))
-    shaper_paths = sorted(glob.glob(SHAPER_GLOB))
+    human_paths = globals()["human_paths"]()
+    shaper_paths = bot_paths()
     if not human_paths or not shaper_paths:
         print("missing recordings", file=sys.stderr)
         return 2
@@ -923,7 +1126,10 @@ def main():
     for r in rows:
         if "sources" in r:
             print(f"  HUMAN  {r['file']}  schema={r['schema']} ticks={r['ticks']} "
-                  f"src={r['sources']} tgt={r['target_nonnull']}")
+                  f"src={r['sources']} tgt={r['target_nonnull']} "
+                  f"engaged={r.get('aimbot_engaged_ticks')} "
+                  f"rot_active={r.get('rotation_active_ticks')} "
+                  f"ip={r.get('server_ip')} ping={r.get('ping_ms')}")
             print(f"         click_frac={r['click_evidence_frac']:.2f} "
                   f"player_move={r['player_motion_frac']:.2f} "
                   f"grid_ok={r['grid_frac_ok']:.3f} grid_p99={r['grid_p99']:.4f} "
@@ -943,8 +1149,8 @@ def main():
         for p in problems:
             print("   -", p)
         return 3
-    print("  OK: partition holds (Sep22 = manual raw-mouse / fresh-target-free, "
-          "Sep19 = bot / fresh targets)")
+    print("  OK: partition holds (Sep22+Oct02 = manual raw-mouse / no bot "
+          "engagement, Sep19 = bot / fresh targets)")
     print()
 
     human = group_features(human_files, "player_yaw", "player_pitch")
@@ -952,6 +1158,17 @@ def main():
     shaper = group_features(shaper_files, "server_yaw", "server_pitch")
     slow_noise = slow_noise_features(human_files)
     noise_bins = noise_by_speed(human_files)
+    onset = reaction_delay_report(human_files)
+
+    # Per-corpus features: the two HUMAN sub-corpora are different play
+    # styles (calm/unlogged vs the target server's heavier tail). Keeping
+    # them separately addressable is what lets the harness report a
+    # held-out breakdown instead of one blended number.
+    subsets = {}
+    for tag, pat in (("sep22", "aim-2026-09-22_"), ("oct02", "aim-2026-10-02_")):
+        sub = [f for f in human_files if pat in f["path"]]
+        if sub:
+            subsets[tag] = group_features(sub, "player_yaw", "player_pitch")["pooled"]
 
     def line(tag, f):
         e = f["epochs"]
@@ -969,6 +1186,11 @@ def main():
     line("HUMAN", human["pooled"])
     line("TRAIL", trail["pooled"])
     line("SHAPER", shaper["pooled"])
+    if subsets:
+        print("-" * 78)
+        print("  HUMAN sub-corpora (held-out breakdown):")
+        for tag, f in subsets.items():
+            line(f"  {tag}", f)
     print()
 
     h, t, s = human["pooled"], trail["pooled"], shaper["pooled"]
@@ -1010,8 +1232,17 @@ def main():
             "shaper_files": [Path(p).name for p in shaper_paths],
             "human_signal": "player_yaw/player_pitch",
             "shaper_signal": "server_yaw/server_pitch",
+            "human_subcorpora": sorted(subsets.keys()),
             "linger_caveat": "Sep22 source label says KillAura; it is the "
                              "release-branch linger. target_yaw null everywhere.",
+            "oct02_caveat": "Oct02 is schema 9 on the target server "
+                            "(eu.gamester.org, 547ms ping); aimbot_engaged and "
+                            "rotation_active are false on 100% of ticks. Its "
+                            "speed tail is genuinely heavier (p99 32.3 vs 17.5, "
+                            "max 168.9 vs 62.5 deg/tick) and is real player aim, "
+                            "NOT a teleport - RotationRecorder only accumulates "
+                            "teleport_jumps/max_speed while rotationActive, so "
+                            "those summary fields are always 0 for manual files.",
         },
         "noise": {
             "beta_position": spec.get("position", {}).get("beta"),
@@ -1064,7 +1295,24 @@ def main():
             "trail_end_flip_rate": t["epochs"]["end_flip_rate"],
             "human_end_flip_rate": h["epochs"]["end_flip_rate"],
         },
-        "mc": {"gcd": h["gcd"], "windowed_std": h["windowed"]},
+        # Per-sub-corpus speed quantiles. SERVO_SPEED_MAX must be an upper
+        # BOUND with headroom, never a sample maximum: fitting it to the
+        # corpus max gave the backstop zero headroom and it clipped 14 real
+        # human ticks (0.20%) on the target-server corpus.
+        "servo_speed_bounds": {
+            "pooled": {
+                q: h["speed"].get(q) for q in ("p50", "p90", "p99", "max")
+            },
+            "by_subcorpus": {
+                tag: {q: f["speed"].get(q) for q in ("p50", "p90", "p99", "max")}
+                for tag, f in subsets.items()
+            },
+            "observed_max": max(
+                [h["speed"].get("max") or 0.0]
+                + [f["speed"].get("max") or 0.0 for f in subsets.values()]),
+        },
+        "reaction_delay": onset,
+        "mc": {"gcd": h["gcd"], "windowed": h["windowed"]},
         "ks": ks,
     }
 
@@ -1072,6 +1320,7 @@ def main():
                     "fs": FS,
                     "guard_rows": rows},
            "human": human, "trailing_shaper": trail, "bot_shaper": shaper,
+           "human_subsets": subsets,
            "fitted": fitted}
     with open(OUT_JSON, "w") as fh:
         json.dump(out, fh, indent=1, allow_nan=True)
@@ -1080,7 +1329,8 @@ def main():
     print("FITTED PARAMETERS (for the architecture redo)")
     print("=" * 78)
     print(json.dumps({k: fitted[k] for k in
-                      ("noise", "dwell", "correction", "servo_hints")}, indent=1))
+                      ("noise", "dwell", "correction", "servo_hints",
+                       "servo_speed_bounds", "reaction_delay")}, indent=1))
     print(f"\nwrote {OUT_JSON}")
     return 0
 

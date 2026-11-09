@@ -939,7 +939,9 @@ object KillAura : Module("KillAura", Category.COMBAT, Keyboard.KEY_R) {
             return false
         }
 
-        setTargetRotation(rotation, options = options)
+        // targetId so the engine can arm its reaction delay once per
+        // acquisition instead of once per channel (see AimEngine.Input).
+        setTargetRotation(rotation, options = options, targetId = entity.entityId)
 
         player.setPosAndPrevPos(currPos, oldPos)
 

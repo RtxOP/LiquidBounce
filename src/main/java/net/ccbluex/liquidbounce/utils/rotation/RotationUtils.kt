@@ -385,6 +385,9 @@ object RotationUtils : MinecraftInstance, Listenable {
         // instant): stamp shaping so RotationRecorder can tell shaper-driven
         // ticks from raw mouse play.
         lastShapedTick = runTimeTicks
+        // Take the acquisition edge once per shaped tick so it can never
+        // accumulate across ticks or survive into a later humanize toggle.
+        val freshTarget = consumeFreshTarget()
 
         if (settings.humanize) {
             if (settings.instant) {
@@ -412,6 +415,7 @@ object RotationUtils : MinecraftInstance, Listenable {
                     gcd = getFixedAngleDelta(),
                     seed = channel.seed,
                     knobs = settings.engineKnobs(),
+                    freshTarget = freshTarget,
                 ),
                 channel.state,
             )
@@ -578,11 +582,42 @@ object RotationUtils : MinecraftInstance, Listenable {
     ).any { isVisible(it) }
 
     /**
+     * Entity the live request is aimed at, or null for target-less requests
+     * (block placement, MLG, ...). Compared by the adapter to derive the
+     * fresh-target edge the engine uses to arm the reaction delay: rotation
+     * distance cannot distinguish "new target" from "same target, big flick".
+     */
+    internal var activeTargetId: Int? = null
+        private set
+
+    /**
+     * Set by [setTargetRotation] when the requesting module switched to a
+     * different entity, consumed by the next [limitAngleChange] so the edge
+     * fires exactly once per acquisition.
+     */
+    private var freshTargetEdge = false
+
+    /** Take the pending acquisition edge (single-shot). */
+    internal fun consumeFreshTarget(): Boolean {
+        val v = freshTargetEdge
+        freshTargetEdge = false
+        return v
+    }
+
+    /**
      * Set your target rotation
      *
      * @param rotation your target rotation
+     * @param targetId the entity being aimed at, when there is one. Supplying
+     *   it lets the engine arm its reaction delay per acquisition; omitting it
+     *   (block targeting) simply means no reaction delay.
      */
-    fun setTargetRotation(rotation: Rotation, options: RotationSettings, ticks: Int = options.resetTicks) {
+    fun setTargetRotation(
+        rotation: Rotation,
+        options: RotationSettings,
+        ticks: Int = options.resetTicks,
+        targetId: Int? = null,
+    ) {
         if (rotation.yaw.isNaN() || rotation.pitch.isNaN() || rotation.pitch > 90 || rotation.pitch < -90) {
             return
         }
@@ -594,6 +629,11 @@ object RotationUtils : MinecraftInstance, Listenable {
         if (needsReleaseSync(options.applyServerSide, currentRotation)) {
             releaseSync()
         }
+
+        if (targetId != null && targetId != activeTargetId) {
+            freshTargetEdge = true
+        }
+        activeTargetId = targetId
 
         targetRotation = rotation
         lastTargetSetTick = runTimeTicks
@@ -651,6 +691,8 @@ object RotationUtils : MinecraftInstance, Listenable {
         targetRotation = null
         currentRotation = null
         activeSettings = null
+        activeTargetId = null
+        freshTargetEdge = false
     }
 
     /**

@@ -15,9 +15,9 @@ import kotlin.math.abs
  *
  * A) JUnit 5 runs against this build's MC-free code.
  * B) Headless replay gauge (spec §11.7): drive [AimEngine] (MC-free) over the
- *    Sep-22 manual corpus — the player stream is exactly what the
- *    release-branch linger chased during those sessions — and emit a
- *    schema-9 JSONL candidate for:
+ *    whole manual corpus (Sep-22 calm play + Oct-02 target-server play) — the
+ *    player stream is exactly what the release-branch linger chased during the
+ *    Sep-22 sessions — and emit a schema-9 JSONL candidate for:
  *
  *        python3 tools/aim_harness.py --candidate build/replay-spike/replay_candidate.jsonl
  *
@@ -27,8 +27,12 @@ import kotlin.math.abs
  * same stop-and-go defect. Phase-3 goal: this command exits 0.
  *
  * Determinism: one [AimEngine.State] per source file, corpus-baseline knobs
- * (SpeedScale 1, NoiseScale 1, EventRateScale 1, ReactionDelay 0), seeded
- * input — reruns produce byte-identical candidates.
+ * (SpeedScale 1, NoiseScale 1, ReactionDelay 0), seeded input — reruns
+ * produce byte-identical candidates.
+ *
+ * The replay drives a continuous reference (the player's own view), so it
+ * never presents the engine with an acquisition edge; ReactionDelayMs stays
+ * at its unfitted default 0 here exactly as it does in the corpus.
  */
 class HeadlessReplaySpikeTest {
 
@@ -40,8 +44,25 @@ class HeadlessReplaySpikeTest {
     @Test
     fun headlessReplayEmitsHarnessCandidate() {
         val corpusDir = File("tools")
+        // BOTH manual sub-corpora. The session row carries `source` = the
+        // recording it came from, so aim_harness.py can score the candidate
+        // per sub-corpus and report a held-out breakdown instead of one
+        // blended number over two different play styles.
+        //
+        // MANUAL ONLY. Once you record a bot session on the same server the
+        // date prefix no longer identifies the group - `aim-2026-10-02_20-*`
+        // is KillAura and also matches. Replaying one of those feeds the
+        // player's own mouse through the engine while a shaper was live and
+        // silently contaminates the candidate, so the same discriminator
+        // human_features.classify_path uses is applied here:
+        //   schema 9 -> aimbot_engaged, else rotation_active share;
+        //   schema 8 -> rotation_active LINGERS on manual ticks, so only fresh
+        //                targets are sound.
         val names = (corpusDir.list() ?: emptyArray<String>())
-            .filter { it.startsWith("aim-2026-09-22_") && it.endsWith(".jsonl") }
+            .filter {
+                (it.startsWith("aim-2026-09-22_") || it.startsWith("aim-2026-10-02_")) &&
+                    it.endsWith(".jsonl") && isManualRecording(File(corpusDir, it))
+            }
             .sorted()
         // The corpus is untracked: builds without it must stay green — the
         // spike simply doesn't run (Assumptions, not assertions).
@@ -195,6 +216,37 @@ class HeadlessReplaySpikeTest {
         }
         assertTrue(checked > 1_000) { "grid re-check saw only $checked records" }
         println("replay candidate OK: $checked ticks -> ${outFile.path}")
+    }
+
+    /** Mirrors human_features.classify_path: is this recording pure manual play? */
+    private fun isManualRecording(file: File): Boolean {
+        var schema = 0
+        var ticks = 0
+        var engaged = 0
+        var active = 0
+        var fresh = 0
+        file.forEachLine { raw ->
+            if (raw.isBlank()) return@forEachLine
+            if (!raw.contains("\"tick\"") && !raw.contains("\"session\"")) return@forEachLine
+            val r = try {
+                JsonParser().parse(raw).asJsonObject
+            } catch (ignored: Exception) {
+                return@forEachLine
+            }
+            when (r.get("type")?.asString) {
+                "session" -> if (schema == 0) schema = r.get("schema")?.asInt ?: 0
+                "tick" -> {
+                    ticks++
+                    if (r.get("aimbot_engaged")?.takeIf { !it.isJsonNull }?.asBoolean == true) engaged++
+                    if (r.get("rotation_active")?.takeIf { !it.isJsonNull }?.asBoolean == true) active++
+                    if (r.get("target_yaw")?.takeIf { !it.isJsonNull } != null) fresh++
+                }
+            }
+        }
+        if (ticks == 0) return true
+        if (engaged > 0) return false
+        if (schema <= 8) return fresh == 0
+        return active.toDouble() / ticks <= 0.25
     }
 
     private fun snap(value: Float, gcd: Float) = Math.round(value / gcd) * gcd

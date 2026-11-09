@@ -7,10 +7,19 @@ import kotlin.random.Random
 /**
  * Stage 5 — event scheduler (spec §11.2 stage 5 + invariant I2).
  *
- * After each completed epoch (the servo converging into a hold) draw a
- * geometric dwell with p_eff = clamp(p · EventRateScale, 0.01, 0.95),
- * p = 1 / SCHED_DWELL_MEAN — the population mean of the draw then equals
- * the fitted mean (3.995 ticks), p90 ≈ 8 vs fitted 7 (§11.4).
+ * NOT A SHAPING STAGE. After each completed epoch (the servo converging into
+ * a hold) this draws a geometric dwell with p_eff = clamp(p · scale, 0.01,
+ * 0.95), p = 1 / SCHED_DWELL_MEAN — the population mean of the draw equals
+ * the fitted mean, p90 tracks the fitted p90 (§11.4).
+ *
+ * It is deliberately NOT mounted as a knob. By construction the draw cannot
+ * gate motion: I1 already freezes the output inside the 1-gcd floor, and I2
+ * preempts any dwell on the very tick the error reaches 1 gcd. The remainder
+ * is therefore write-only cadence bookkeeping, and exposing it as
+ * `EventRateScale` shipped a config slider that provably did not change a
+ * single emitted byte. Kept as the fitted descriptor of human dwell cadence
+ * (recorder + tests read it); see [AimEngine.Knobs] and
+ * `KnobsObservabilityTest`.
  *
  * Observable-behavior contract (why this stage is nearly free):
  *  - I2 preempts any active dwell the same tick error reaches ≥ 1 gcd on
@@ -27,6 +36,13 @@ import kotlin.random.Random
  * (determinism policy §11.7.5: byte-identical output per seed).
  */
 internal object EventScheduler {
+
+    /**
+     * The only scale the engine uses: 1.0, i.e. the fitted cadence exactly.
+     * Present so the sampler stays reusable in tests without implying a
+     * user-tunable behaviour the invariants cannot deliver.
+     */
+    const val FITTED_SCALE = 1f
 
     /** Mutable sampler memory; lives in AimEngine.State, cleared on reset. */
     class State {

@@ -950,3 +950,384 @@ recorder collapsed to shared stamps, handoff predicate tested, old engine
 deleted) → quantizer unchanged (already green). **Phase-3 exit
 conditions met** (Gate 1 exit 0 + empty MX queue); a parity/bypass claim
 still requires corpus v2 (§8.4).
+
+---
+
+## §12 — Corpus v2 (target server) and four engine defects
+
+**Added 2026-10-02.** Supersedes the corpus assumptions in §10/§11 and the
+§11.2-D "EventRateScale mount" amendment. Phase status in `progress.md`.
+
+### §12.1 The corpus, and what it is
+
+7× `tools/aim-2026-10-02_*.jsonl`, schema 9, 6,939 ticks, `source: manual` on
+100%, `aimbot_engaged` and `rotation_active` false on 100%, **eu.gamester.org
+at 547 ms ping**. Same gcd (0.0914) and mouse sensitivity (0.373) as the
+Sep-22 set. Guard: GCD-grid residual ≤ 0.0012 steps on ≥99.9% of non-zero
+deltas — genuinely raw vanilla mouse input, the same proof the Sep-22 set
+passes.
+
+Two properties the Sep-22 set does not have:
+
+- **Per-tick crosshair markers** (`crosshair_entity_id` / `_name`), which is
+  what §8.4 said was needed to fit engagement onsets. Present and populated
+  (3,059 ticks across the seven files).
+- **The deployment condition**: the actual server, with its real ping and its
+  real play style.
+
+### §12.2 The speed tail is real, and it broke a fitted constant
+
+| | sep22 | oct02 | shipped fit |
+|---|---|---|---|
+| speed p50/p90/p99 °/tick | 1.32 / 5.22 / 17.47 | 1.49 / 6.02 / **32.32** | 1.32 / 5.22 / **17.47** |
+| max °/tick | 62.53 | **168.86** | 62.53 |
+| ticks > 40 °/tick | 0.3% | **0.7%** | 0.3% |
+| lag-1 yaw | +0.800 | **+0.682** | +0.800 |
+| end-flip rate | 0.024 | **0.047** | 0.024 |
+| σ(v) fast bin, pitch ° | 0.166 | **0.234** | 0.166 |
+
+**The 168.86 °/tick tick and the 40–77 °/tick cluster are the player aiming,
+not teleports** (confirmed directly). Two consequences:
+
+1. **`SERVO_SPEED_MAX` was fitted to the sample maximum** (62.525 against an
+   observed 62.53 — zero headroom) and used as a hard backstop at
+   `Servo.kt:61`. On the Oct-02 corpus it truncated 14 real ticks (0.20%); the
+   engine's reachable ceiling was 63.19 °/tick. Measured before the fix:
+
+   ```
+   segment        human_max  engine_max  human>cap  engine pinned
+   12-45-22-856      168.86      62.86         1            1
+   12-47-47-152       69.40      63.00         1            1
+   12-48-21-810       84.72      63.19        12            9
+   ```
+
+   **A backstop must be an upper bound above anything the corpus shows a
+   human doing, never a sample maximum and never a quantile.** Now
+   `observed_max × 1.25` taken over every sub-corpus
+   (`gen_fitted_params.py:SPEED_MAX_HEADROOM`), asserted by
+   `FittedParamsSyncTest`. Tail fidelity after: >17.5 °/tick human 1.68% /
+   engine 1.68%; >30° 0.87/0.90; >40° 0.57/0.54; >60° 0.14/0.13; cap binds on
+   **0** ticks.
+
+2. **The recorder could not have told anyone.** `teleport_jumps` and
+   `max_speed` are accumulated only while `rotationActive`
+   (`RotationRecorder.kt`, counter inside `if (rotationActive)`), so both are
+   structurally 0 for a manual session — the summary fields carried no
+   information for the very corpus the servo bounds are fitted from. Now
+   unconditional player-side counters (`player_max_speed`,
+   `player_fast_ticks`, `player_teleport_jumps`, `player_ticks`).
+
+### §12.3 ReactionDelayMs was wired to the wrong event
+
+§11.2 armed the delay on an "engage edge" and §11.1 defines
+`Input.engaged` as that edge from the adapter. The adapter
+(`RotationUtils.limitAngleChange`) passes **`engaged = true`
+unconditionally** — there is no per-tick "no target" signal — so:
+
+- the edge could fire **at most once per engine channel**, not once per
+  acquisition, and
+- `AimEngine.step`'s tick-gap branch calls `state.reset()`, which cleared
+  `prevEngaged`, so a **lag spike re-armed it**.
+
+Measured on a synthetic reference with one live channel, target A acquired at
+t=50 and target B at t=150:
+
+| delay | target A lag | target B lag |
+|---|---|---|
+| 0 ms | 1 | 1 |
+| 100 ms | 1 | 1 |
+| 250 ms | 1 | 1 |
+| 500 ms | 1 | 1 |
+| 500 ms, tick gap at t=151 | — | **11** |
+
+So the knob did nothing on acquisition and fired only after lag — the opposite
+of its documented meaning.
+
+**Fix:** acquisition is target *identity*, and rotation distance cannot
+identify it (a large destination jump is equally a same-target flick). The
+modules know which entity they hold, so `setTargetRotation` now takes an
+optional `targetId`; `RotationUtils` compares it and emits a single-shot
+`Input.freshTarget` edge, consumed by the next shaped tick. KillAura and
+Aimbot pass `entity.entityId`; block-targeting modules pass nothing and get no
+delay. `prevEngaged` is gone. Pinned by `ReactionDelaySemanticsTest` (both
+halves: acquisition is delayed, a gap alone is not).
+
+### §12.4 EventRateScale was inert, and no test could have said so
+
+The §11.2-D amendment states stage 5 is "provably output-neutral" under
+I1 + I2 — and then mounts `EventRateScale` on it. Replaying the corpus with
+the knob at 0.25 and at 4.0:
+
+```
+speedScale=4        differs=true
+noiseScale=0        differs=true
+eventRateScale=4    differs=false      <-- byte-identical
+eventRateScale=0.25  differs=false      <-- byte-identical
+```
+
+`dwellRemaining` is only ever decremented and zeroed; nothing reads it. A
+user-facing slider that provably cannot change a single emitted byte.
+`EventSchedulerTest` passed throughout because it tested the sampler's
+arithmetic in isolation — a test that cannot fail for the reason that matters.
+
+**Two structural fixes, because the test shape was the real problem:**
+
+- **Removed** `eventRateScale` from `AimEngine.Knobs`. The config value stays
+  registered as a documented no-op for config compatibility (same treatment
+  as the §11.5 deprecated knobs).
+- **`KnobsObservabilityTest`** drives the real engine over the recorded corpus
+  and asserts a non-baseline value of *every* knob changes the emitted bytes;
+  a second test pins the knob set by reflection, so adding a knob fails the
+  build until it is justified. This generalises §11.2-B's "never feed noise
+  back into the control loop" into "never ship a control input that is not
+  wired to output".
+
+Stage 5 is retained as the fitted descriptor of human dwell cadence
+(recorder + `EventSchedulerTest` read it), with its KDoc stating plainly that
+it is not a shaping stage.
+
+### §12.5 The gate could not see a play-style miss
+
+Pooling Sep-22 and Oct-02 into one HUMAN group lowered the pooled human
+lag-1 to 0.705, so `lag1_yaw_delta - 0.15` fell 0.650 → **0.555** — and the
+known-bad TRAIL engine (pooled lag-1 0.638) slipped through a check it had
+been failing. A blend is the wrong denominator when the two corpora differ
+systematically.
+
+`aim_harness.py` now derives thresholds **per sub-corpus** from each one's own
+`human_subsets` entry and judges the candidate's segments (identified by the
+`source` field the replay already writes) against its own baseline. This is a
+real second gate, and on first run it failed: **sep22 `end_flip_rate` 0.065
+against a human 0.024 (2.7×)** — a margin Phase 3 step 2 had hidden by
+landing at 0.047 against a 0.048 bound, 98% of budget.
+
+Exit codes: `0` pooled green + no held-out gap, `4` pooled green with a
+held-out gap (distinct, non-blocking — an honest red that must not be
+confused with a pooled regression, and must not be silenced), `1` pooled
+failure.
+
+### §12.6 Standing gap: end-flip on calm play
+
+| | human | engine | ratio |
+|---|---|---|---|
+| sep22 | 0.024 | 0.065 | **2.7×** |
+| oct02 | 0.047 | 0.069 | 1.5× |
+| pooled | 0.038 | 0.066 | 1.7× |
+
+What it is **not**: sub-count quantisation shimmer. Flip magnitudes are
+~0.4 °/tick, i.e. 4–5 gcd — real sign reversals, not rounding-boundary
+crossings.
+
+Both contributors matter: the clean pre-noise command flips at 0.035–0.045 and
+the emitted stream at 0.059–0.089, so it is a control-loop **and** a
+noise-autocorrelation effect.
+
+**Tried and rejected.** The σ(v) gate bounds only the *innovation*; φ-decayed
+memory from a preceding fast tick leaks into a closing tick whose fitted σ is
+~100× smaller (0.0044 vs 0.434). Clamping the carried memory to the current
+regime's stationary σ is the principled repair, and it did shrink the flip
+magnitudes — but `end_flip_rate` got **worse** (0.066 → 0.080), because
+removing memory persistence *increases* independent tick-to-tick sign changes.
+Reverted. The hypothesis was wrong; recorded so it is not retried.
+
+**Next step:** `NOISE_PHI_YAW/PITCH` (0.466/0.540) are fitted **globally**, but
+a closing tick plausibly decorrelates faster than a mid-flick tick. Fit φ per
+speed regime in `slow_noise_features` and let `ColoredNoise` select φ from the
+same bin as σ. `ColoredNoiseTest.stationarySigmaAndPhiHoldInSlowBin` already
+exercises the per-bin case.
+
+### §12.7 Reaction delay: measured un-fittability
+
+`human_features.reaction_delay_report()` reports feasibility and refuses to
+fit. Corpus reality:
+
+- 9 fresh engagements (entity never seen before in its session) vs 308
+  crosshair re-acquisitions of an entity already being fought — a
+  re-acquisition happens *because* the player moved, so it carries no
+  information about latency.
+- **1** of the 9 fresh onsets is preceded by a genuine rest window. The other
+  8 land mid-turn (median pre-onset motion 8.99 °/tick), so their measured lag
+  is zero-or-negative.
+- Floor: 6 clean samples. `reactionDelayMs` therefore keeps its default 0,
+  pinned by
+  `FittedParamsSyncTest.reactionDelayStaysUnfittedUntilCorpusSupportsIt`.
+
+Each recording *does* start clean — crosshair null, at rest, 8–215 idle ticks
+before the fight — so the corpus is sound; it is the onset transitions that
+are scarce. §8.4's parity claim remains blocked on a shaper session on the
+target server (§12.8), not on more analysis.
+
+### §12.8 MX weight
+
+The raw Oct-02 mouse stream — a real player — trips `smooth_run3` (1.15 vs a
+0.24 calm-corpus baseline) and `basic_rob` (1.15 vs 0.48). A check that fires
+on genuine human aim does not discriminate bot from human on this corpus, so
+the MX block stays **informational and never gates**; the nine scalar
+distribution checks carry the contract. This is now labelled explicitly in the
+harness output rather than implied.
+
+Unresolved from §10 and still worth a decision: the Sep-16 prime session's
+corrected verdict was that all ~15 non-ML MX checks are clean, with
+`AimPatternCheck` zeroed because `RotationEvent` is constructed with swapped
+arguments (all deltas negated). The Sep-22/23 session reports `AimPatternCheck`
+firing 56/26 times and builds its work queue on that, without addressing the
+sign flip. Treat the pattern counts as unproven.
+
+---
+
+## §13 — Confirmed positive: a flagged KillAura session (2026-10-02)
+
+### §13.1 What arrived
+
+2× `tools/aim-2026-10-02_20-*.jsonl`, schema 9, **twerion.net @ 111 ms**
+(same anticheat as the manual corpus's eu.gamester.org, so the fit applies).
+7,707 KillAura ticks across 87 contiguous runs, 4,662 / 2,652 of them with a
+fresh `target_yaw`. Config in force on every KillAura tick:
+
+```
+humanize=true  speed_scale=1.0  noise_scale=1.0  reaction_delay_ms=0
+h_min=10 h_max=20  v_min=8 v_max=15  apply_server_side=true  keep_rotation=false
+```
+
+**Verdict: the user was flagged.** That converts this from "does it look
+human" to a labelled positive — the stream is separable by this anticheat.
+
+Two independent confirmations that the engine path (not the legacy
+`performAngleChange`) produced the output: `humanize=true` in the snapshot,
+and `max_speed = 107.5 deg/tick` against a configured `h_max = 20`, which the
+legacy path caps structurally.
+
+### §13.2 The partition bug this exposed, in two places
+
+The Oct-02 date glob now matches manual **and** bot recordings. Both the
+Python tooling and the JUnit replay picked the bot files up:
+
+- `human_features.human_paths()` is now **content-filtered** via
+  `classify_path()`, which is schema-aware: `aimbot_engaged` is conclusive on
+  schema 9, but on schema 8 `rotation_active` *lingers true on 100% of a
+  purely manual session*, so only a non-null `target_yaw` is sound there.
+- `HeadlessReplaySpikeTest` mirrors the same discriminator.
+
+Caught by the held-out gate, not by inspection: replaying a bot session feeds
+the player's own mouse through the engine while a shaper is live, which moved
+the candidate's `dwell_frac` from 0.199 to 0.260 and would have been read as
+an engine regression.
+
+### §13.3 Two candidate tells that the matched control exonerated
+
+A control was built from the **same player's own mouse on the same 7,623
+ticks** — same session, same opponents, same fight. It is the only fair
+reference, and it killed two findings:
+
+| "tell" | bot | same-tick human | verdict |
+|---|---|---|---|
+| exact consecutive delta-pair repeats | 113.1 /1000 | **115.2 /1000** | not a tell — GCD quantisation; both quantised streams repeat |
+| dwell_frac 0.013 | bot | **0.228** | **not an engine defect** |
+
+On dwell: the engine's hold gate is `|err| < 1 gcd`. Measured on the exact
+scored ticks, the error was inside that floor on **1.91%** of ticks and the
+output was frozen on **1.31%** — the servo is tracking correctly. The
+reference simply never quiesces: KillAura's aim point moves almost every tick
+(reference p99 = 121 deg/tick, zero-fraction 2.7%) because it switches
+between players. **The low dwell is a target-policy property, not a servo
+defect.**
+
+### §13.4 What is real
+
+**Acquisition latency — the machine signature.** Over 3,330 target switches:
+
+```
+median 1 tick (50 ms) · p90 1 · 98% respond on the very next tick
+6 distinct values · stdev 0.311
+```
+
+`reaction_delay_ms = 0`, so the response was instantaneous and, worse,
+*deterministic*. A degenerate latency distribution is separable on its own.
+
+**Post-attack delta windows — the ML's actual input.** 611 matched windows
+(MX's RNN consumes 150 deltas after an attack):
+
+| feature | same-tick human | KillAura | ratio |
+|---|---|---|---|
+| IQR (per-tick magnitude spread) | 48 | **96** | **2.00×** |
+| \|mean − mode\| | 43.9 | **104.2** | **2.37×** |
+| distinct gcd counts | 69 | 99 | 1.43× |
+| entropy | 5.317 | 6.359 | 1.20× |
+| zero-delta fraction | 0.213 | **0.007** | 0.03× |
+| coefficient of variation | 1.622 | 1.541 | 0.95× |
+
+IQR and \|mean−mode\| are the "aggressiveAim"-family quantities. Clean
+separation on identical windows.
+
+**Full gate:** 5 of 9 fail — `minjerk_r2` 0.244 (human 0.833), `end_flip_rate`
+0.313 (0.096), `ks_epoch_dur` 0.430 (0.168), `epoch_rate` 0.178, `dwell_frac`
+0.013. Plus `pattern_cross` 22 vs human 174: the bot almost never moves both
+axes at once, while humans are the *most* dual-axis group.
+
+**Clean:** `grid_residual_p99` 0.001, `pattern_repeat` 0.40,
+`basic_mac`/`basic_agg`/`basic_gcdx` 0.00, `factor_hits`/`factor_punish` 0.00,
+`complex_perfect` 0.00. A non-AI anticheat would largely pass this; the
+statistical/ML layer is what fired — consistent with the whole session history.
+
+**Diagnosis:** the differences follow from the *reference*, not the servo.
+The target policy re-acquires constantly against fast-moving players.
+
+### §13.5 Fix 1 — the configured speed cap was ignored
+
+`HorizontalAngleChange` / `VerticalAngleChange` were read only by the legacy
+path. With `humanize = true` the engine ran on fitted parameters and ignored
+them, while RotationRecorder kept enforcing them — hence `verdict: FAIL` with
+538 cap violations on a session configured at `h_max = 20`.
+
+`Knobs.maxYawStep` / `maxPitchStep` now carry the configured ceilings through
+to the servo. Two non-obvious details, both found by the new test:
+
+1. **The cap must be re-applied after stage 4.** Noise is added downstream of
+   `Servo.tick`, so a 20 deg/tick cap emitted **20.52**. Fixed by spending the
+   ceiling as a per-tick *budget*: the command spends it first, the noise gets
+   the remainder.
+2. **Clamping the total is wrong.** The first attempt clamped the emitted
+   delta outright. That silently drops the command's remaining travel, and
+   since the hold gate freezes output once the command converges, the
+   shortfall became a **permanent 0.62 deg (~7 gcd) offset** — the engine
+   believed it was on target and never corrected. The budget formulation keeps
+   the command in charge of convergence whenever it fits.
+
+Defaults are now unconstrained (180), because the engine's natural speed is
+p50 1.4 / p99 26.4 deg/tick and the old 10..20 default would act as a hard
+ceiling. Pinned by `SpeedCapHonouredTest` (per-axis, not magnitude; and a
+tight cap must still converge).
+
+### §13.6 Fix 2 — acquisition latency is now a distribution
+
+`ReactionDelayMs` defaults to `AimEngine.REACTION_PRIOR_MEAN_MS` (230 ms),
+drawn **lognormal** with CV 0.24 (~55 ms sd) from a seed-derived stream
+separate from stage 4, so determinism holds and the stage-4 bytes are
+unchanged.
+
+This is a **physiological prior, not a corpus fit** — §12.7 stands, the corpus
+has 2 clean transitions at a strict filter and 12 at a filter loose enough to
+be contaminated. What the fix targets is the *variance*: the flagged session's
+stdev of 0.311 is the machine signature, so a constant delay would be no
+better than none. Pinned by `ReactionDelaySemanticsTest`
+(`defaultLatencyIsDistributedNotConstant` asserts ≥4 distinct values and
+sd ≥ 1 tick).
+
+`ReactionSettings.reactionDelayMsValue` references the same constant, so the
+config default cannot drift from the engine prior — the compiler enforces the
+coupling that a test could not without breaking the aim package's MC-free
+purity rule (§11.1). Set 0 to disable.
+
+### §13.7 Still open
+
+- **End-flip on calm play** (§12.6) — untouched by this round; the standing
+  held-out gap.
+- **Target-hold policy.** §13.3/§13.4 show most of the remaining separation
+  comes from KillAura re-acquiring every tick against fast-moving players.
+  Requiring target stability before re-acquiring, and holding a converged
+  target instead of chasing a jittering aim point, is the next structural
+  change — and it is module policy, not engine.
+- **A second labelled sample.** One positive cannot separate which of §13.4's
+  signals actually fired. The cheapest next datapoint is another flagged
+  session with `ReactionDelayMs = 0` vs the prior, to confirm the latency
+  term carries weight.

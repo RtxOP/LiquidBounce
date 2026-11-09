@@ -1,173 +1,240 @@
-# Progress — aim humanization redo (MX-Project anticheat bypass)
+# Progress — aim humanization (MX-Project / Polar anticheat)
 
-**Branch:** `aim` (base `origin/legacy`, caae3622d) — all work uncommitted,
-working-tree only; nothing committed or pushed.
-**Updated:** 2026-09-23 (**Phase 3 COMPLETE** — Aimbot merge + runtime swap landed, **Gate 1 GREEN**, **Gate 2 queue empty**, 11/11 tests)
+**Branch:** `aim` (base `origin/legacy`, caae3622d). Phase 1–3 landed as
+`b7b73f428`; the corpus-v2 work below is **working-tree only, uncommitted**.
+**Updated:** 2026-10-02 (corpus v2 landed: Oct-02 recordings fitted, four
+engine defects fixed, gate extended)
 **Primary doc:** [`tools/human_corpus_findings.md`](tools/human_corpus_findings.md)
-(findings §1–7, next-steps §8, unification §9, harness baseline §10, **redo spec §11**)
+(findings §1–§7, next-steps §8, unification §9, harness baseline §10,
+redo spec §11, **corpus-v2 §12**)
 
 ## Phase status
 
 | Phase | What | Status |
 |---|---|---|
 | 0 | Regression harness `tools/aim_harness.py` — falsifiable gate: HUMAN passes / TRAIL fails / SHAPER fails (exit 0/1/2/3) | ✅ done |
-| 1 | Release-linger fix (`RotationUtils.kt`, root cause: all 6,337 stored snapshots had `angle_reset_difference: 0.0`), recorder **schema 9** (per-tick crosshair marker + `server_ip`/`ping_ms`), dual-axis re-baseline @0.25° (not a tell — dropped) | ✅ done |
-| 2 | Redo spec (findings **§11**) + test-strategy spikes: JUnit offline ✅, headless replay → `aim_harness.py --candidate` ✅ | ✅ done |
-| 3 | Engine redo vs harness — step 0 constants → conditioner+servo (flip test #1) → σ(v) fit → noise → scheduler → Aimbot merge → GCD unchanged | ✅ **done — exit conditions met** (Gate 1 exit 0 + Gate 2 empty; adapter now runs `AimEngine`, §11.6 merge landed, `HumanAimPath.kt` + `human_aim_test.py` deleted) |
-| 4 | Corpus v2 on target server (schema 9 recorder): update globs+guard schema together, absolute KS ≈ 0.15, fit reaction delay from crosshair onsets | ⬜ next — **blocked on your recordings** (needs live sessions on the target server) |
+| 1 | Release-linger fix, recorder **schema 9**, dual-axis re-baseline | ✅ done |
+| 2 | Redo spec (§11) + JUnit + headless-replay spikes | ✅ done |
+| 3 | Engine redo vs harness → 6-stage `AimEngine` + §11.6 Aimbot merge | ✅ done (`b7b73f428`) |
+| 4 | **Corpus v2 on the target server** — 7× schema-9 manual recordings fitted, defects fixed, held-out gate added | ✅ done (below) |
+| 5 | Reaction-delay fit | ⛔ **blocked on more recordings** — needs ≥6 clean rest→acquire transitions, corpus has 1 |
+| 6 | Shaper (KillAura) session on the target server | ⛔ **blocked on you** |
 
-## Key results
+## Phase 4 — what the Oct-02 recordings changed
 
-- **Corpus partition (guarded):** 7× HUMAN `tools/aim-2026-09-22_*.jsonl`
-  (signal `player_*`) vs 2× SHAPER `tools/aim-2026-09-19_*.jsonl` (signal
-  `server_*`); `human_features.py` exits 3 on violation. The
-  `source: KillAura` label on human files = release-linger artifact, not
-  ground truth.
-- **Fitted (→ `human_corpus_features.json`):** noise σ 0.19°/0.22°,
-  residual lag-1 +0.466/+0.540; min-jerk R² 0.80 (τ 0.425, duration
-  exponent b 0.502); dwell 20.6% (mean 4 / p90 7), epoch rate 1.00/s;
-  grid exact (p99 0.00057 steps); speed p50/p90/p99 = 1.32/5.22/17.47 °/tick.
-- **Stop-and-go defect (user's snap issue), TRAIL vs HUMAN:**
-  epoch rate 2.01/1.00 per s, min-jerk 0.27/0.80, end-flip 0.129/0.024,
-  lag-1 0.475/0.800. This is redo **acceptance test #1**, deliberately *not*
-  patched in the old engine.
-- **Spike baseline (2026-09-23):** headless replay of the current engine
-  → `aim_harness.py --candidate` **exits 1** with exactly the recorded
-  TRAIL failure set: lag-1 0.231, min-jerk 0.310, epoch rate 2.607,
-  end-flip 0.176 (+ epoch-KS 0.388); grid 0.000 ✅. Two independent paths
-  (recorded corpus vs fresh replay) detect the same defect — this table is
-  the Phase-3 work queue (spec §11.8).
-- **Gate 1 GREEN (2026-09-23, Phase-3 step-1 engine):** `./gradlew test` 4/4
-  + `aim_harness.py --candidate` **exit 0** — all nine checks pass:
-  lag-1 **0.814** (≥0.650; human 0.800), min-jerk **0.823**, epoch rate
-  **0.992**, dwell **0.206**, end-flip **0.019**, grid **0.000**, KS
-  0.249/0.271/0.091. Acceptance test #1 (snap issue) green at feature
-  level. Three decisive fixes (amended into findings §11.2/§11.4/§11.8):
-  **reference-velocity feedforward** (§11.2-A — profile R² 0.572→0.823),
-  **float-lattice floor epsilon** `gcd − 1e-3` (epoch rate 1.210→1.019,
-  stops 1-step mid-run freezes), **session-split candidate judging**
-  (`load_candidate` — cross-session teleports had inflated variance;
-  lag-1 0.466→0.814 with no engine change). Informal MX queue now only
-  `pattern_repeat` 0.96 (Gate-2 ≤0.74; `factor_hits` already 0.00 ✅) —
-  stage-4 noise is the intended fix.
-- **Gate 1 GREEN (step-2, 2026-09-23) + Gate 2 queue empty:** landed
-  `ColoredNoise.kt` (position AR(1), σ(speed) lookup, seeded from
-  `Input.seed`, frozen during holds) plus the clean pre-noise command
-  split (§11.2-B — feeding noise back through `input.current` had
-  collapsed dwell to 0.083 / min-jerk 0.007). First iteration with flat σ
-  regressed `end_flip_rate` 0.019 → **0.172** (32/37 tail flips were pure
-  noise on 0.09–0.5°/tick closing ticks). Root cause *fitted*, not tuned:
-  human emission noise is signal-dependent (exact-zero dwells 20.6% +
-  flip rate 0.026 at the same residual process) → σ(v) refit with 7
-  sub-bins (edges 0.15/0.4/0.9/1.5/5/15; near-rest σ = 0.0041, n 292;
-  empty middle bins carry; fast [1.5,5) = 0.4344/0.1659, n 42) →
-  end-flip **0.047 ≤ 0.048**, all nine checks pass (lag-1 **0.810**,
-  min-jerk **0.818**, epoch **1.030**, dwell **0.208**, grid **0.000**,
-  KS 0.249/0.271/0.084); `pattern_repeat` **0.96 → 0.24 = human**
-  (Gate 2 ≤0.74 ✓, `factor_hits` 0.00 ✓ → **queue empty**),
-  `complex_similar` 2.40 → 1.68 ok. Findings amended: §11.2 known-gap
-  closed, §11.2-B/§11.2-C, §11.4 `NOISE_BIN_*` rows, §11.7 cmd forensics,
-  §11.8 results.
-- **Step 3 — event scheduler (2026-09-23):** `EventScheduler.kt` —
-  geometric dwell drawn at hold entry with p_eff =
-  clamp((1/SCHED_DWELL_MEAN)·`EventRateScale`, 0.01, 0.95) (population mean
-  = fitted 3.995, draw p90 8 vs fitted 7), explicit I2 same-tick preempt,
-  own `Input.seed`-derived stream so stage-4 noise bytes stay untouched.
-  Under I1+I2 the draw is provably output-neutral (can neither stretch a
-  hold past reference quiescence nor delay motion past error) — Gate 1
-  reran **byte-identical, exit 0**. `EventSchedulerTest` (3 tests: fitted
-  mean/p90, p_eff clamps + mean shift, seeded determinism + preempt
-  clears) → 10 tests total green.
-- **Phase-3 endgame — runtime swap + §11.6 Aimbot merge (2026-09-23):**
-  `RotationUtils` now runs `AimEngine` (one channel + fresh seed per
-  engagement per settings), `RotationSettings` gained the 4 knobs (+4
-  snapshot fields), the short-stop state machine + `humanizeConfig` +
-  speed getters are gone (§11.5), and `Aimbot` is a pure
-  target/destination-policy module handing off via
-  `setTargetRotation(destination, options)` with `ApplyServerSide=false`,
-  `Humanize=true` defaults (configs migrate by value name). Critical
-  subtlety: the client-side release block is now guarded by
-  `needsReleaseSync(...)` — without a pending spoof, per-tick requests
-  must NOT call `resetRotation()` or the engine state would churn every
-  tick. Recorder collapses to shared stamps (`engagedShaper`,
-  owner-based `aimbot_engaged`, `targetRotation` as the one aim-point
-  stamp). Deletions: `HumanAimPath.kt`, `tools/human_aim_test.py`.
-  `RotationHandoffTest` added → **11/11 tests green, Gate 1 exit 0
-  (numbers byte-identical to step-2), Gate 2 empty** → Phase-3 exit
-  conditions met (parity claim still gated on corpus v2, §8.4).
+7× `tools/aim-2026-10-02_*.jsonl`, 6,939 ticks, `source: manual` on 100%,
+`aimbot_engaged`/`rotation_active` false on 100%, schema 9, **eu.gamester.org
+at 547 ms ping**. Guard passes: GCD-grid residual ≤ 0.0012 steps on ≥99.9% of
+deltas — genuinely raw vanilla mouse. This is the deployment-condition corpus
+Phase 4 was blocked on.
 
-## Deliverables map
+**Corpus group is now pooled** (14 files, 8,492 non-zero gcd steps, +34% data),
+with the two sub-corpora kept separately addressable so the harness can judge
+each play style against **its own** baseline.
 
-| Artifact | File |
+| | sep22 (calm) | oct02 (target server) | shipped fit was |
+|---|---|---|---|
+| speed p50/p90/p99 °/tick | 1.32 / 5.22 / 17.47 | **1.49 / 6.02 / 32.32** | 17.47 p99 |
+| max °/tick | 62.53 | **168.86** | 62.53 |
+| lag-1 yaw | +0.800 | **+0.682** | +0.800 |
+| end-flip rate | 0.024 | **0.047** | 0.024 |
+| σ(v) fast bin, pitch | 0.166 | **0.234** | 0.166 |
+| dwell mean / p90 | 4.00 / 7 | 4.18 / 9 | 4.00 / 7 |
+| min-jerk R² | 0.800 | 0.804 | 0.800 |
+
+The heavy tail is **real player aim, not a teleport** — confirmed by the user.
+`SERVO_SPEED_P99` had been fitted at half the real p99, and `SERVO_SPEED_MAX`
+at the Sep-22 sample maximum, i.e. with zero headroom.
+
+## Defects found and fixed this phase
+
+1. **`SERVO_SPEED_MAX` had no headroom and clipped real flicks.** Fitted to
+   the sample max (62.525 vs observed 62.53), so on the Oct-02 corpus it
+   truncated 14 real ticks (0.20%) and the engine's own ceiling was 63.19
+   °/tick against a real 168.86. Now `observed_max × 1.25` over **every**
+   sub-corpus (`gen_fitted_params.py:SPEED_MAX_HEADROOM`), pinned by
+   `FittedParamsSyncTest`. Tail fidelity after the fix: >17.5 °/tick human
+   1.68% / engine 1.68%; >30° 0.87/0.90; >60° 0.14/0.13; cap binds on 0 ticks.
+2. **`ReactionDelayMs` was wired to the wrong event.** The delay armed off an
+   `engaged` transition, but the adapter passes `engaged = true` on every
+   requested tick, so the edge fired at most once per engine *channel* and
+   re-armed on tick gaps — measured effect: **nothing** on target
+   re-acquisition, and a freeze *after a lag spike*. Fixed by plumbing real
+   target identity: `setTargetRotation(..., targetId)` → `Input.freshTarget`
+   (a big destination jump is equally a same-target flick, so rotation
+   cannot tell acquisitions apart — the modules know which entity they hold).
+   KillAura and Aimbot pass their target's `entityId`. Pinned by
+   `ReactionDelaySemanticsTest`. The knob stays at default 0 (Phase 5).
+3. **`EventRateScale` was provably inert** — removed from `AimEngine.Knobs`.
+   Stage 5's dwell cannot gate motion (I1 freezes output inside the 1-gcd
+   floor; I2 preempts the dwell the tick error reaches 1 gcd), so the drawn
+   remainder was write-only bookkeeping. Replayed the corpus at 0.25 and 4.0:
+   **byte-identical output**. It shipped as a live slider anyway, and
+   `EventSchedulerTest` tested the sampler in isolation so nothing caught it.
+   The config value stays registered (config compat) as a documented no-op.
+   `KnobsObservabilityTest` now enforces *"every knob must change the emitted
+   output"* and pins the knob set by reflection.
+4. **Recorder reported `max_speed 0.0` / `teleport_jumps 0` for every manual
+   session** — both counters were gated on `rotationActive`, so the summary
+   fields carried no information for the corpus the servo bounds are fitted
+   from. Added unconditional player-side stats (`player_ticks`,
+   `player_max_speed`, `player_fast_ticks`, `player_teleport_jumps`).
+5. **The gate could not see a play-style miss.** Pooling loosened the lag-1
+   bound 0.650 → 0.555 and a known-bad TRAIL engine slipped through it.
+   `aim_harness.py` now derives thresholds **per sub-corpus** and judges each
+   against its own human baseline as a real second gate.
+
+## Verification (all re-run 2026-10-02)
+
+| Gate | Result |
 |---|---|
-| Findings + next-steps + unification + harness baseline + **redo spec** | `tools/human_corpus_findings.md` §1–§11 |
-| Harness (group mode + `--candidate`) | `tools/aim_harness.py` |
-| Corpus analysis + partition guard | `tools/human_features.py` → `tools/human_corpus_features.json` |
-| Release-linger fix (floor 2.0° / settle 6 / timeout 400) | `src/main/java/net/ccbluex/liquidbounce/utils/rotation/RotationUtils.kt` |
-| Recorder v2 (schema 9) | `src/main/java/.../misc/RotationRecorder.kt` |
-| Headless replay spike (JUnit, skips if corpus absent) | `src/test/java/.../rotation/HeadlessReplaySpikeTest.kt` |
-| JUnit wiring (jupiter 5.10.1, launcher 1.10.1 pinned) | `build.gradle` |
-| Python mirror + `HumanAimPath.kt` — **deleted** (Phase-3 end) | ~~`tools/human_aim_test.py`~~ / ~~`utils/rotation/HumanAimPath.kt`~~ |
+| `./gradlew test --rerun-tasks` | **17/17 PASS** (was 11; +6 new regression tests) |
+| `aim_harness.py` (falsifiability) | **exit 0** — HUMAN passes, TRAIL fails 3, SHAPER fails 3 |
+| `aim_harness.py --candidate` (pooled gate) | **all 9 checks PASS** |
+| held-out per-sub-corpus gate | oct02 **passes every check**; sep22 **FAILS `end_flip_rate`** → exit **4** |
 
-## Decisions (locked, rationale in findings doc)
+## Confirmed positive — flagged KillAura session (2026-10-02)
+
+2× `tools/aim-2026-10-02_20-*.jsonl`, twerion.net @ 111 ms (same anticheat as
+the manual corpus), 7,707 KillAura ticks / 87 runs. **The user was flagged.**
+Full analysis in findings **§13**.
+
+Config in force: `humanize=true, speed_scale=1.0, noise_scale=1.0,
+reaction_delay_ms=0, h_max=20, v_max=15`, `max_speed=107.5 deg/tick` — which
+independently proves the engine path ran (the legacy path caps at `h_max`).
+
+**Exonerated by a matched control** (the same player's own mouse on the same
+ticks): exact delta-pair repeats 113 vs 115 per 1000 (quantisation, not a
+tell); dwell 0.013 vs 0.228 (the error was inside the 1-gcd hold floor on
+1.91% of ticks vs 1.31% frozen — **the servo tracks correctly**, the
+reference simply never quiesces because KillAura re-acquires constantly).
+
+**Real:** acquisition latency over 3,330 switches had median exactly 1 tick,
+98% on the next tick, **stdev 0.311**; post-attack 150-delta windows showed
+IQR 2.00× and \|mean−mode\| 2.37× the same-tick human. 5 of 9 gate checks
+fail. Grid hygiene and the mechanical MX checks are clean — the ML layer is
+what fired.
+
+### Fixed this round
+
+1. **Configured speed cap was ignored on the humanize path** (`h_max=20` vs
+   107.5 deg/tick emitted, recorder `verdict: FAIL`). `Knobs.maxYawStep` /
+   `maxPitchStep` now plumb the ceiling to the servo, re-applied *after*
+   stage-4 noise as a per-tick budget (clamping the total froze a permanent
+   0.62 deg offset once the command converged). Defaults unconstrained.
+   Pinned by `SpeedCapHonouredTest`.
+2. **Acquisition latency is now a distribution.** `ReactionDelayMs` defaults
+   to the 230 ms physiological prior, drawn lognormal (CV 0.24, ~55 ms sd)
+   from a seed-derived stream. Targets the variance, which is the actual
+   signature. Prior, not a fit — §12.7 stands. Pinned by
+   `ReactionDelaySemanticsTest`.
+
+3. **Ten dead sliders were still rendered in the click GUI.** The §11.5
+   deprecated set (`SimulateShortStop`, `RotationDiffBuildUpToStop`,
+   `MaxThresholdAttemptsToStop`, `ShortStopDuration`, `HumanizeTremor`,
+   `HumanizeOvershootChance`, `HumanizeOvershootMagnitude`, `HumanizeCurvature`,
+   `HumanizeReactionDelay`) plus `EventRateScale`. The sharpest case:
+   **`HumanizeReactionDelay` (0..10) sat directly above `ReactionDelayMs`
+   (0..600)** — both rendered, both gated on `humanize`, only the second read.
+   All now use `excludeWithState()` (the codebase idiom, cf. `resetTicksValue`,
+   `strictValue`, `rotationsValue`): still registered so old configs load, no
+   longer rendered. Pinned by `NoDeadControlsTest`, which also fails on any
+   *new* value declared in `RotationSettings` that is not classified as live or
+   dead — so the next inert knob cannot be added unnoticed.
+
+   Fixing the engine side of `eventRateScale` was not enough: removing it from
+   `Knobs` left a slider that provably does nothing still sitting in the menu.
+
+Also fixed: `human_paths()` / `HeadlessReplaySpikeTest` are now
+**content-filtered**, not glob-filtered — the Oct-02 date prefix matches bot
+recordings too, and replaying one silently contaminated the candidate
+(`dwell_frac` 0.199 → 0.260). Schema-aware discriminator, since schema 8
+lingers `rotation_active` on manual ticks.
+
+## Standing gap: end-flip on calm play
+
+The held-out gate immediately earned its keep. The engine's end-flip rate is
+**0.065 on sep22 against a human 0.024 (2.7×)**, while matching oct02
+(0.069 vs 0.047, 1.5×). It passes the pooled bound only because pooling the
+two styles averages them.
+
+This is **pre-existing, not a regression** — Phase 3 step 2 landed it at
+0.047 against a 0.048 bound, i.e. 98% of budget, which is why it looked
+green.
+
+Diagnosis so far: flips are real sign reversals at ~0.4°/tick (4–5 gcd), **not**
+sub-count quantisation shimmer. Both the clean pre-noise command (0.035–0.045)
+and the emitted stream (0.059–0.089) contribute, so it is a control-loop +
+noise-autocorrelation issue.
+
+**Tried and rejected:** clamping the AR(1) carry-over to the current regime's
+stationary σ (the σ(v) gate only bounds the *innovation*, so φ-decayed memory
+from a preceding fast tick leaks into closing ticks whose fitted σ is ~100×
+smaller). Principled, and it did cut the flip magnitudes — but it made
+`end_flip_rate` **worse** (0.066 → 0.080), because removing memory persistence
+*increases* independent tick-to-tick sign changes. Reverted; hypothesis wrong.
+
+**Next concrete step:** `NOISE_PHI_YAW/PITCH` (0.466/0.540) are fitted
+*globally*, but the closing-tick regime plausibly decorrelates faster. Fit φ
+per speed regime in `human_features.slow_noise_features` and let
+`ColoredNoise` select φ by the same bin as σ, then re-measure. The
+`ColoredNoiseTest` stationarity contract already covers the per-bin case.
+
+## Reaction delay — still unfittable, now with a measured reason
+
+`human_features.reaction_delay_report()` (new) reports feasibility instead of
+fabricating a fit. Corpus reality:
+
+- 9 fresh engagements (entity never seen before in its session), 308
+  crosshair re-acquisitions of an entity already being fought.
+- **1** of the 9 is preceded by a genuine rest window; the other 8 land while
+  the player is already turning (median pre-onset motion 8.99 °/tick), so the
+  measured lag is zero-or-negative and fitting it would encode a constant no
+  human has.
+- Floor is 6 clean samples. `FittedParamsSyncTest.reactionDelayStaysUnfittedUntilCorpusSupportsIt`
+  pins that `reactionDelayMs` keeps its default 0 until the corpus supports it.
+
+Each recording *does* start clean (crosshair null, at rest, 8–215 idle ticks
+before the fight), so the corpus is usable for everything else — it is the
+onset *transitions* that are too few.
+
+## Recording instructions that would unblock Phase 5
+
+Enable `RotationRecorder` **before** a target is acquired, then let a fight
+end and a *new* opponent be acquired **from a full stop** several times.
+Aim at stationary or slow-walking targets at conversational range; fast
+flicks produce onsets with no rest window and cannot be used. ~6+ clean
+rest→acquire transitions is enough; the report prints the count it found.
+
+## Decisions (locked)
 
 - **No adversarial proxy classifier** — feature-distribution/KS checks only.
-- 6-stage architecture (spec §11.2) + invariants: **I1** no threshold gates
-  (only the ≥1 gcd quantization floor), **I2** dwells preempt at ≥1 gcd error
-  (the anti-snap guarantee).
-- **4 knobs only:** `SpeedScale`, `NoiseScale`, `EventRateScale`,
-  `ReactionDelayMs` (unfitted → default 0 until corpus v2).
-- Fitted values ship as **generated `FittedAimParams.kt`** (+ JUnit sync
-  test); old humanize settings → **deprecated no-ops** (configs keep loading).
-- Testing: JUnit stage units + headless replay → `--candidate`; thresholds
-  single-sourced from the JSON; Python mirror never ported again.
-- σ-lognormal deferred (min-jerk R² 0.80 sufficient); dual-axis check
-  dropped (humans are the *most* dual-axis group at every basis).
-- Aimbot unification: keep its target/destination policy →
-  `setTargetRotation(destination, aimbotSettings)`,
-  `applyServerSide = false`, must own release/reset; module-toggle handoff
-  test (spec §11.6).
+- 6-stage architecture + invariants **I1** (no threshold gates beyond the ≥1
+  gcd quantisation floor) and **I2** (dwells preempt at ≥1 gcd error).
+- **Every engine knob must be observable in the emitted rotation** (new,
+  enforced by `KnobsObservabilityTest`).
+- **Servo speed bound is an upper bound with headroom**, never a sample
+  maximum or a quantile.
+- **Thresholds are derived per sub-corpus**, not from a pooled blend.
+- MX-rule checks are **informational and never gate** — the raw Oct-02 mouse
+  stream (a real player) trips `smooth_run3` and `basic_rob` against the
+  calm-corpus baseline, so they do not discriminate bot from human here.
+- Reaction delay stays unfitted until the corpus supports it.
+- σ-lognormal deferred (min-jerk R² 0.81); dual-axis check dropped (humans
+  are the *most* dual-axis group at every basis).
 
 ## Working-state cautions
 
 - The git index holds **old staged copies** of some files (`AM`/`MM`) —
   `git restore`/`checkout` from the index will clobber working-tree changes;
   re-`git add` before committing.
-- Corpus files are **untracked**; the replay test skips via `Assumptions`
-  when absent so plain `gradle build` stays green elsewhere.
-- `RandomizationSettings.kt` is deleted in the working tree (user change) —
-  left as-is.
-
-## Current work (Phase 3, ordered per spec §11.8 / §8.3 item 6)
-
-1. **Step 0 ✅ (2026-09-23):** intercepts + flick OLS
-   (`peak_vs_amplitude_A15`) in `human_features.py`, JSON regen →
-   `tools/gen_fitted_params.py` → `FittedAimParams.kt` → sync + purity
-   tests; `./gradlew test` 4/4 green.
-2. **Step 1 ✅ (2026-09-23):** `AimEngine` + conditioner + plan + servo
-   landed, replay drives `AimEngine.step`, iterated to **Gate 1 exit 0**
-   (acceptance test #1 green — numbers in Key results). Fixes amended
-   into findings §11.2/§11.4/§11.8: reference-velocity feedforward
-   (§11.2-A), flick envelope on plan error, ramp floors (3/2 ticks),
-   `GCD_EPS` floor hygiene, session-split candidate judging.
-3. **Step 2 ✅ (2026-09-23):** σ(v) 7-sub-bin refit (`noise_by_speed`) +
-   `ColoredNoise.kt` stage in `AimEngine` (AR(1), σ(speed) lookup, seeded
-   via `Input.seed`, gated off during holds) + clean pre-noise command
-   split (§11.2-B) → **Gate 1 exit 0 at step-2** (end-flip repaired
-   0.172 → 0.047 by the signal-dependent sub-bins, §11.2-C) and **Gate 2
-   queue empty** (pattern_repeat 0.24 = human, factor_hits 0.00).
-4. **Step 3 ✅ (2026-09-23):** `EventScheduler.kt` + `EventSchedulerTest`
-   — dwell sampler at hold entry, `EventRateScale` mounted (the last of
-   the 4 knobs), I2 preempt explicit; gate rerun byte-identical (exit 0,
-   10 tests green).
-5. **Merge ✅ (2026-09-23):** runtime adapter swap to `AimEngine`,
-   §11.5 settings migration, §11.6 Aimbot merge + recorder collapse,
-   `RotationHandoffTest`, deletions — **11/11 tests, Gate 1 exit 0,
-   Gate 2 empty → Phase 3 complete.**
-6. **Phase 4 (next, blocked on you):** record corpus v2 on the target
-   server with the schema-9 recorder (normal play + a KillAura session;
-   the `aim-2026-09-22_*.jsonl` human glob and guard schema are frozen
-   until then). When files exist: update globs + guard schema together,
-   re-baseline absolute KS ≈ 0.15, fit `ReactionDelayMs` from crosshair
-   onsets (`reaction_delay` field). No bypass/parity claim before that
-   (§8.4).
+- Corpus files are **untracked** (Sep-22 + Sep-19 are committed, ~8.6 MB, for
+  reproducibility); the Oct-02 seven are not. The replay test skips via
+  `Assumptions` when absent, so plain `gradle build` stays green elsewhere.
+- `RandomizationSettings.kt` was deleted in this line of work.
+- `settings.gradle` needs `mavenLocal()` plus a hand-installed ForgeGradle
+  jar (JitPack pruned the pinned commit) — see the comment at the top.
+- Pipeline order when the corpus changes:
+  `human_features.py` → `gen_fitted_params.py` → `./gradlew test` →
+  `./gradlew test --tests '*HeadlessReplaySpikeTest*'` →
+  `python3 tools/aim_harness.py --candidate build/replay-spike/replay_candidate.jsonl`

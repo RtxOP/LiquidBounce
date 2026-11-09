@@ -126,13 +126,46 @@ class FittedParamsSyncTest {
         assertClose("SERVO_SPEED_P50", speed.get("p50").asDouble, FittedAimParams.SERVO_SPEED_P50)
         assertClose("SERVO_SPEED_P90", speed.get("p90").asDouble, FittedAimParams.SERVO_SPEED_P90)
         assertClose("SERVO_SPEED_P99", speed.get("p99").asDouble, FittedAimParams.SERVO_SPEED_P99)
-        assertClose("SERVO_SPEED_MAX", speed.get("max").asDouble, FittedAimParams.SERVO_SPEED_MAX)
+        // SERVO_SPEED_MAX is an upper BOUND over every sub-corpus' observed
+        // maximum (times headroom), NOT the pooled sample max. Phase 3 fitted
+        // it to the sample max, which left zero headroom and clipped real
+        // player flicks on the target-server corpus.
+        val bounds = fitted.getAsJsonObject("servo_speed_bounds")
+        assertClose(
+            "SERVO_SPEED_OBSERVED_MAX",
+            bounds.get("observed_max").asDouble,
+            FittedAimParams.SERVO_SPEED_OBSERVED_MAX,
+        )
+        val headroom = bounds.getAsJsonObject("by_subcorpus")
+        for ((_, v) in headroom.entrySet()) {
+            val sub = v.asJsonObject.get("max").asDouble
+            // Float storage can round the constant a hair below the double the
+            // generator saw; allow one float ulp at this magnitude.
+            assertTrue(FittedAimParams.SERVO_SPEED_OBSERVED_MAX + 1e-3 >= sub) {
+                "SERVO_SPEED_OBSERVED_MAX ${FittedAimParams.SERVO_SPEED_OBSERVED_MAX} " +
+                    "must cover sub-corpus max $sub"
+            }
+        }
+        assertTrue(
+            FittedAimParams.SERVO_SPEED_MAX >
+                FittedAimParams.SERVO_SPEED_OBSERVED_MAX
+        ) {
+            "SERVO_SPEED_MAX (${FittedAimParams.SERVO_SPEED_MAX}) must sit ABOVE the " +
+                "observed corpus max (${FittedAimParams.SERVO_SPEED_OBSERVED_MAX}); " +
+                "a backstop at or below it truncates real aim"
+        }
+        assertClose(
+            "SERVO_SPEED_MAX",
+            FittedAimParams.SERVO_SPEED_OBSERVED_MAX.toDouble() *
+                FittedAimParams.SERVO_SPEED_MAX_HEADROOM.toDouble(),
+            FittedAimParams.SERVO_SPEED_MAX,
+        )
         assertClose(
             "SERVO_PEAK_P90",
             pooled.getAsJsonObject("epochs").getAsJsonObject("peak_speed").get("p90").asDouble,
             FittedAimParams.SERVO_PEAK_P90,
         )
-        val win = fitted.getAsJsonObject("mc").getAsJsonObject("windowed_std")
+        val win = fitted.getAsJsonObject("mc").getAsJsonObject("windowed")
         assertClose(
             "SERVO_WIN_STD_P90_5",
             win.getAsJsonObject("5").getAsJsonObject("std").get("p90").asDouble,
@@ -182,5 +215,30 @@ class FittedParamsSyncTest {
             FittedAimParams.ACCEPT_MINJERK_R2,
         )
         assertClose("ACCEPT_END_FLIP", correction.get("end_flip_rate").asDouble, FittedAimParams.ACCEPT_END_FLIP)
+    }
+
+    /**
+     * The reaction-delay knob stays unfitted and must not silently acquire a
+     * default. `human_features.reaction_delay_report` refuses to fit below
+     * MIN_SAMPLES clean rest->acquire transitions; this pins the decision so
+     * a future corpus either supplies the samples or keeps the default.
+     */
+    @Test
+    fun reactionDelayStaysUnfittedUntilCorpusSupportsIt() {
+        val rd = json.getAsJsonObject("fitted").getAsJsonObject("reaction_delay")
+        val restful = rd.get("restful_onsets").asInt
+        val required = rd.get("min_samples_required").asInt
+        val fittable = rd.get("fittable").asBoolean
+        assertTrue(fittable == (restful >= required)) {
+            "reaction-delay report is incoherent: restful_onsets=$restful, " +
+                "required=$required, fittable=$fittable (fittable must be " +
+                "restful_onsets >= required)"
+        }
+        if (!fittable) {
+            assertTrue(restful < required) {
+                "reactionDelayMs is declared unfittable with $restful clean onsets " +
+                    "(need $required) - rerun human_features.py and gen_fitted_params.py"
+            }
+        }
     }
 }

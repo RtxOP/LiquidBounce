@@ -347,11 +347,12 @@ def check(name, value, spec):
 # ------------------------------------------------------------------- main
 
 def main():
-    human_paths = sorted(glob.glob(hf.HUMAN_GLOB))
-    shaper_paths = sorted(glob.glob(hf.SHAPER_GLOB))
+    human_paths = hf.human_paths()
+    shaper_paths = hf.bot_paths()
     if not human_paths or not shaper_paths:
         print("missing recordings - run from the repo root "
-              "(need tools/aim-2026-09-22_*.jsonl and tools/aim-2026-09-19_*.jsonl)",
+              "(need tools/aim-2026-09-22_*.jsonl, tools/aim-2026-10-02_*.jsonl "
+              "and tools/aim-2026-09-19_*.jsonl)",
               file=sys.stderr)
         return 2
     if not FEATURES_JSON.exists():
@@ -525,15 +526,14 @@ def candidate_mode(path: str) -> int:
     resolution), 1 = fails — the printed failure list is the work queue,
     2 = missing inputs, 3 = partition guard violation.
     """
-    if not FEATURES_JSON.exists() or not glob.glob(hf.HUMAN_GLOB) \
-            or not glob.glob(hf.SHAPER_GLOB):
+    if not FEATURES_JSON.exists() or not hf.human_paths() or not hf.bot_paths():
         print("missing corpus or fitted JSON - run from the repo root "
               "(tools/human_features.py first)", file=sys.stderr)
         return 2
 
     bas = json.loads(FEATURES_JSON.read_text())
-    human_files = [hf.load_session(p) for p in sorted(glob.glob(hf.HUMAN_GLOB))]
-    shaper_files = [hf.load_session(p) for p in sorted(glob.glob(hf.SHAPER_GLOB))]
+    human_files = [hf.load_session(p) for p in hf.human_paths()]
+    shaper_files = [hf.load_session(p) for p in hf.bot_paths()]
 
     _, problems = hf.guard(human_files, shaper_files)
     if problems:
@@ -615,18 +615,120 @@ def candidate_mode(path: str) -> int:
         mx_queue.append(("const_bad(ratio)", r, hr))
     print(f"  {'const_bad(ratio)':<22} {hr:>9.3f} {r:>12.3f}  {'CAND X' if bad else 'ok'}")
 
+    held_out = held_out_breakdown(cands, human_files, thresholds)
+    if held_out:
+        print()
+        print("=" * 78)
+        print("HELD-OUT BREAKDOWN - a real second gate, per sub-corpus")
+        print("=" * 78)
+        print("The two HUMAN sub-corpora are different play styles (sep22 =")
+        print("calm/unlogged, oct02 = target server with a much heavier speed")
+        print("tail). Each is judged against ITS OWN human baseline, not the")
+        print("pooled blend - pooling loosens a bound for both styles at once.")
+        print(f"{'check':<22}{'sub-corpus bound':<26}" +
+              "".join(f"{t:>12}" for t in held_out["order"]))
+        held_out_fails = []
+        for name in thresholds:
+            cells = ""
+            for tag in held_out["order"]:
+                kind, bound = held_out["thresholds"][tag][name]
+                thr = (f"[{bound[0]:.3f}, {bound[1]:.3f}]" if kind == "range"
+                       else f"{'>=' if kind == 'min' else '<='} {bound:.3f}")
+                v = held_out["values"][tag][name]
+                ok = check(name, v, (kind, bound))
+                if not ok:
+                    held_out_fails.append(f"{tag}:{name}")
+                cells += f"{v:>11.3f}{'' if ok else 'X'}"
+            sample = held_out["thresholds"][held_out["order"][0]][name]
+            b = sample[1]
+            thr_txt = (f"[{b[0]:.3f}, {b[1]:.3f}]" if sample[0] == "range"
+                       else f"{'>=' if sample[0] == 'min' else '<='} {b:.3f}")
+            print(f"  {name:<20}{thr_txt + ' (' + held_out['order'][0] + ')':<26}{cells}")
+        print()
+        for tag in held_out["order"]:
+            bad = held_out["fails"][tag]
+            print(f"    {tag}: " + (f"FAILS {bad}" if bad else "passes every check"))
+
     print()
     if stale:
         print("  !! fitted JSON stale vs live corpus - rerun tools/human_features.py")
     if mx_queue:
-        print("  MX tells (informational):")
+        print("  MX tells (INFORMATIONAL - never gates):")
         for k, r, h_ in mx_queue:
             print(f"    {k:<22} rate={r:.2f} > human {h_:.2f} + tol")
+    else:
+        print("  MX tells: none above tolerance (informational)")
+
     if fails or stale:
         print(f"\nRESULT: FAIL {fails or ['stale_json']} - redo work queue")
         return 1
+    if held_out_fails:
+        # Distinct, non-blocking exit. The pooled gate is the contract; a
+        # per-sub-corpus failure is a real diagnostic (it caught the engine
+        # sitting at 2.7x the calm-corpus end-flip rate while passing the
+        # blend) but must not be indistinguishable from a pooled regression.
+        print(f"\nRESULT: PASS (pooled) - HELD-OUT GAP {held_out_fails}")
+        print("  The pooled gate is green; a sub-corpus misses its own baseline.")
+        print("  This is the standing end_flip gap: NOISE_PHI is fitted globally,")
+        print("  but the closing-tick regime likely decorrelates faster (fit")
+        print("  phi per speed regime in human_features.slow_noise_features).")
+        return 4
     print("\nRESULT: PASS - candidate within human thresholds at corpus resolution")
     return 0
+
+
+def held_out_breakdown(cands, human_files, thresholds):
+    """Score the candidate per HUMAN sub-corpus.
+
+    The replay writes the originating recording into each candidate session's
+    `source` field, so a candidate generated from the Oct-02 corpus can be
+    judged against Oct-02's own baselines instead of the pooled blend. The
+    thresholds stay pooled (one gate), but the *diagnostic* is per-corpus:
+    it catches an engine that matches the average and misses a play style.
+    """
+    if not cands:
+        return None
+    subsets = hf.json.loads(FEATURES_JSON.read_text()).get("human_subsets") or {}
+    if len(subsets) < 2:
+        return None
+    order = sorted(subsets)
+    human_by_tag = {}
+    for tag in order:
+        human_by_tag[tag] = [f for f in human_files if hf.subcorpus_of(f["path"]) == tag]
+    by_tag, values, fails, thr_by_tag = {}, {}, {}, {}
+    for tag in order:
+        sel = [s for s in cands if hf.subcorpus_of(s.get("session", {}).get("source") or "") == tag]
+        if not sel or not human_by_tag[tag]:
+            return None
+        g = hf.group_features(sel, "server_yaw", "server_pitch")["pooled"]
+        cand_y, cand_p = abs_samples(sel, "server_yaw", "server_pitch")
+        hum_y, hum_p = abs_samples(human_by_tag[tag], "player_yaw", "player_pitch")
+        vals = {
+            "lag1_yaw_delta": g["lag1_yaw_delta"],
+            "minjerk_r2": g["epochs"]["minjerk_r2"],
+            "epoch_rate_per_s": g["epochs"]["rate_per_s"],
+            "dwell_frac": g["dwell_frac"],
+            "end_flip_rate": g["epochs"]["end_flip_rate"],
+            "grid_residual_p99": g["grid_residual_steps"]["p99"],
+            "ks_yaw_abs": ks2(cand_y, hum_y),
+            "ks_pitch_abs": ks2(cand_p, hum_p),
+            "ks_epoch_dur": ks2(
+                hf._raw_run_samples(sel, "server"),
+                hf._raw_run_samples(human_by_tag[tag], "player")),
+        }
+        by_tag[tag] = g
+        values[tag] = vals
+        # Per-sub-corpus thresholds, derived from THAT corpus's own human
+        # baseline. The pooled gate blends two play styles, which can loosen a
+        # bound for both (pooling dropped the lag1 bound 0.650 -> 0.555 and a
+        # known-bad engine slipped through it). Judging each style against its
+        # own human value is the stricter, non-blended test.
+        thr_by_tag[tag] = derive_thresholds(
+            {"human": {"pooled": subsets[tag]}})
+        fails[tag] = [n for n, spec in thr_by_tag[tag].items()
+                      if n in vals and not check(n, vals[n], spec)]
+    return {"order": order, "values": values, "fails": fails,
+            "thresholds": thr_by_tag}
 
 
 if __name__ == "__main__":

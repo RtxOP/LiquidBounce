@@ -17,7 +17,10 @@ import kotlin.math.hypot
  *  - per-tick acceleration bounded by [MotorPlan.maxAccel], which also
  *    allows acquiring the reference velocity within a fixed ramp;
  *  - displacement clamped to the error: motion can never overshoot the
- *    reference (end-flip stays near the human 0.024).
+ *    reference (end-flip stays near the human 0.024);
+ *  - displacement finally clamped per axis to the caller's configured ceiling
+ *    (`HorizontalAngleChange` / `VerticalAngleChange`), which the humanize path
+ *    previously ignored outright.
  *
  * Returns the next **pre-quant** rotation plus the velocity actually
  * achieved (post-clamp) so ramps always restart from reality.
@@ -43,6 +46,8 @@ internal object Servo {
         velPitch: Float,
         refVelYaw: Float,
         refVelPitch: Float,
+        maxYawStep: Float = AimEngine.UNCONSTRAINED,
+        maxPitchStep: Float = AimEngine.UNCONSTRAINED,
     ): Output {
         val amp = hypot(errYaw, errPitch)
         val moving = amp > 1e-9f
@@ -66,8 +71,11 @@ internal object Servo {
         }
 
         // Never travel past the reference: toward(err), clamped to |err|.
-        val dispYaw = toward(nextYaw, errYaw)
-        val dispPitch = toward(nextPitch, errPitch)
+        // Then the caller's configured per-axis ceiling (see Knobs.maxYawStep):
+        // applied LAST so it is a true ceiling on the emitted step, whatever
+        // the plan, the acceleration bound and the error clamp each allowed.
+        val dispYaw = toward(nextYaw, errYaw).coerceIn(-maxYawStep, maxYawStep)
+        val dispPitch = toward(nextPitch, errPitch).coerceIn(-maxPitchStep, maxPitchStep)
 
         return Output(
             rotation = Rotation(current.yaw + dispYaw, current.pitch + dispPitch),

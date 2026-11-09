@@ -28,6 +28,7 @@ import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.angleDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.getFixedAngleDelta
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.lastRotations
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.serverRotation
+import net.ccbluex.liquidbounce.utils.rotation.aim.FittedAimParams
 import net.ccbluex.liquidbounce.utils.timing.TickedActions.nextTick
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.network.play.client.C02PacketUseEntity
@@ -117,6 +118,23 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
     private var invalidTicks = 0
     private var maxGridErr = 0f
     private var maxSpeed = 0f
+
+    // Player-side (raw mouse) speed stats, accumulated on EVERY tick rather
+    // than only while a shaper is active. The shaper counters above answer
+    // "was the bot's output legal?"; these answer "how fast does this human
+    // actually move?", which is what the engine's servo bounds are fitted
+    // against. Before this, a manual session reported max_speed 0.0 and
+    // teleport_jumps 0 unconditionally, so those summary fields carried no
+    // information at all for the corpus they are fitted from.
+    private var playerTicks = 0
+    private var playerMaxSpeed = 0f
+    private var playerFastTicks = 0
+    private var playerTeleportJumps = 0
+    private var prevPlayerYaw = Float.NaN
+    private var prevPlayerPitch = Float.NaN
+
+    /** Deg/tick above which a raw single-tick jump is called a teleport. */
+    private const val PLAYER_TELEPORT_DEG = 180f
 
     private val checkFails
         get() = gridFails + capsFails + teleportJumps + invalidTicks
@@ -308,6 +326,12 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
             gridFails = 0
             capsFails = 0
             teleportJumps = 0
+            playerTicks = 0
+            playerMaxSpeed = 0f
+            playerFastTicks = 0
+            playerTeleportJumps = 0
+            prevPlayerYaw = Float.NaN
+            prevPlayerPitch = Float.NaN
             invalidTicks = 0
             maxGridErr = 0f
             maxSpeed = 0f
@@ -353,6 +377,10 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
             addProperty("invalid_ticks", invalidTicks)
             addProperty("max_grid_err_steps", maxGridErr)
             addProperty("max_speed", maxSpeed)
+            addProperty("player_ticks", playerTicks)
+            addProperty("player_max_speed", playerMaxSpeed)
+            addProperty("player_fast_ticks", playerFastTicks)
+            addProperty("player_teleport_jumps", playerTeleportJumps)
             addProperty("packet_records", packetRecords)
             addProperty("packet_grid_fails", packetGridFails)
             addProperty("verdict", verdict())
@@ -460,6 +488,30 @@ object RotationRecorder : Module("RotationRecorder", Category.MISC) {
             null
         } else {
             abs(yawDiff) <= hCap + gcd / 2 + 1e-6f && abs(pitchDiff) <= vCap + gcd / 2 + 1e-6f
+        }
+
+        // Player-side stats: unconditional, so a manual recording is usable
+        // for fitting. Uses the same raw (unwrapped) yaw delta convention as
+        // the GCD checks, so a +/-360 branch crossing is not counted.
+        player?.let { p ->
+            val pdy = angleDifference(p.rotationYaw, prevPlayerYaw)
+            val pdp = angleDifference(p.rotationPitch, prevPlayerPitch)
+            if (pdy == pdy && pdp == pdp && !prevPlayerYaw.isNaN()) {
+                val pSpeed = hypot(pdy, pdp)
+                playerTicks++
+                if (pSpeed.isFinite()) {
+                    if (pSpeed > playerMaxSpeed) playerMaxSpeed = pSpeed
+                    // Fitted human p99 per-tick speed: the threshold the
+                    // engine's servo is meant to be able to reach.
+                    if (pSpeed > FittedAimParams.SERVO_SPEED_P99) playerFastTicks++
+                }
+                val rawPYaw = p.rotationYaw - prevPlayerYaw
+                if (abs(rawPYaw) > PLAYER_TELEPORT_DEG && abs(wrapDelta(rawPYaw)) > 90f) {
+                    playerTeleportJumps++
+                }
+            }
+            prevPlayerYaw = p.rotationYaw
+            prevPlayerPitch = p.rotationPitch
         }
 
         if (rotationActive) {

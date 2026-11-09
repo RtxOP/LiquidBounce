@@ -207,7 +207,9 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
             if (!verticalAim) destinationRotation.pitch = view.pitch
         }
 
-        setTargetRotation(destinationRotation, options)
+        // targetId so the engine can arm its reaction delay once per
+        // acquisition instead of once per channel (see AimEngine.Input).
+        setTargetRotation(destinationRotation, options, targetId = entity.entityId)
 
         player.setPosAndPrevPos(currPos, oldPos)
         return true

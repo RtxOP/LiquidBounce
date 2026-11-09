@@ -14,6 +14,14 @@ Derived constants (formulas are part of the spec, §11.4):
   NOISE_INNOV_*_DEG  = sigma * sqrt(1 - phi^2)          (AR(1) innovation)
   PLAN_DURATION_C_T  = T_p50 / (A_p50 + gcd)^b          (duration law anchor)
   PLAN_SPEED_NORM    = A_p50 / T_p50                    (profile scale = 1 at p50)
+  SERVO_SPEED_MAX    = observed_max * SPEED_MAX_HEADROOM
+
+SERVO_SPEED_MAX is an upper BOUND, not a quantile and deliberately NOT the
+sample maximum. Phase 3 fitted it to the Sep-22 sample max (62.525 vs an
+observed 62.53), which left the backstop with zero headroom; on the Oct-02
+target-server corpus that clipped 14 real player ticks (0.20%), including an
+84.7 deg/tick flick the engine could never reproduce (its own ceiling was
+63.19). The bound must sit above anything the corpus shows a human doing.
 """
 import json
 import math
@@ -23,6 +31,11 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 SRC = ROOT / "tools" / "human_corpus_features.json"
 OUT = (ROOT / "src" / "main" / "java" / "net" / "ccbluex" / "liquidbounce"
        / "utils" / "rotation" / "aim" / "FittedAimParams.kt")
+
+# Headroom over the largest per-tick displacement any corpus session shows.
+# The servo backstop exists only to stop a pathological blow-up, never to
+# truncate real aim, so it must clear the observed maximum.
+SPEED_MAX_HEADROOM = 1.25
 
 
 def main() -> int:
@@ -51,8 +64,16 @@ def main() -> int:
     speed_norm = a_p50 / t_p50
 
     profile = f["epochs"]["profile_8bin"]
-    win = f["mc"]["windowed_std"]
+    win = f["mc"]["windowed"]
     speed = hp["speed"]
+    # The bound is taken over EVERY sub-corpus, not just the pooled sample:
+    # a sub-corpus with a heavier tail must not be truncated by a max fitted
+    # from a calmer one.
+    observed_max = max(
+        [speed["max"] or 0.0]
+        + [v["max"] or 0.0
+           for v in f.get("servo_speed_bounds", {}).get("by_subcorpus", {}).values()])
+    speed_max = observed_max * SPEED_MAX_HEADROOM
 
     def fl(v: float) -> str:
         return f"{float(v)!r}f"
@@ -100,7 +121,10 @@ def main() -> int:
         f"    const val SERVO_SPEED_P50 = {fl(speed['p50'])}",
         f"    const val SERVO_SPEED_P90 = {fl(speed['p90'])}",
         f"    const val SERVO_SPEED_P99 = {fl(speed['p99'])}",
-        f"    const val SERVO_SPEED_MAX = {fl(speed['max'])}",
+        "    // UPPER BOUND, not a quantile: observed corpus max x headroom.",
+        f"    const val SERVO_SPEED_OBSERVED_MAX = {fl(observed_max)}",
+        f"    const val SERVO_SPEED_MAX_HEADROOM = {fl(SPEED_MAX_HEADROOM)}",
+        f"    const val SERVO_SPEED_MAX = {fl(speed_max)}",
         f"    const val SERVO_PEAK_P90 = {fl(hp['epochs']['peak_speed']['p90'])}",
         f"    const val SERVO_WIN_STD_P90_5 = {fl(win['5']['std']['p90'])}",
         f"    const val SERVO_WIN_STD_P90_10 = {fl(win['10']['std']['p90'])}",
