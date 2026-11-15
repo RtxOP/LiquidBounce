@@ -8,15 +8,16 @@ package net.ccbluex.liquidbounce.utils.rotation
 import net.ccbluex.liquidbounce.event.*
 import net.ccbluex.liquidbounce.features.module.modules.combat.FastBow
 import net.ccbluex.liquidbounce.features.module.modules.misc.NoRotateSet
+import net.ccbluex.liquidbounce.features.module.Module
 import net.ccbluex.liquidbounce.features.module.modules.render.Rotations
 import net.ccbluex.liquidbounce.utils.block.block
+import net.ccbluex.liquidbounce.utils.client.ClientUtils
 import net.ccbluex.liquidbounce.utils.client.MinecraftInstance
 import net.ccbluex.liquidbounce.utils.client.chat
 import net.ccbluex.liquidbounce.utils.client.rotation
 import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.inventory.InventoryUtils
 import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextDouble
-import net.ccbluex.liquidbounce.utils.kotlin.RandomUtils.nextFloat
 import net.ccbluex.liquidbounce.utils.rotation.RaycastUtils.raycastEntity
 import net.ccbluex.liquidbounce.utils.timing.WaitTickUtils
 import net.minecraft.entity.Entity
@@ -71,6 +72,8 @@ object RotationUtils : MinecraftInstance, Listenable {
     var activeSettings: RotationSettings? = null
 
     var resetTicks = 0
+
+    private var lastRotationUpdateTick = Int.MIN_VALUE
 
     /**
      * Face block
@@ -326,21 +329,51 @@ object RotationUtils : MinecraftInstance, Listenable {
     private fun limitAngleChange(
         currentRotation: Rotation, targetRotation: Rotation, settings: RotationSettings
     ): Rotation {
-        val (hSpeed, vSpeed) = if (settings.instant) {
-            180f to 180f
-        } else settings.horizontalSpeed to settings.verticalSpeed
+        // NoRotateSet intentionally pauses rotation changes without disturbing the active request.
+        if (WaitTickUtils.hasScheduled(NoRotateSet)) {
+            return currentRotation
+        }
 
-        return performAngleChange(
-            currentRotation,
-            targetRotation,
-            hSpeed,
-            vSpeed,
-            !settings.instant && settings.legitimize,
-            settings.minRotationDifference,
-            settings.minRotationDifferenceResetTiming
+        val (horizontalLimit, verticalLimit) = if (settings.instant) {
+            180f to 180f
+        } else {
+            settings.horizontalSpeed to settings.verticalSpeed
+        }
+
+        return moveTowards(currentRotation, targetRotation, horizontalLimit, verticalLimit)
+    }
+
+    /**
+     * Move toward a target by no more than the configured amount on either axis.
+     * Yaw follows the shortest wrapped path; pitch is always kept within Minecraft's legal range.
+     */
+    private fun moveTowards(
+        currentRotation: Rotation,
+        targetRotation: Rotation,
+        horizontalStepLimit: Float,
+        verticalStepLimit: Float
+    ): Rotation {
+        val yawDifference = angleDifference(targetRotation.yaw, currentRotation.yaw)
+        val pitchDifference = targetRotation.pitch - currentRotation.pitch
+
+        val horizontalLimit = abs(horizontalStepLimit)
+        val verticalLimit = abs(verticalStepLimit)
+
+        val yawStep = yawDifference.coerceIn(-horizontalLimit, horizontalLimit)
+        val pitchStep = pitchDifference.coerceIn(-verticalLimit, verticalLimit)
+
+        return Rotation(
+            MathHelper.wrapAngleTo180_float(currentRotation.yaw + yawStep),
+            (currentRotation.pitch + pitchStep).coerceIn(-90f, 90f)
         )
     }
 
+    /**
+     * Compatibility wrapper for older callers. Rotation shaping is deterministic;
+     * use setTargetRotation for normal requests so lifecycle and packet handling remain shared.
+     */
+    @Deprecated("Use setTargetRotation with RotationSettings")
+    @Suppress("UNUSED_PARAMETER")
     fun performAngleChange(
         currentRotation: Rotation,
         targetRotation: Rotation,
@@ -349,114 +382,7 @@ object RotationUtils : MinecraftInstance, Listenable {
         legitimize: Boolean,
         minRotationDiff: Float,
         minRotationDiffResetTiming: String,
-    ): Rotation {
-        var (yawDiff, pitchDiff) = angleDifferences(targetRotation, currentRotation)
-
-        val rotationDifference = hypot(yawDiff, pitchDiff)
-
-        val isShortStopActive = WaitTickUtils.hasScheduled(this)
-        val isNoRotateSetActive = WaitTickUtils.hasScheduled(NoRotateSet)
-
-        if (isNoRotateSetActive) {
-            yawDiff = 0F
-            pitchDiff = 0F
-        } else if (isShortStopActive || activeSettings?.shouldPerformShortStop() == true) {
-            if (!isShortStopActive) {
-                WaitTickUtils.schedule(activeSettings?.shortStopDuration?.random()?.plus(1) ?: 0, this)
-            }
-
-            activeSettings?.resetSimulateShortStopData()
-
-            val yawSlowdown = (0F..0.1F).random()
-            val pitchSlowdown = (0F..0.1F).random()
-
-            yawDiff = (yawDiff * yawSlowdown).withGCD()
-            pitchDiff = (pitchDiff * pitchSlowdown).withGCD()
-        }
-
-        var (straightLineYaw, straightLinePitch) = run {
-            val baseYawSpeed = abs(yawDiff safeDiv rotationDifference) * hSpeed
-            val basePitchSpeed = abs(pitchDiff safeDiv rotationDifference) * vSpeed
-
-            // Apply imperfect correlation
-            if (legitimize) {
-                baseYawSpeed * (0.9F..1.1F).random()
-                basePitchSpeed * (0.9F..1.1F).random()
-            }
-
-            baseYawSpeed to basePitchSpeed
-        }
-
-        straightLineYaw = yawDiff.coerceIn(-straightLineYaw, straightLineYaw)
-        straightLinePitch = pitchDiff.coerceIn(-straightLinePitch, straightLinePitch)
-
-        // Humans usually have some small jitter when moving their mouse from point A to point B.
-        // Usually when a rotation axis' difference is prioritized.
-        if (rotationDifference > 0F) {
-            val yawJitter = (-0.03F..0.03F).random() * straightLineYaw
-            val pitchJitter = (-0.02F..0.02F).random() * straightLinePitch
-
-            straightLineYaw += yawJitter
-            straightLinePitch += pitchJitter
-        }
-
-        val minYaw = nextFloat(min(minRotationDiff, getFixedAngleDelta()), minRotationDiff).withGCD()
-        val minPitch = nextFloat(min(minRotationDiff, getFixedAngleDelta()), minRotationDiff).withGCD()
-
-        applySlowDown(straightLineYaw, minYaw, minRotationDiffResetTiming, true, legitimize) {
-            straightLineYaw = it
-        }
-
-        applySlowDown(straightLinePitch, minPitch, minRotationDiffResetTiming, false, legitimize) {
-            straightLinePitch = it
-        }
-
-        return currentRotation.plus(Rotation(straightLineYaw, straightLinePitch))
-    }
-
-    private fun applySlowDown(
-        diff: Float, min: Float, timing: String, yaw: Boolean, applyRealism: Boolean, action: (Float) -> Unit
-    ) {
-        if (diff == 0f) {
-            action(diff)
-            return
-        }
-
-        val lastTick1 = angleDifferences(serverRotation, lastRotations[1]).let { diffs ->
-            if (yaw) diffs.x else diffs.y
-        }
-
-        val diffAbs = abs(diff)
-        val isSlowingDown = diffAbs <= abs(lastTick1)
-
-        if (diffAbs.withGCD() <= min && (timing == "Always" || timing == "OnSlowDown" && isSlowingDown || timing == "OnStart" && lastTick1 == 0F)) {
-            action(0f)
-            return
-        }
-
-        if (!applyRealism) {
-            action(diff)
-            return
-        }
-
-        val range = when {
-            lastTick1 == 0f -> {
-                val inc = 0.2f * (diffAbs / 50f).coerceIn(0f, 1f)
-
-                0.1F + inc..0.5F + inc
-            }
-
-            else -> 0.3f..0.7f
-        }
-
-        val new = (lastTick1..diff).lerpWith(range.random())
-
-        if (abs(new.withGCD()) <= min && isSlowingDown) {
-            action(diff)
-        } else {
-            action(new)
-        }
-    }
+    ): Rotation = moveTowards(currentRotation, targetRotation, hSpeed, vSpeed)
 
     /**
      * Calculate difference between two angle points
@@ -572,6 +498,18 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
     }
 
+    /**
+     * Release the active rotation only when it is still owned by [owner].
+     * This prevents a disabled module from clearing a newer request from another module.
+     */
+    fun releaseOwnedBy(owner: Module) {
+        if (activeSettings?.ownerModule !== owner) {
+            return
+        }
+
+        resetRotation()
+    }
+
     private fun resetRotation() {
         resetTicks = 0
         currentRotation?.let { (yaw, _) ->
@@ -641,6 +579,14 @@ object RotationUtils : MinecraftInstance, Listenable {
             return
         }
 
+        // TickBase can invoke player updates repeatedly without advancing the real client tick.
+        // Only advance the shared rotation once per actual game tick.
+        val gameTick = ClientUtils.runTimeTicks
+        if (lastRotationUpdateTick == gameTick) {
+            return
+        }
+        lastRotationUpdateTick = gameTick
+
         val serverRotation = currentRotation ?: serverRotation
 
         if (resetTicks == 0) {
@@ -675,13 +621,10 @@ object RotationUtils : MinecraftInstance, Listenable {
     ): Boolean {
         if (!options.applyServerSide) return true
 
-        if (rotationDifference(target, curr) > options.angleResetDifference) return false
-
-        // We use the last rotation saved 2 ticks ago because we have not updated the currentRotation yet.
-        val diffs = angleDifferences(target, curr).abs
-        val lastTickDiffs = angleDifferences(curr, lastRotations[1]).abs
-
-        return diffs.x <= lastTickDiffs.x && diffs.y <= lastTickDiffs.y || !options.legitimize
+        // Keep a small sensitivity-derived floor so a zero/very small configured threshold
+        // cannot leave the release convergence loop permanently active.
+        val resetTolerance = max(options.angleResetDifference, getFixedAngleDelta() * 2f)
+        return rotationDifference(target, curr) <= resetTolerance
     }
 
     /**
@@ -749,7 +692,6 @@ object RotationUtils : MinecraftInstance, Listenable {
         }
 
         if (!packet.rotating) {
-            activeSettings?.resetSimulateShortStopData()
             return@handler
         }
 
@@ -761,7 +703,6 @@ object RotationUtils : MinecraftInstance, Listenable {
             chat("PREV YAW: ${diffs.x}, PREV PITCH: ${diffs.y}")
         }
 
-        activeSettings?.updateSimulateShortStopData(diffs.x)
     }
 
     enum class BodyPoint(val rank: Int, val range: ClosedFloatingPointRange<Double>, val displayName: String) {
