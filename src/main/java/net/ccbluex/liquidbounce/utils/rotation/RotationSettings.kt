@@ -8,7 +8,6 @@ package net.ccbluex.liquidbounce.utils.rotation
 import net.ccbluex.liquidbounce.config.Configurable
 import net.ccbluex.liquidbounce.config.ListValue
 import net.ccbluex.liquidbounce.features.module.Module
-import net.ccbluex.liquidbounce.utils.extensions.random
 import net.ccbluex.liquidbounce.utils.extensions.withGCD
 import kotlin.math.abs
 
@@ -21,14 +20,18 @@ class AlwaysRotationSettings(owner: Module, generalApply: () -> Boolean = { true
 }
 
 @Suppress("MemberVisibilityCanBePrivate")
-open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
+open class RotationSettings(val ownerModule: Module, generalApply: () -> Boolean = { true }) : Configurable("RotationSettings") {
 
     open val rotationsValue = boolean("Rotations", true) { generalApply() }
     open val applyServerSideValue = boolean("ApplyServerSide", true) { rotationsActive && generalApply() }
-    open val simulateShortStopValue = boolean("SimulateShortStop", false) { rotationsActive && generalApply() }
-    open val rotationDiffBuildUpToStopValue = float("RotationDiffBuildUpToStop", 180f, 50f..720f) { simulateShortStop }
-    open val maxThresholdAttemptsToStopValue = int("MaxThresholdAttemptsToStop", 1, 0..5) { simulateShortStop }
-    open val shortStopDurationValue = intRange("ShortStopDuration", 1..2, 1..5) { simulateShortStop }
+    open val simulateShortStopValue =
+        boolean("SimulateShortStop", false) { rotationsActive && generalApply() }.apply { excludeWithState() }
+    open val rotationDiffBuildUpToStopValue =
+        float("RotationDiffBuildUpToStop", 180f, 50f..720f) { simulateShortStop }.apply { excludeWithState() }
+    open val maxThresholdAttemptsToStopValue =
+        int("MaxThresholdAttemptsToStop", 1, 0..5) { simulateShortStop }.apply { excludeWithState() }
+    open val shortStopDurationValue =
+        intRange("ShortStopDuration", 1..2, 1..5) { simulateShortStop }.apply { excludeWithState() }
     open val strafeValue = boolean("Strafe", false) { rotationsActive && applyServerSide && generalApply() }
     open val strictValue = boolean("Strict", false) { strafeValue.isActive() && generalApply() }
     open val keepRotationValue = boolean("KeepRotation", true) { rotationsActive && applyServerSide && generalApply() }
@@ -37,7 +40,7 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
         rotationsActive && applyServerSide && generalApply()
     }
 
-    open val legitimizeValue = boolean("Legitimize", false) { rotationsActive && generalApply() }
+    open val legitimizeValue = boolean("Legitimize", false) { rotationsActive && generalApply() }.apply { excludeWithState() }
 
     open val horizontalAngleChangeValue =
         floatRange("HorizontalAngleChange", 180f..180f, 1f..180f) { rotationsActive && generalApply() }
@@ -50,11 +53,11 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
 
     open val minRotationDifferenceValue = float(
         "MinRotationDifference", 2f, 0f..4f
-    ) { rotationsActive && generalApply() }
+    ) { rotationsActive && generalApply() }.apply { excludeWithState() }
 
     open val minRotationDifferenceResetTimingValue = choices(
         "MinRotationDifferenceResetTiming", arrayOf("OnStart", "OnSlowDown", "Always"), "OnStart"
-    ) { rotationsActive && generalApply() }
+    ) { rotationsActive && generalApply() }.apply { excludeWithState() }
 
     // Variables for easier access
     val rotations by rotationsValue
@@ -84,11 +87,12 @@ open class RotationSettings(owner: Module, generalApply: () -> Boolean = { true 
     open val rotationsActive
         get() = rotations
 
+    // The configured upper bound is the deterministic per-update step limit.
     val horizontalSpeed
-        get() = horizontalAngleChange.random()
+        get() = horizontalAngleChange.endInclusive
 
     val verticalSpeed
-        get() = verticalAngleChange.random()
+        get() = verticalAngleChange.endInclusive
 
     fun withoutKeepRotation() = apply {
         keepRotationValue.excludeWithState()
