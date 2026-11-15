@@ -87,12 +87,13 @@ open class RotationSettings(val ownerModule: Module, generalApply: () -> Boolean
     open val rotationsActive
         get() = rotations
 
-    // The configured upper bound is the deterministic per-update step limit.
+    // A configured range remains useful for old configs; its midpoint is the
+    // deterministic per-update step limit (no random sampling).
     val horizontalSpeed
-        get() = horizontalAngleChange.endInclusive
+        get() = (horizontalAngleChange.start + horizontalAngleChange.endInclusive) / 2f
 
     val verticalSpeed
-        get() = verticalAngleChange.endInclusive
+        get() = (verticalAngleChange.start + verticalAngleChange.endInclusive) / 2f
 
     fun withoutKeepRotation() = apply {
         keepRotationValue.excludeWithState()
