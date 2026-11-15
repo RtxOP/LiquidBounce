@@ -137,8 +137,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
 
         player.setPosAndPrevPos(simPlayer.pos)
 
-        val playerRotation = player.rotation
-
         val destinationRotation = if (center) {
             toRotation(boundingBox.center, true)
         } else {
