@@ -16,14 +16,14 @@ import net.ccbluex.liquidbounce.utils.extensions.*
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.currentRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.isFaced
-import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.performAngleChange
+import net.ccbluex.liquidbounce.utils.rotation.RotationSettings
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.rotationDifference
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.searchCenter
+import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.setTargetRotation
 import net.ccbluex.liquidbounce.utils.rotation.RotationUtils.toRotation
 import net.ccbluex.liquidbounce.utils.simulation.SimulatedPlayer
 import net.ccbluex.liquidbounce.utils.timing.MSTimer
 import net.minecraft.entity.Entity
-import java.util.*
 import kotlin.math.atan
 
 object Aimbot : Module("Aimbot", Category.COMBAT) {
@@ -31,7 +31,6 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
     private val range by float("Range", 4.4F, 1F..8F)
     private val horizontalAim by boolean("HorizontalAim", true)
     private val verticalAim by boolean("VerticalAim", true)
-    private val legitimize by boolean("Legitimize", true) { horizontalAim || verticalAim }
     private val maxAngleChange by float("MaxAngleChange", 10f, 1F..180F) { horizontalAim || verticalAim }
     private val inViewMaxAngleChange by float("InViewMaxAngleChange", 35f, 1f..180f) { horizontalAim || verticalAim }
     private val generateSpotBasedOnDistance by boolean(
@@ -68,23 +67,24 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
 
     private val horizontalBodySearchRange by floatRange("HorizontalBodySearchRange", 0f..1f, 0f..1f) { horizontalAim }
 
-    private val minRotationDifference by float("MinRotationDifference", 0f, 0f..2f) { verticalAim || horizontalAim }
-    private val minRotationDifferenceResetTiming by choices(
-        "MinRotationDifferenceResetTiming", arrayOf("OnStart", "Always"), "OnStart"
-    ) { verticalAim || horizontalAim }
-
     private val fov by float("FOV", 180F, 1F..180F)
     private val lock by boolean("Lock", true) { horizontalAim || verticalAim }
     private val onClick by boolean("OnClick", false) { horizontalAim || verticalAim }
-    private val jitter by boolean("Jitter", false)
-    private val yawJitterMultiplier by float("JitterYawMultiplier", 1f, 0.1f..2.5f)
-    private val pitchJitterMultiplier by float("JitterPitchMultiplier", 1f, 0.1f..2.5f)
     private val center by boolean("Center", false)
     private val headLock by boolean("Headlock", false) { center && lock }
     private val headLockBlockHeight by float("HeadBlockHeight", -1f, -2f..0f) { headLock && center && lock }
     private val breakBlocks by boolean("BreakBlocks", true)
 
     private val clickTimer = MSTimer()
+
+    // Aimbot owns a client-view request; it does not spoof server-side rotation.
+    private val options = RotationSettings(this).apply {
+        applyServerSideValue.set(false, saveImmediately = false)
+    }
+
+    override fun onDisable() {
+        RotationUtils.releaseOwnedBy(this)
+    }
 
     val onMotion = handler<MotionEvent> { event ->
         if (event.eventState != EventState.POST) return@handler
@@ -112,24 +112,10 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
         // Should it always keep trying to lock on the enemy or just try to assist you?
         if (!lock && isFaced(entity, range.toDouble())) return@handler
 
-        val random = Random()
-
-        if (Backtrack.runWithNearestTrackedDistance(entity) { !findRotation(entity, random) }) return@handler
-
-        // Jitter
-        // Some players do jitter on their mouses causing them to shake around. This is trying to simulate this behavior.
-        if (jitter) {
-            if (random.nextBoolean()) {
-                player.fixedSensitivityYaw += ((random.nextGaussian() - 0.5f) * yawJitterMultiplier).toFloat()
-            }
-
-            if (random.nextBoolean()) {
-                player.fixedSensitivityPitch += ((random.nextGaussian() - 0.5f) * pitchJitterMultiplier).toFloat()
-            }
-        }
+        if (Backtrack.runWithNearestTrackedDistance(entity) { !findRotation(entity) }) return@handler
     }
 
-    private fun findRotation(entity: Entity, random: Random): Boolean {
+    private fun findRotation(entity: Entity): Boolean {
         val player = mc.thePlayer ?: return false
 
         if (mc.playerController.isHittingBlock && breakBlocks) {
@@ -185,31 +171,22 @@ object Aimbot : Module("Aimbot", Category.COMBAT) {
             destinationRotation.pitch -= pitchOffset
         }
 
-        // Figure out the best turn speed suitable for the distance and configured turn speed
-        val rotationDiff = rotationDifference(playerRotation, destinationRotation)
-
-        // is enemy visible to player on screen. Fov is about to be right with that you can actually see on the screen. Still not 100% accurate, but it is fast check.
-        val supposedTurnSpeed = if (rotationDiff < mc.gameSettings.fovSetting) {
+        // Select a deterministic per-update cap, then let the shared controller apply it.
+        val viewRotation = currentRotation ?: player.rotation
+        val turnLimit = if (rotationDifference(viewRotation, destinationRotation) < mc.gameSettings.fovSetting) {
             inViewMaxAngleChange
         } else {
             maxAngleChange
         }
 
-        val gaussian = random.nextGaussian()
+        options.horizontalAngleChangeValue.set(turnLimit..turnLimit, saveImmediately = false)
+        options.verticalAngleChangeValue.set(turnLimit..turnLimit, saveImmediately = false)
 
-        val realisticTurnSpeed = rotationDiff * ((supposedTurnSpeed + (gaussian - 0.5)) / 180)
+        // Axis selection belongs to Aimbot; movement and output belong to RotationUtils.
+        if (!horizontalAim) destinationRotation.yaw = viewRotation.yaw
+        if (!verticalAim) destinationRotation.pitch = viewRotation.pitch
 
-        // Directly access performAngleChange since this module does not use RotationSettings
-        val rotation = performAngleChange(
-            player.rotation,
-            destinationRotation,
-            realisticTurnSpeed.toFloat(),
-            legitimize = legitimize,
-            minRotationDiff = minRotationDifference,
-            minRotationDiffResetTiming = minRotationDifferenceResetTiming,
-        )
-
-        rotation.toPlayer(player, horizontalAim, verticalAim)
+        setTargetRotation(destinationRotation, options)
 
         player.setPosAndPrevPos(currPos, oldPos)
 
